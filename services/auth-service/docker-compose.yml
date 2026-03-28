@@ -1,0 +1,44 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: ordersphere-postgres
+    environment:
+      POSTGRES_DB: ordersphere_auth
+      POSTGRES_USER: ordersphere_auth
+      POSTGRES_PASSWORD: secret
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ordersphere_auth"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  auth-service:
+    build: .
+    image: ordersphere/auth-service:1.0
+    container_name: ordersphere-auth-service
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/ordersphere_auth
+      SPRING_DATASOURCE_USERNAME: ordersphere_auth
+      SPRING_DATASOURCE_PASSWORD: secret
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      # Point the auth-service at the Eureka server on the host machine
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: "http://host.docker.internal:8761/eureka/"
+      EUREKA_CLIENT_REGISTER_WITH_EUREKA: "true"
+      EUREKA_CLIENT_FETCH_REGISTRY: "true"
+    restart: always
+
+volumes:
+  postgres_data:

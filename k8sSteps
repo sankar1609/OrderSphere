@@ -1,0 +1,24 @@
+kubectl config current-context
+kubectl config use-context docker-desktop
+kubectl create namespace ordersphere
+kubectl apply -f postgres-secret.yaml
+kubectl apply -f postgres-deployment.yaml
+kubectl apply -f postgres-service.yaml
+docker build -t ordersphere-auth:latest .
+kubectl apply -f auth-deployment.yaml
+kubectl apply -f auth-service.yaml
+kubectl get svc -n ordersphere
+	ordersphere-auth   NodePort   10.x.x.x   <none>   8080:30007/TCP
+Access via
+	http://localhost:30007/actuator/health
+To check pods
+	kubectl get pods -n ordersphere
+
+To run docker
+mvn clean package -DskipTests                            
+docker compose down
+docker compose up --build
+
+To restart kubernetes
+kubectl rollout restart deployment ordersphere-auth -n ordersphere
+
