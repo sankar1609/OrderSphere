@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "ordersphere",
+  "project_id": "f74f1ea1-bfc2-4b7a-8963-7043848bfddd"
+}
