@@ -9,6 +9,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d
 
   service-registry:
     build:
@@ -28,6 +29,24 @@ services:
     environment:
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://service-registry:8761/eureka
     depends_on:
+      - service-registry
+
+  auth-service:
+    build:
+      context: .
+      dockerfile: services/auth-service/Dockerfile
+    container_name: ordersphere-auth-service
+    ports:
+      - "8081:8081"
+    environment:
+      DB_HOST: postgres
+      DB_NAME: auth_db
+      DB_USERNAME: ordersphere
+      DB_PASSWORD: ordersphere
+      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-key-change-me-before-any-real-deployment}
+      EUREKA_URI: http://service-registry:8761/eureka
+    depends_on:
+      - postgres
       - service-registry
 
 volumes:
