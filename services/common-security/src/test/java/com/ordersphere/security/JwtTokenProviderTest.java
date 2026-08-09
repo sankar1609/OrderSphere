@@ -2,6 +2,7 @@ package com.ordersphere.security;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class JwtTokenProviderTest {
@@ -44,5 +45,15 @@ class JwtTokenProviderTest {
     JwtTokenProvider provider = new JwtTokenProvider(SECRET, 60_000);
 
     assertThat(provider.isValid("not-a-real-token")).isFalse();
+  }
+
+  @Test
+  void embedsAndReturnsCustomClaims() {
+    JwtTokenProvider provider = new JwtTokenProvider(SECRET, 60_000);
+
+    String token = provider.generateToken("user-123", Map.of("role", "ADMIN"));
+
+    assertThat(provider.getClaims(token)).containsEntry("role", "ADMIN");
+    assertThat(provider.getSubject(token)).isEqualTo("user-123");
   }
 }
