@@ -9,6 +9,7 @@ COPY services/service-registry/pom.xml services/service-registry/pom.xml
 COPY services/ordersphere-gateway/pom.xml services/ordersphere-gateway/pom.xml
 COPY services/auth-service/pom.xml services/auth-service/pom.xml
 COPY services/inventory-service/pom.xml services/inventory-service/pom.xml
+COPY services/ordersphere-orders/pom.xml services/ordersphere-orders/pom.xml
 COPY services/common-events/src services/common-events/src
 COPY services/common-security/src services/common-security/src
 COPY services/ordersphere-gateway/src services/ordersphere-gateway/src

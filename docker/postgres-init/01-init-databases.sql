@@ -2,3 +2,4 @@
 -- service as it's scaffolded (orders_db, payment_db, ...).
 CREATE DATABASE auth_db;
 CREATE DATABASE inventory_db;
+CREATE DATABASE orders_db;
