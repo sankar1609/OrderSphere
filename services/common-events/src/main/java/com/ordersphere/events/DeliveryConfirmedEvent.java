@@ -1,0 +1,19 @@
+package com.ordersphere.events;
+
+import java.time.Instant;
+import lombok.Getter;
+
+@Getter
+public class DeliveryConfirmedEvent extends BaseEvent {
+
+  private final Long shipmentId;
+  private final Long orderId;
+  private final Instant deliveredAt;
+
+  public DeliveryConfirmedEvent(Long shipmentId, Long orderId, Instant deliveredAt) {
+    super("DeliveryConfirmedEvent");
+    this.shipmentId = shipmentId;
+    this.orderId = orderId;
+    this.deliveredAt = deliveredAt;
+  }
+}
