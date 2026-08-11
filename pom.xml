@@ -35,6 +35,7 @@
         <module>services/auth-service</module>
         <module>services/inventory-service</module>
         <module>services/ordersphere-orders</module>
+        <module>services/payment-service</module>
     </modules>
 
     <dependencyManagement>
