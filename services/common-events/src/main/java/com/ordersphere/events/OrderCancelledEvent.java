@@ -7,7 +7,8 @@ public class OrderCancelledEvent extends BaseEvent {
 
   public enum Reason {
     CUSTOMER_REQUESTED,
-    INVENTORY_UNAVAILABLE
+    INVENTORY_UNAVAILABLE,
+    PAYMENT_FAILED
   }
 
   private final Long orderId;
