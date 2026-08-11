@@ -11,6 +11,7 @@ COPY services/auth-service/pom.xml services/auth-service/pom.xml
 COPY services/inventory-service/pom.xml services/inventory-service/pom.xml
 COPY services/ordersphere-orders/pom.xml services/ordersphere-orders/pom.xml
 COPY services/payment-service/pom.xml services/payment-service/pom.xml
+COPY services/shipping-service/pom.xml services/shipping-service/pom.xml
 COPY services/common-events/src services/common-events/src
 COPY services/common-security/src services/common-security/src
 COPY services/ordersphere-orders/src services/ordersphere-orders/src
