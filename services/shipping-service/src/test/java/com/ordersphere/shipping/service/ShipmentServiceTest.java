@@ -1,0 +1,145 @@
+package com.ordersphere.shipping.service;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import com.ordersphere.events.DeliveryConfirmedEvent;
+import com.ordersphere.events.ShipmentCreatedEvent;
+import com.ordersphere.events.ShipmentInTransitEvent;
+import com.ordersphere.events.ShipmentPickedEvent;
+import com.ordersphere.shipping.carrier.CarrierClient;
+import com.ordersphere.shipping.carrier.CarrierUpdate;
+import com.ordersphere.shipping.domain.Shipment;
+import com.ordersphere.shipping.domain.ShipmentStatus;
+import com.ordersphere.shipping.domain.ShipmentType;
+import com.ordersphere.shipping.dto.CreateShipmentRequest;
+import com.ordersphere.shipping.dto.ReturnShipmentRequest;
+import com.ordersphere.shipping.dto.ShipmentResponse;
+import com.ordersphere.shipping.exception.InvalidShipmentStateException;
+import com.ordersphere.shipping.repository.ShipmentRepository;
+import com.ordersphere.shipping.repository.ShipmentTrackingEventRepository;
+import java.util.Optional;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
+
+@ExtendWith(MockitoExtension.class)
+class ShipmentServiceTest {
+
+  @Mock private ShipmentRepository shipmentRepository;
+  @Mock private ShipmentTrackingEventRepository trackingEventRepository;
+  @Mock private CarrierClient carrierClient;
+  @Mock private ApplicationEventPublisher eventPublisher;
+
+  private ShipmentService shipmentService;
+
+  @BeforeEach
+  void setUp() {
+    shipmentService =
+        new ShipmentService(
+            shipmentRepository, trackingEventRepository, carrierClient, eventPublisher);
+  }
+
+  @Test
+  void createShipmentCreatesAndPublishesEvent() {
+    when(shipmentRepository.findByOrderIdAndType(100L, ShipmentType.OUTBOUND))
+        .thenReturn(Optional.empty());
+
+    ShipmentResponse response =
+        shipmentService.createShipment(new CreateShipmentRequest(100L, "123 Main St"));
+
+    assertThat(response.status()).isEqualTo(ShipmentStatus.CREATED);
+    assertThat(response.type()).isEqualTo(ShipmentType.OUTBOUND);
+    verify(eventPublisher).publishEvent(any(ShipmentCreatedEvent.class));
+  }
+
+  @Test
+  void createShipmentIsIdempotentPerOrderId() {
+    Shipment existing = new Shipment(100L, ShipmentType.OUTBOUND, "123 Main St", null);
+    when(shipmentRepository.findByOrderIdAndType(100L, ShipmentType.OUTBOUND))
+        .thenReturn(Optional.of(existing));
+
+    ShipmentResponse response =
+        shipmentService.createShipment(new CreateShipmentRequest(100L, "123 Main St"));
+
+    assertThat(response.orderId()).isEqualTo(100L);
+    verify(eventPublisher, never()).publishEvent(any(ShipmentCreatedEvent.class));
+  }
+
+  @Test
+  void requestReturnRequiresDeliveredShipment() {
+    Shipment shipment = new Shipment(100L, ShipmentType.OUTBOUND, "123 Main St", null);
+    shipment.setId(5L);
+    when(shipmentRepository.findById(5L)).thenReturn(Optional.of(shipment));
+
+    assertThatThrownBy(
+            () -> shipmentService.requestReturn(5L, new ReturnShipmentRequest("wrong size")))
+        .isInstanceOf(InvalidShipmentStateException.class);
+  }
+
+  @Test
+  void requestReturnIsIdempotent() {
+    Shipment shipment = new Shipment(100L, ShipmentType.OUTBOUND, "123 Main St", null);
+    shipment.setId(5L);
+    shipment.advanceTo(ShipmentStatus.PICKED);
+    shipment.advanceTo(ShipmentStatus.IN_TRANSIT);
+    shipment.advanceTo(ShipmentStatus.DELIVERED);
+    Shipment existingReturn = new Shipment(100L, ShipmentType.RETURN, "123 Main St", 5L);
+    when(shipmentRepository.findById(5L)).thenReturn(Optional.of(shipment));
+    when(shipmentRepository.findByOrderIdAndType(100L, ShipmentType.RETURN))
+        .thenReturn(Optional.of(existingReturn));
+
+    ShipmentResponse response =
+        shipmentService.requestReturn(5L, new ReturnShipmentRequest("wrong size"));
+
+    assertThat(response.type()).isEqualTo(ShipmentType.RETURN);
+    verify(eventPublisher, never()).publishEvent(any(ShipmentCreatedEvent.class));
+  }
+
+  @Test
+  void advanceMovesCreatedToPickedAndPublishesEvent() {
+    Shipment shipment = new Shipment(100L, ShipmentType.OUTBOUND, "123 Main St", null);
+    when(carrierClient.nextStage(ShipmentStatus.CREATED))
+        .thenReturn(new CarrierUpdate(ShipmentStatus.PICKED, "Origin facility"));
+
+    shipmentService.advance(shipment);
+
+    assertThat(shipment.getStatus()).isEqualTo(ShipmentStatus.PICKED);
+    verify(eventPublisher).publishEvent(any(ShipmentPickedEvent.class));
+  }
+
+  @Test
+  void advanceMovesInTransitToDeliveredAndPublishesConfirmation() {
+    Shipment shipment = new Shipment(100L, ShipmentType.OUTBOUND, "123 Main St", null);
+    shipment.advanceTo(ShipmentStatus.PICKED);
+    shipment.advanceTo(ShipmentStatus.IN_TRANSIT);
+    when(carrierClient.nextStage(ShipmentStatus.IN_TRANSIT))
+        .thenReturn(new CarrierUpdate(ShipmentStatus.DELIVERED, "Destination"));
+
+    shipmentService.advance(shipment);
+
+    assertThat(shipment.getStatus()).isEqualTo(ShipmentStatus.DELIVERED);
+    assertThat(shipment.getDeliveredAt()).isNotNull();
+    verify(eventPublisher).publishEvent(any(DeliveryConfirmedEvent.class));
+  }
+
+  @Test
+  void advanceOnDeliveredShipmentIsNoOp() {
+    Shipment shipment = new Shipment(100L, ShipmentType.OUTBOUND, "123 Main St", null);
+    shipment.advanceTo(ShipmentStatus.PICKED);
+    shipment.advanceTo(ShipmentStatus.IN_TRANSIT);
+    shipment.advanceTo(ShipmentStatus.DELIVERED);
+
+    shipmentService.advance(shipment);
+
+    verify(carrierClient, never()).nextStage(any());
+    verify(eventPublisher, never()).publishEvent(any(ShipmentInTransitEvent.class));
+  }
+}
