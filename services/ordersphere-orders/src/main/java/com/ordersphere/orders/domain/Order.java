@@ -41,6 +41,15 @@ public class Order {
   @Column(name = "updated_at", nullable = false)
   private Instant updatedAt;
 
+  @Column(name = "payment_id")
+  private Long paymentId;
+
+  @Column(name = "shipment_id")
+  private Long shipmentId;
+
+  @Column(name = "shipping_destination")
+  private String shippingDestination;
+
   @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
   private List<OrderItem> items = new ArrayList<>();
 

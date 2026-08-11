@@ -10,6 +10,9 @@ public record OrderResponse(
     String customerUsername,
     OrderStatus status,
     List<LineItem> items,
+    Long paymentId,
+    Long shipmentId,
+    String shippingDestination,
     Instant createdAt,
     Instant updatedAt) {
 
@@ -26,6 +29,9 @@ public record OrderResponse(
         order.getCustomerUsername(),
         order.getStatus(),
         lineItems,
+        order.getPaymentId(),
+        order.getShipmentId(),
+        order.getShippingDestination(),
         order.getCreatedAt(),
         order.getUpdatedAt());
   }
