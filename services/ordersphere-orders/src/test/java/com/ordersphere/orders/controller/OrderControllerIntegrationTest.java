@@ -15,6 +15,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ordersphere.orders.client.InventoryClient;
+import com.ordersphere.orders.client.NotificationClient;
 import com.ordersphere.orders.client.PaymentClient;
 import com.ordersphere.orders.client.ShippingClient;
 import com.ordersphere.orders.dto.CreateOrderRequest;
@@ -53,6 +54,7 @@ class OrderControllerIntegrationTest {
   @MockBean private InventoryClient inventoryClient;
   @MockBean private PaymentClient paymentClient;
   @MockBean private ShippingClient shippingClient;
+  @MockBean private NotificationClient notificationClient;
 
   private String tokenFor(String username) {
     return jwtTokenProvider.generateToken(username, Map.of("role", "CUSTOMER"));

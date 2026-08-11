@@ -4,6 +4,7 @@ import com.ordersphere.events.OrderCancelledEvent;
 import com.ordersphere.events.OrderConfirmedEvent;
 import com.ordersphere.events.OrderCreatedEvent;
 import com.ordersphere.orders.client.InventoryClient;
+import com.ordersphere.orders.client.NotificationClient;
 import com.ordersphere.orders.client.PaymentClient;
 import com.ordersphere.orders.client.ServiceTokenProvider;
 import com.ordersphere.orders.client.ShippingClient;
@@ -35,6 +36,7 @@ public class OrderService {
   private final InventoryClient inventoryClient;
   private final PaymentClient paymentClient;
   private final ShippingClient shippingClient;
+  private final NotificationClient notificationClient;
   private final ServiceTokenProvider serviceTokenProvider;
   private final ApplicationEventPublisher eventPublisher;
 
@@ -43,12 +45,14 @@ public class OrderService {
       InventoryClient inventoryClient,
       PaymentClient paymentClient,
       ShippingClient shippingClient,
+      NotificationClient notificationClient,
       ServiceTokenProvider serviceTokenProvider,
       ApplicationEventPublisher eventPublisher) {
     this.orderRepository = orderRepository;
     this.inventoryClient = inventoryClient;
     this.paymentClient = paymentClient;
     this.shippingClient = shippingClient;
+    this.notificationClient = notificationClient;
     this.serviceTokenProvider = serviceTokenProvider;
     this.eventPublisher = eventPublisher;
   }
@@ -152,6 +156,11 @@ public class OrderService {
       order.markStatus(OrderStatus.CONFIRMED);
       orderRepository.save(order);
       eventPublisher.publishEvent(new OrderConfirmedEvent(order.getId()));
+      notificationClient.notify(
+          order.getCustomerUsername(),
+          NotificationClient.TemplateKey.ORDER_CONFIRMED,
+          Map.of("orderId", order.getId().toString()),
+          serviceTokenProvider.bearerToken());
     } else if (paymentStatus == PaymentClient.PaymentStatus.FAILED) {
       inventoryClient.release(order.getId(), serviceToken);
       cancelWithReason(order, OrderCancelledEvent.Reason.PAYMENT_FAILED);
@@ -162,6 +171,11 @@ public class OrderService {
     order.markStatus(OrderStatus.CANCELLED);
     orderRepository.save(order);
     eventPublisher.publishEvent(new OrderCancelledEvent(order.getId(), reason));
+    notificationClient.notify(
+        order.getCustomerUsername(),
+        NotificationClient.TemplateKey.ORDER_CANCELLED,
+        Map.of("orderId", order.getId().toString()),
+        serviceTokenProvider.bearerToken());
   }
 
   private Order findOrderOrThrow(String username, boolean isAdmin, Long orderId) {

@@ -15,6 +15,7 @@ import com.ordersphere.events.OrderCancelledEvent;
 import com.ordersphere.events.OrderConfirmedEvent;
 import com.ordersphere.events.OrderCreatedEvent;
 import com.ordersphere.orders.client.InventoryClient;
+import com.ordersphere.orders.client.NotificationClient;
 import com.ordersphere.orders.client.PaymentClient;
 import com.ordersphere.orders.client.ServiceTokenProvider;
 import com.ordersphere.orders.client.ShippingClient;
@@ -44,6 +45,7 @@ class OrderServiceTest {
   @Mock private InventoryClient inventoryClient;
   @Mock private PaymentClient paymentClient;
   @Mock private ShippingClient shippingClient;
+  @Mock private NotificationClient notificationClient;
   @Mock private ServiceTokenProvider serviceTokenProvider;
   @Mock private ApplicationEventPublisher eventPublisher;
 
@@ -57,9 +59,20 @@ class OrderServiceTest {
             inventoryClient,
             paymentClient,
             shippingClient,
+            notificationClient,
             serviceTokenProvider,
             eventPublisher);
     lenient().when(serviceTokenProvider.bearerToken()).thenReturn("Bearer service-token");
+    lenient()
+        .when(orderRepository.save(any(Order.class)))
+        .thenAnswer(
+            invocation -> {
+              Order order = invocation.getArgument(0);
+              if (order.getId() == null) {
+                order.setId(999L);
+              }
+              return order;
+            });
   }
 
   private CreateOrderRequest requestFor(String sku) {
@@ -100,6 +113,9 @@ class OrderServiceTest {
     verify(eventPublisher).publishEvent(any(OrderCreatedEvent.class));
     verify(eventPublisher).publishEvent(any(OrderCancelledEvent.class));
     verify(paymentClient, never()).initiate(any(), any(), any(), any(), any());
+    verify(notificationClient)
+        .notify(
+            eq("alice"), eq(NotificationClient.TemplateKey.ORDER_CANCELLED), any(), anyString());
   }
 
   @Test
@@ -113,6 +129,12 @@ class OrderServiceTest {
     assertThat(response.status()).isEqualTo(OrderStatus.CANCELLED);
     verify(inventoryClient).release(any(), eq("Bearer token"));
     verify(eventPublisher).publishEvent(any(OrderCancelledEvent.class));
+    verify(notificationClient)
+        .notify(
+            eq("alice"),
+            eq(NotificationClient.TemplateKey.ORDER_CANCELLED),
+            any(),
+            eq("Bearer service-token"));
   }
 
   @Test
@@ -131,6 +153,12 @@ class OrderServiceTest {
     assertThat(order.getStatus()).isEqualTo(OrderStatus.CONFIRMED);
     assertThat(order.getShipmentId()).isEqualTo(7L);
     verify(eventPublisher).publishEvent(any(OrderConfirmedEvent.class));
+    verify(notificationClient)
+        .notify(
+            eq("alice"),
+            eq(NotificationClient.TemplateKey.ORDER_CONFIRMED),
+            any(),
+            eq("Bearer service-token"));
   }
 
   @Test
@@ -166,6 +194,12 @@ class OrderServiceTest {
     verify(inventoryClient).release(10L, "Bearer service-token");
     verify(shippingClient, never()).createShipment(any(), any(), any());
     verify(eventPublisher).publishEvent(any(OrderCancelledEvent.class));
+    verify(notificationClient)
+        .notify(
+            eq("alice"),
+            eq(NotificationClient.TemplateKey.ORDER_CANCELLED),
+            any(),
+            eq("Bearer service-token"));
   }
 
   @Test
@@ -199,6 +233,12 @@ class OrderServiceTest {
     assertThat(response.status()).isEqualTo(OrderStatus.CANCELLED);
     verify(inventoryClient).release(10L, "Bearer token");
     verify(paymentClient, never()).refund(any(), any(), any());
+    verify(notificationClient)
+        .notify(
+            eq("alice"),
+            eq(NotificationClient.TemplateKey.ORDER_CANCELLED),
+            any(),
+            eq("Bearer service-token"));
   }
 
   @Test
@@ -214,6 +254,12 @@ class OrderServiceTest {
     assertThat(response.status()).isEqualTo(OrderStatus.CANCELLED);
     verify(inventoryClient).release(10L, "Bearer token");
     verify(paymentClient).refund(42L, "Order cancelled by customer", "Bearer token");
+    verify(notificationClient)
+        .notify(
+            eq("alice"),
+            eq(NotificationClient.TemplateKey.ORDER_CANCELLED),
+            any(),
+            eq("Bearer service-token"));
 
     OrderResponse second = orderService.cancelOrder("alice", false, 10L, "Bearer token");
     assertThat(second.status()).isEqualTo(OrderStatus.CANCELLED);
