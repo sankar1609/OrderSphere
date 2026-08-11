@@ -85,5 +85,23 @@ services:
       - postgres
       - service-registry
 
+  payment-service:
+    build:
+      context: .
+      dockerfile: services/payment-service/Dockerfile
+    container_name: ordersphere-payment-service
+    ports:
+      - "8084:8084"
+    environment:
+      DB_HOST: postgres
+      DB_NAME: payment_db
+      DB_USERNAME: ordersphere
+      DB_PASSWORD: ordersphere
+      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-key-change-me-before-any-real-deployment}
+      EUREKA_URI: http://service-registry:8761/eureka
+    depends_on:
+      - postgres
+      - service-registry
+
 volumes:
   postgres-data:
