@@ -1,0 +1,585 @@
+{
+  "info": {
+    "name": "OrderSphere - API Reference",
+    "description": "One request per endpoint across all six services, hit directly on their own ports (not through the gateway). This is a reference/exploration collection, not a guided flow - see full-order-flow.postman_collection.json for an end-to-end saga walkthrough. Run 'Login Customer' and 'Login Admin' first to populate {{customerToken}}/{{adminToken}}; most other requests just need one of those two variables and, where noted, an id captured from an earlier response.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "authBaseUrl", "value": "http://localhost:8081" },
+    { "key": "ordersBaseUrl", "value": "http://localhost:8082" },
+    { "key": "inventoryBaseUrl", "value": "http://localhost:8083" },
+    { "key": "paymentBaseUrl", "value": "http://localhost:8084" },
+    { "key": "shippingBaseUrl", "value": "http://localhost:8085" },
+    { "key": "notificationBaseUrl", "value": "http://localhost:8086" },
+    { "key": "customerToken", "value": "" },
+    { "key": "adminToken", "value": "" },
+    { "key": "userId", "value": "" },
+    { "key": "productSku", "value": "SKU-1001" },
+    { "key": "orderId", "value": "" },
+    { "key": "paymentMethodId", "value": "" },
+    { "key": "paymentId", "value": "" },
+    { "key": "shipmentId", "value": "" },
+    { "key": "notificationId", "value": "" },
+    { "key": "preferenceId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "1. Auth Service (:8081)",
+      "item": [
+        {
+          "name": "Register",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"alice\",\n  \"password\": \"SecurePass123\",\n  \"role\": \"CUSTOMER\"\n}"
+            },
+            "url": { "raw": "{{authBaseUrl}}/auth/register", "host": ["{{authBaseUrl}}"], "path": ["auth", "register"] },
+            "description": "role: CUSTOMER | VENDOR | ADMIN | AUDITOR. Expect 201; 409 if the username already exists."
+          }
+        },
+        {
+          "name": "Login Customer",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"alice\",\n  \"password\": \"SecurePass123\"\n}"
+            },
+            "url": { "raw": "{{authBaseUrl}}/auth/login", "host": ["{{authBaseUrl}}"], "path": ["auth", "login"] },
+            "description": "Saves the returned JWT into {{customerToken}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    pm.collectionVariables.set('customerToken', pm.response.json().token);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login Admin",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"admin\",\n  \"password\": \"admin123\"\n}"
+            },
+            "url": { "raw": "{{authBaseUrl}}/auth/login", "host": ["{{authBaseUrl}}"], "path": ["auth", "login"] },
+            "description": "Saves the returned JWT into {{adminToken}}. Used for every ADMIN/VENDOR-only endpoint below."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    pm.collectionVariables.set('adminToken', pm.response.json().token);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Current User",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+            "url": { "raw": "{{authBaseUrl}}/auth/me", "host": ["{{authBaseUrl}}"], "path": ["auth", "me"] }
+          }
+        },
+        {
+          "name": "Change User Role (Admin)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"role\": \"VENDOR\"\n}"
+            },
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/admin/users/{{userId}}/role",
+              "host": ["{{authBaseUrl}}"],
+              "path": ["auth", "admin", "users", "{{userId}}", "role"]
+            },
+            "description": "role: CUSTOMER | VENDOR | ADMIN | AUDITOR. Set {{userId}} first (e.g. from the id in Register's response)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Orders Service (:8082)",
+      "item": [
+        {
+          "name": "Create Order",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [{ \"sku\": \"{{productSku}}\", \"quantity\": 2 }],\n  \"paymentMethodId\": {{paymentMethodId}},\n  \"amount\": 49.98,\n  \"currency\": \"USD\",\n  \"shippingDestination\": \"123 Main St, Springfield\"\n}"
+            },
+            "url": { "raw": "{{ordersBaseUrl}}/orders", "host": ["{{ordersBaseUrl}}"], "path": ["orders"] },
+            "description": "Requires a product (folder 3) and payment method (folder 4) to already exist. Saves {{orderId}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('orderId', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List My Orders",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+            "url": { "raw": "{{ordersBaseUrl}}/orders", "host": ["{{ordersBaseUrl}}"], "path": ["orders"] }
+          }
+        },
+        {
+          "name": "Get Order",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+            "url": { "raw": "{{ordersBaseUrl}}/orders/{{orderId}}", "host": ["{{ordersBaseUrl}}"], "path": ["orders", "{{orderId}}"] }
+          }
+        },
+        {
+          "name": "Cancel Order",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders/{{orderId}}/cancel",
+              "host": ["{{ordersBaseUrl}}"],
+              "path": ["orders", "{{orderId}}", "cancel"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Inventory Service (:8083)",
+      "item": [
+        {
+          "name": "Create Product (Admin/Vendor)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sku\": \"{{productSku}}\",\n  \"name\": \"Wireless Mouse\",\n  \"quantityOnHand\": 100,\n  \"reorderThreshold\": 10\n}"
+            },
+            "url": { "raw": "{{inventoryBaseUrl}}/inventory/products", "host": ["{{inventoryBaseUrl}}"], "path": ["inventory", "products"] },
+            "description": "Expect 201; 409 if {{productSku}} already exists."
+          }
+        },
+        {
+          "name": "List Products",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+            "url": { "raw": "{{inventoryBaseUrl}}/inventory/products", "host": ["{{inventoryBaseUrl}}"], "path": ["inventory", "products"] }
+          }
+        },
+        {
+          "name": "Get Product By SKU",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/products/{{productSku}}",
+              "host": ["{{inventoryBaseUrl}}"],
+              "path": ["inventory", "products", "{{productSku}}"]
+            }
+          }
+        },
+        {
+          "name": "Restock (Admin/Vendor)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quantity\": 50\n}"
+            },
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/products/{{productSku}}/restock",
+              "host": ["{{inventoryBaseUrl}}"],
+              "path": ["inventory", "products", "{{productSku}}", "restock"]
+            }
+          }
+        },
+        {
+          "name": "Reserve Stock",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderId\": {{orderId}},\n  \"items\": [{ \"sku\": \"{{productSku}}\", \"quantity\": 2 }]\n}"
+            },
+            "url": { "raw": "{{inventoryBaseUrl}}/inventory/reservations", "host": ["{{inventoryBaseUrl}}"], "path": ["inventory", "reservations"] },
+            "description": "Normally called internally by ordersphere-orders during order creation - exposed here for direct testing."
+          }
+        },
+        {
+          "name": "Confirm Reservation",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/reservations/{{orderId}}/confirm",
+              "host": ["{{inventoryBaseUrl}}"],
+              "path": ["inventory", "reservations", "{{orderId}}", "confirm"]
+            }
+          }
+        },
+        {
+          "name": "Release Reservation",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/reservations/{{orderId}}/release",
+              "host": ["{{inventoryBaseUrl}}"],
+              "path": ["inventory", "reservations", "{{orderId}}", "release"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Payment Service (:8084)",
+      "item": [
+        {
+          "name": "Create Payment Method",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"CARD\",\n  \"token\": \"tok_visa_4242\"\n}"
+            },
+            "url": { "raw": "{{paymentBaseUrl}}/payment-methods", "host": ["{{paymentBaseUrl}}"], "path": ["payment-methods"] },
+            "description": "type currently only supports CARD. Saves {{paymentMethodId}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('paymentMethodId', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List My Payment Methods",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+            "url": { "raw": "{{paymentBaseUrl}}/payment-methods", "host": ["{{paymentBaseUrl}}"], "path": ["payment-methods"] }
+          }
+        },
+        {
+          "name": "Delete Payment Method",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+            "url": {
+              "raw": "{{paymentBaseUrl}}/payment-methods/{{paymentMethodId}}",
+              "host": ["{{paymentBaseUrl}}"],
+              "path": ["payment-methods", "{{paymentMethodId}}"]
+            }
+          }
+        },
+        {
+          "name": "Initiate Payment",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderId\": {{orderId}},\n  \"paymentMethodId\": {{paymentMethodId}},\n  \"amount\": 49.98,\n  \"currency\": \"USD\"\n}"
+            },
+            "url": { "raw": "{{paymentBaseUrl}}/payments", "host": ["{{paymentBaseUrl}}"], "path": ["payments"] },
+            "description": "Normally called internally by ordersphere-orders during order creation - exposed here for direct testing. Saves {{paymentId}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 202) {",
+                  "    pm.collectionVariables.set('paymentId', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Payment",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+            "url": { "raw": "{{paymentBaseUrl}}/payments/{{paymentId}}", "host": ["{{paymentBaseUrl}}"], "path": ["payments", "{{paymentId}}"] }
+          }
+        },
+        {
+          "name": "Refund Payment",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Customer requested cancellation\"\n}"
+            },
+            "url": {
+              "raw": "{{paymentBaseUrl}}/payments/{{paymentId}}/refund",
+              "host": ["{{paymentBaseUrl}}"],
+              "path": ["payments", "{{paymentId}}", "refund"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Shipping Service (:8085)",
+      "item": [
+        {
+          "name": "Create Shipment (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderId\": {{orderId}},\n  \"destination\": \"123 Main St, Springfield\"\n}"
+            },
+            "url": { "raw": "{{shippingBaseUrl}}/shipments", "host": ["{{shippingBaseUrl}}"], "path": ["shipments"] },
+            "description": "Normally called internally by ordersphere-orders once payment settles - exposed here for direct testing. Saves {{shipmentId}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('shipmentId', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Shipment",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+            "url": { "raw": "{{shippingBaseUrl}}/shipments/{{shipmentId}}", "host": ["{{shippingBaseUrl}}"], "path": ["shipments", "{{shipmentId}}"] }
+          }
+        },
+        {
+          "name": "Get Shipment Tracking",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+            "url": {
+              "raw": "{{shippingBaseUrl}}/shipments/{{shipmentId}}/tracking",
+              "host": ["{{shippingBaseUrl}}"],
+              "path": ["shipments", "{{shipmentId}}", "tracking"]
+            }
+          }
+        },
+        {
+          "name": "List Shipments By Order",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+            "url": {
+              "raw": "{{shippingBaseUrl}}/shipments/order/{{orderId}}",
+              "host": ["{{shippingBaseUrl}}"],
+              "path": ["shipments", "order", "{{orderId}}"]
+            }
+          }
+        },
+        {
+          "name": "Request Return",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Item damaged in transit\"\n}"
+            },
+            "url": {
+              "raw": "{{shippingBaseUrl}}/shipments/{{shipmentId}}/return",
+              "host": ["{{shippingBaseUrl}}"],
+              "path": ["shipments", "{{shipmentId}}", "return"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Notification Service (:8086)",
+      "item": [
+        {
+          "name": "Create Notification (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipientUsername\": \"alice\",\n  \"channel\": \"EMAIL\",\n  \"templateKey\": \"ORDER_CONFIRMED\",\n  \"variables\": { \"orderId\": \"{{orderId}}\" }\n}"
+            },
+            "url": { "raw": "{{notificationBaseUrl}}/notifications", "host": ["{{notificationBaseUrl}}"], "path": ["notifications"] },
+            "description": "channel: EMAIL | SMS | IN_APP | PUSH. templateKey: ORDER_CONFIRMED | ORDER_CANCELLED | PAYMENT_COMPLETED | PAYMENT_FAILED | SHIPMENT_CREATED | DELIVERY_CONFIRMED. Saves {{notificationId}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('notificationId', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List My Notifications",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+            "url": { "raw": "{{notificationBaseUrl}}/notifications", "host": ["{{notificationBaseUrl}}"], "path": ["notifications"] }
+          }
+        },
+        {
+          "name": "Get Notification",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+            "url": {
+              "raw": "{{notificationBaseUrl}}/notifications/{{notificationId}}",
+              "host": ["{{notificationBaseUrl}}"],
+              "path": ["notifications", "{{notificationId}}"]
+            }
+          }
+        },
+        {
+          "name": "Set Notification Preference",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"channel\": \"EMAIL\",\n  \"enabled\": true\n}"
+            },
+            "url": {
+              "raw": "{{notificationBaseUrl}}/notification-preferences",
+              "host": ["{{notificationBaseUrl}}"],
+              "path": ["notification-preferences"]
+            },
+            "description": "Saves {{preferenceId}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    pm.collectionVariables.set('preferenceId', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List My Preferences",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+            "url": {
+              "raw": "{{notificationBaseUrl}}/notification-preferences",
+              "host": ["{{notificationBaseUrl}}"],
+              "path": ["notification-preferences"]
+            }
+          }
+        },
+        {
+          "name": "Delete Preference",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+            "url": {
+              "raw": "{{notificationBaseUrl}}/notification-preferences/{{preferenceId}}",
+              "host": ["{{notificationBaseUrl}}"],
+              "path": ["notification-preferences", "{{preferenceId}}"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
