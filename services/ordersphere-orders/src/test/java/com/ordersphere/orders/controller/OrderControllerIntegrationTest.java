@@ -15,7 +15,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ordersphere.orders.client.InventoryClient;
-import com.ordersphere.orders.client.NotificationClient;
 import com.ordersphere.orders.client.PaymentClient;
 import com.ordersphere.orders.client.ShippingClient;
 import com.ordersphere.orders.dto.CreateOrderRequest;
@@ -35,6 +34,7 @@ import org.springframework.boot.testcontainers.service.connection.ServiceConnect
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.containers.RabbitMQContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
@@ -46,6 +46,9 @@ class OrderControllerIntegrationTest {
   @Container @ServiceConnection
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16");
 
+  @Container @ServiceConnection
+  static RabbitMQContainer rabbitmq = new RabbitMQContainer("rabbitmq:3.13-management");
+
   @Autowired private MockMvc mockMvc;
   @Autowired private ObjectMapper objectMapper;
   @Autowired private JwtTokenProvider jwtTokenProvider;
@@ -54,7 +57,6 @@ class OrderControllerIntegrationTest {
   @MockBean private InventoryClient inventoryClient;
   @MockBean private PaymentClient paymentClient;
   @MockBean private ShippingClient shippingClient;
-  @MockBean private NotificationClient notificationClient;
 
   private String tokenFor(String username) {
     return jwtTokenProvider.generateToken(username, Map.of("role", "CUSTOMER"));

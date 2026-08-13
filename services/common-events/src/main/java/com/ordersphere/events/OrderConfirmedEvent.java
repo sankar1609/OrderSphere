@@ -6,9 +6,11 @@ import lombok.Getter;
 public class OrderConfirmedEvent extends BaseEvent {
 
   private final Long orderId;
+  private final String customerUsername;
 
-  public OrderConfirmedEvent(Long orderId) {
+  public OrderConfirmedEvent(Long orderId, String customerUsername) {
     super("OrderConfirmedEvent");
     this.orderId = orderId;
+    this.customerUsername = customerUsername;
   }
 }

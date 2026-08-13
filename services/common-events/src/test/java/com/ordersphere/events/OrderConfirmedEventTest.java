@@ -8,9 +8,10 @@ class OrderConfirmedEventTest {
 
   @Test
   void carriesOrderIdAndEventType() {
-    OrderConfirmedEvent event = new OrderConfirmedEvent(1L);
+    OrderConfirmedEvent event = new OrderConfirmedEvent(1L, "alice");
 
     assertThat(event.getOrderId()).isEqualTo(1L);
+    assertThat(event.getCustomerUsername()).isEqualTo("alice");
     assertThat(event.getEventType()).isEqualTo("OrderConfirmedEvent");
   }
 }

@@ -8,11 +8,13 @@ public class PaymentFailedEvent extends BaseEvent {
   private final Long paymentId;
   private final Long orderId;
   private final String reason;
+  private final String customerUsername;
 
-  public PaymentFailedEvent(Long paymentId, Long orderId, String reason) {
+  public PaymentFailedEvent(Long paymentId, Long orderId, String reason, String customerUsername) {
     super("PaymentFailedEvent");
     this.paymentId = paymentId;
     this.orderId = orderId;
     this.reason = reason;
+    this.customerUsername = customerUsername;
   }
 }

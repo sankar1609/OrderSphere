@@ -13,10 +13,12 @@ public class OrderCancelledEvent extends BaseEvent {
 
   private final Long orderId;
   private final Reason reason;
+  private final String customerUsername;
 
-  public OrderCancelledEvent(Long orderId, Reason reason) {
+  public OrderCancelledEvent(Long orderId, Reason reason, String customerUsername) {
     super("OrderCancelledEvent");
     this.orderId = orderId;
     this.reason = reason;
+    this.customerUsername = customerUsername;
   }
 }

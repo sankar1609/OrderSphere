@@ -9,17 +9,18 @@ class OrderCancelledEventTest {
   @Test
   void carriesOrderIdReasonAndEventType() {
     OrderCancelledEvent event =
-        new OrderCancelledEvent(1L, OrderCancelledEvent.Reason.INVENTORY_UNAVAILABLE);
+        new OrderCancelledEvent(1L, OrderCancelledEvent.Reason.INVENTORY_UNAVAILABLE, "alice");
 
     assertThat(event.getOrderId()).isEqualTo(1L);
     assertThat(event.getReason()).isEqualTo(OrderCancelledEvent.Reason.INVENTORY_UNAVAILABLE);
+    assertThat(event.getCustomerUsername()).isEqualTo("alice");
     assertThat(event.getEventType()).isEqualTo("OrderCancelledEvent");
   }
 
   @Test
   void supportsPaymentFailedReason() {
     OrderCancelledEvent event =
-        new OrderCancelledEvent(1L, OrderCancelledEvent.Reason.PAYMENT_FAILED);
+        new OrderCancelledEvent(1L, OrderCancelledEvent.Reason.PAYMENT_FAILED, "alice");
 
     assertThat(event.getReason()).isEqualTo(OrderCancelledEvent.Reason.PAYMENT_FAILED);
   }

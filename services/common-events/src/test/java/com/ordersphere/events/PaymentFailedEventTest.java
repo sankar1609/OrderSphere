@@ -8,11 +8,12 @@ class PaymentFailedEventTest {
 
   @Test
   void carriesPaymentOrderReasonAndEventType() {
-    PaymentFailedEvent event = new PaymentFailedEvent(1L, 100L, "declined");
+    PaymentFailedEvent event = new PaymentFailedEvent(1L, 100L, "declined", "alice");
 
     assertThat(event.getPaymentId()).isEqualTo(1L);
     assertThat(event.getOrderId()).isEqualTo(100L);
     assertThat(event.getReason()).isEqualTo("declined");
+    assertThat(event.getCustomerUsername()).isEqualTo("alice");
     assertThat(event.getEventType()).isEqualTo("PaymentFailedEvent");
   }
 }

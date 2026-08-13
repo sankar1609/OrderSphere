@@ -11,6 +11,16 @@ services:
       - postgres-data:/var/lib/postgresql/data
       - ./docker/postgres-init:/docker-entrypoint-initdb.d
 
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: ordersphere-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ordersphere
+      RABBITMQ_DEFAULT_PASS: ordersphere
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
   service-registry:
     build:
       context: .
@@ -45,9 +55,13 @@ services:
       DB_PASSWORD: ordersphere
       JWT_SECRET: ${JWT_SECRET:-dev-only-secret-key-change-me-before-any-real-deployment}
       EUREKA_URI: http://service-registry:8761/eureka
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USERNAME: ordersphere
+      RABBITMQ_PASSWORD: ordersphere
     depends_on:
       - postgres
       - service-registry
+      - rabbitmq
 
   inventory-service:
     build:
@@ -63,9 +77,13 @@ services:
       DB_PASSWORD: ordersphere
       JWT_SECRET: ${JWT_SECRET:-dev-only-secret-key-change-me-before-any-real-deployment}
       EUREKA_URI: http://service-registry:8761/eureka
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USERNAME: ordersphere
+      RABBITMQ_PASSWORD: ordersphere
     depends_on:
       - postgres
       - service-registry
+      - rabbitmq
 
   ordersphere-orders:
     build:
@@ -81,9 +99,13 @@ services:
       DB_PASSWORD: ordersphere
       JWT_SECRET: ${JWT_SECRET:-dev-only-secret-key-change-me-before-any-real-deployment}
       EUREKA_URI: http://service-registry:8761/eureka
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USERNAME: ordersphere
+      RABBITMQ_PASSWORD: ordersphere
     depends_on:
       - postgres
       - service-registry
+      - rabbitmq
 
   payment-service:
     build:
@@ -99,9 +121,13 @@ services:
       DB_PASSWORD: ordersphere
       JWT_SECRET: ${JWT_SECRET:-dev-only-secret-key-change-me-before-any-real-deployment}
       EUREKA_URI: http://service-registry:8761/eureka
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USERNAME: ordersphere
+      RABBITMQ_PASSWORD: ordersphere
     depends_on:
       - postgres
       - service-registry
+      - rabbitmq
 
   shipping-service:
     build:
@@ -117,9 +143,13 @@ services:
       DB_PASSWORD: ordersphere
       JWT_SECRET: ${JWT_SECRET:-dev-only-secret-key-change-me-before-any-real-deployment}
       EUREKA_URI: http://service-registry:8761/eureka
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USERNAME: ordersphere
+      RABBITMQ_PASSWORD: ordersphere
     depends_on:
       - postgres
       - service-registry
+      - rabbitmq
 
   notification-service:
     build:
@@ -135,9 +165,13 @@ services:
       DB_PASSWORD: ordersphere
       JWT_SECRET: ${JWT_SECRET:-dev-only-secret-key-change-me-before-any-real-deployment}
       EUREKA_URI: http://service-registry:8761/eureka
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USERNAME: ordersphere
+      RABBITMQ_PASSWORD: ordersphere
     depends_on:
       - postgres
       - service-registry
+      - rabbitmq
 
 volumes:
   postgres-data:

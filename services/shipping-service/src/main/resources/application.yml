@@ -14,6 +14,17 @@ spring:
     open-in-view: false
   flyway:
     enabled: true
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:ordersphere}
+    password: ${RABBITMQ_PASSWORD:ordersphere}
+    listener:
+      simple:
+        retry:
+          enabled: true
+          max-attempts: 3
+          initial-interval: 1000ms
 
 jwt:
   secret: ${JWT_SECRET:dev-only-secret-key-change-me-before-any-real-deployment}

@@ -114,7 +114,8 @@ public class PaymentService {
         payment.markStatus(PaymentStatus.COMPLETED);
         paymentRepository.save(payment);
         eventPublisher.publishEvent(
-            new PaymentCompletedEvent(payment.getId(), payment.getOrderId()));
+            new PaymentCompletedEvent(
+                payment.getId(), payment.getOrderId(), payment.getCustomerUsername()));
       }
       case DECLINED -> failPayment(payment, "Payment declined by gateway");
       case TRANSIENT_FAILURE -> {
@@ -153,7 +154,8 @@ public class PaymentService {
     payment.markStatus(PaymentStatus.FAILED);
     paymentRepository.save(payment);
     eventPublisher.publishEvent(
-        new PaymentFailedEvent(payment.getId(), payment.getOrderId(), reason));
+        new PaymentFailedEvent(
+            payment.getId(), payment.getOrderId(), reason, payment.getCustomerUsername()));
   }
 
   private Payment findPaymentOrThrow(String username, boolean isAdmin, Long paymentId) {

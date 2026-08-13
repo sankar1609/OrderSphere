@@ -4,7 +4,6 @@ import com.ordersphere.events.OrderCancelledEvent;
 import com.ordersphere.events.OrderConfirmedEvent;
 import com.ordersphere.events.OrderCreatedEvent;
 import com.ordersphere.orders.client.InventoryClient;
-import com.ordersphere.orders.client.NotificationClient;
 import com.ordersphere.orders.client.PaymentClient;
 import com.ordersphere.orders.client.ServiceTokenProvider;
 import com.ordersphere.orders.client.ShippingClient;
@@ -36,7 +35,6 @@ public class OrderService {
   private final InventoryClient inventoryClient;
   private final PaymentClient paymentClient;
   private final ShippingClient shippingClient;
-  private final NotificationClient notificationClient;
   private final ServiceTokenProvider serviceTokenProvider;
   private final ApplicationEventPublisher eventPublisher;
 
@@ -45,14 +43,12 @@ public class OrderService {
       InventoryClient inventoryClient,
       PaymentClient paymentClient,
       ShippingClient shippingClient,
-      NotificationClient notificationClient,
       ServiceTokenProvider serviceTokenProvider,
       ApplicationEventPublisher eventPublisher) {
     this.orderRepository = orderRepository;
     this.inventoryClient = inventoryClient;
     this.paymentClient = paymentClient;
     this.shippingClient = shippingClient;
-    this.notificationClient = notificationClient;
     this.serviceTokenProvider = serviceTokenProvider;
     this.eventPublisher = eventPublisher;
   }
@@ -140,42 +136,64 @@ public class OrderService {
       return;
     }
 
-    String serviceToken = serviceTokenProvider.bearerToken();
     PaymentClient.PaymentStatus paymentStatus =
-        paymentClient.getStatus(order.getPaymentId(), serviceToken);
+        paymentClient.getStatus(order.getPaymentId(), serviceTokenProvider.bearerToken());
 
     if (paymentStatus == PaymentClient.PaymentStatus.COMPLETED) {
-      try {
-        Long shipmentId =
-            shippingClient.createShipment(
-                order.getId(), order.getShippingDestination(), serviceToken);
-        order.setShipmentId(shipmentId);
-      } catch (ShipmentCreationException ex) {
-        log.warn("Shipment creation failed for orderId {}: {}", order.getId(), ex.getMessage());
-      }
-      order.markStatus(OrderStatus.CONFIRMED);
-      orderRepository.save(order);
-      eventPublisher.publishEvent(new OrderConfirmedEvent(order.getId()));
-      notificationClient.notify(
-          order.getCustomerUsername(),
-          NotificationClient.TemplateKey.ORDER_CONFIRMED,
-          Map.of("orderId", order.getId().toString()),
-          serviceTokenProvider.bearerToken());
+      handlePaymentCompleted(order);
     } else if (paymentStatus == PaymentClient.PaymentStatus.FAILED) {
-      inventoryClient.release(order.getId(), serviceToken);
-      cancelWithReason(order, OrderCancelledEvent.Reason.PAYMENT_FAILED);
+      handlePaymentFailed(order);
     }
+  }
+
+  /**
+   * Reacts to a PaymentCompletedEvent/PaymentFailedEvent consumed directly off the broker (see
+   * PaymentEventListener), skipping the paymentClient.getStatus() round-trip that
+   * progressAwaitingPayment needs when it's polling blind. Guarded the same way, so a redelivered
+   * message against an order that's already past AWAITING_PAYMENT is a no-op.
+   */
+  @Transactional
+  public void onPaymentEvent(Long orderId, boolean succeeded) {
+    orderRepository
+        .findById(orderId)
+        .filter(order -> order.getStatus() == OrderStatus.AWAITING_PAYMENT)
+        .ifPresentOrElse(
+            order -> {
+              if (succeeded) {
+                handlePaymentCompleted(order);
+              } else {
+                handlePaymentFailed(order);
+              }
+            },
+            () ->
+                log.debug("Ignoring payment event for orderId {}: not AWAITING_PAYMENT", orderId));
+  }
+
+  private void handlePaymentCompleted(Order order) {
+    try {
+      Long shipmentId =
+          shippingClient.createShipment(
+              order.getId(), order.getShippingDestination(), serviceTokenProvider.bearerToken());
+      order.setShipmentId(shipmentId);
+    } catch (ShipmentCreationException ex) {
+      log.warn("Shipment creation failed for orderId {}: {}", order.getId(), ex.getMessage());
+    }
+    order.markStatus(OrderStatus.CONFIRMED);
+    orderRepository.save(order);
+    eventPublisher.publishEvent(
+        new OrderConfirmedEvent(order.getId(), order.getCustomerUsername()));
+  }
+
+  private void handlePaymentFailed(Order order) {
+    inventoryClient.release(order.getId(), serviceTokenProvider.bearerToken());
+    cancelWithReason(order, OrderCancelledEvent.Reason.PAYMENT_FAILED);
   }
 
   private void cancelWithReason(Order order, OrderCancelledEvent.Reason reason) {
     order.markStatus(OrderStatus.CANCELLED);
     orderRepository.save(order);
-    eventPublisher.publishEvent(new OrderCancelledEvent(order.getId(), reason));
-    notificationClient.notify(
-        order.getCustomerUsername(),
-        NotificationClient.TemplateKey.ORDER_CANCELLED,
-        Map.of("orderId", order.getId().toString()),
-        serviceTokenProvider.bearerToken());
+    eventPublisher.publishEvent(
+        new OrderCancelledEvent(order.getId(), reason, order.getCustomerUsername()));
   }
 
   private Order findOrderOrThrow(String username, boolean isAdmin, Long orderId) {

@@ -21,6 +21,7 @@ import org.springframework.boot.testcontainers.service.connection.ServiceConnect
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.containers.RabbitMQContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
@@ -31,6 +32,9 @@ class InventoryControllerIntegrationTest {
 
   @Container @ServiceConnection
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16");
+
+  @Container @ServiceConnection
+  static RabbitMQContainer rabbitmq = new RabbitMQContainer("rabbitmq:3.13-management");
 
   @Autowired private MockMvc mockMvc;
   @Autowired private ObjectMapper objectMapper;
