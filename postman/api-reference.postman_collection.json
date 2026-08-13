@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "OrderSphere - API Reference",
-    "description": "One request per endpoint across all six services, hit directly on their own ports (not through the gateway). This is a reference/exploration collection, not a guided flow - see full-order-flow.postman_collection.json for an end-to-end saga walkthrough. Run 'Login Customer' and 'Login Admin' first to populate {{customerToken}}/{{adminToken}}; most other requests just need one of those two variables and, where noted, an id captured from an earlier response.",
+    "description": "One request per endpoint across all six services, hit directly on their own ports (not through the gateway). This is a reference/exploration collection, not a guided flow - see full-order-flow.postman_collection.json for an end-to-end saga walkthrough. Folders are ordered so the whole collection runs cleanly top-to-bottom via Collection Runner (each folder is labeled with its port for lookup, but the folder *sequence* reflects setup dependencies, not port number - e.g. Inventory/Payment setup runs before Orders because Create Order needs an existing product and payment method). The standalone Reserve/Confirm/Release Reservation and Initiate/Get/Refund Payment requests operate on a fixed {{demoOrderId}} rather than a real order's {{orderId}}, since inventory-service and payment-service don't cross-validate orderId against ordersphere-orders (database-per-service, no cross-service FKs) - this lets those folders run standalone without waiting on the Orders folder, and mirrors how ordersphere-orders itself calls them internally (both are idempotent per-orderId, so re-running this collection is safe).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -15,8 +15,10 @@
     { "key": "adminToken", "value": "" },
     { "key": "userId", "value": "" },
     { "key": "productSku", "value": "SKU-1001" },
+    { "key": "demoOrderId", "value": "900001" },
     { "key": "orderId", "value": "" },
     { "key": "paymentMethodId", "value": "" },
+    { "key": "scratchPaymentMethodId", "value": "" },
     { "key": "paymentId", "value": "" },
     { "key": "shipmentId", "value": "" },
     { "key": "notificationId", "value": "" },
@@ -36,7 +38,7 @@
               "raw": "{\n  \"username\": \"alice\",\n  \"password\": \"SecurePass123\",\n  \"role\": \"CUSTOMER\"\n}"
             },
             "url": { "raw": "{{authBaseUrl}}/auth/register", "host": ["{{authBaseUrl}}"], "path": ["auth", "register"] },
-            "description": "role: CUSTOMER | VENDOR | ADMIN | AUDITOR. Expect 201; 409 if the username already exists."
+            "description": "role: CUSTOMER | VENDOR | ADMIN | AUDITOR. Expect 201; 409 if the username already exists (safe to ignore and continue - Login Customer below doesn't depend on this succeeding)."
           }
         },
         {
@@ -74,7 +76,7 @@
               "raw": "{\n  \"username\": \"admin\",\n  \"password\": \"admin123\"\n}"
             },
             "url": { "raw": "{{authBaseUrl}}/auth/login", "host": ["{{authBaseUrl}}"], "path": ["auth", "login"] },
-            "description": "Saves the returned JWT into {{adminToken}}. Used for every ADMIN/VENDOR-only endpoint below."
+            "description": "admin/admin123 is the bootstrap admin auto-created by AdminBootstrapRunner on auth-service's first startup against a fresh database. Saves the returned JWT into {{adminToken}}. Used for every ADMIN/VENDOR-only endpoint below."
           },
           "event": [
             {
@@ -94,8 +96,21 @@
           "request": {
             "method": "GET",
             "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
-            "url": { "raw": "{{authBaseUrl}}/auth/me", "host": ["{{authBaseUrl}}"], "path": ["auth", "me"] }
-          }
+            "url": { "raw": "{{authBaseUrl}}/auth/me", "host": ["{{authBaseUrl}}"], "path": ["auth", "me"] },
+            "description": "Also saves {{userId}} (alice's id) for the role-change request below - more reliable than reading it off Register, which may 409 on repeat runs."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    pm.collectionVariables.set('userId', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Change User Role (Admin)",
@@ -114,74 +129,13 @@
               "host": ["{{authBaseUrl}}"],
               "path": ["auth", "admin", "users", "{{userId}}", "role"]
             },
-            "description": "role: CUSTOMER | VENDOR | ADMIN | AUDITOR. Set {{userId}} first (e.g. from the id in Register's response)."
+            "description": "role: CUSTOMER | VENDOR | ADMIN | AUDITOR. Promotes alice to VENDOR - her already-issued {{customerToken}} still carries the CUSTOMER role claim from login time, so this doesn't affect the rest of the run. Note this is a real, persistent change to alice's role in the database."
           }
         }
       ]
     },
     {
-      "name": "2. Orders Service (:8082)",
-      "item": [
-        {
-          "name": "Create Order",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"items\": [{ \"sku\": \"{{productSku}}\", \"quantity\": 2 }],\n  \"paymentMethodId\": {{paymentMethodId}},\n  \"amount\": 49.98,\n  \"currency\": \"USD\",\n  \"shippingDestination\": \"123 Main St, Springfield\"\n}"
-            },
-            "url": { "raw": "{{ordersBaseUrl}}/orders", "host": ["{{ordersBaseUrl}}"], "path": ["orders"] },
-            "description": "Requires a product (folder 3) and payment method (folder 4) to already exist. Saves {{orderId}}."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "exec": [
-                  "if (pm.response.code === 201) {",
-                  "    pm.collectionVariables.set('orderId', pm.response.json().id);",
-                  "}"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "List My Orders",
-          "request": {
-            "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
-            "url": { "raw": "{{ordersBaseUrl}}/orders", "host": ["{{ordersBaseUrl}}"], "path": ["orders"] }
-          }
-        },
-        {
-          "name": "Get Order",
-          "request": {
-            "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
-            "url": { "raw": "{{ordersBaseUrl}}/orders/{{orderId}}", "host": ["{{ordersBaseUrl}}"], "path": ["orders", "{{orderId}}"] }
-          }
-        },
-        {
-          "name": "Cancel Order",
-          "request": {
-            "method": "POST",
-            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
-            "url": {
-              "raw": "{{ordersBaseUrl}}/orders/{{orderId}}/cancel",
-              "host": ["{{ordersBaseUrl}}"],
-              "path": ["orders", "{{orderId}}", "cancel"]
-            }
-          }
-        }
-      ]
-    },
-    {
-      "name": "3. Inventory Service (:8083)",
+      "name": "2. Inventory Service (:8083)",
       "item": [
         {
           "name": "Create Product (Admin/Vendor)",
@@ -196,7 +150,7 @@
               "raw": "{\n  \"sku\": \"{{productSku}}\",\n  \"name\": \"Wireless Mouse\",\n  \"quantityOnHand\": 100,\n  \"reorderThreshold\": 10\n}"
             },
             "url": { "raw": "{{inventoryBaseUrl}}/inventory/products", "host": ["{{inventoryBaseUrl}}"], "path": ["inventory", "products"] },
-            "description": "Expect 201; 409 if {{productSku}} already exists."
+            "description": "Expect 201; 409 if {{productSku}} already exists from a previous run - safe to ignore, the Orders folder just needs the product to exist either way."
           }
         },
         {
@@ -248,10 +202,10 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"orderId\": {{orderId}},\n  \"items\": [{ \"sku\": \"{{productSku}}\", \"quantity\": 2 }]\n}"
+              "raw": "{\n  \"orderId\": {{demoOrderId}},\n  \"items\": [{ \"sku\": \"{{productSku}}\", \"quantity\": 2 }]\n}"
             },
             "url": { "raw": "{{inventoryBaseUrl}}/inventory/reservations", "host": ["{{inventoryBaseUrl}}"], "path": ["inventory", "reservations"] },
-            "description": "Normally called internally by ordersphere-orders during order creation - exposed here for direct testing."
+            "description": "Normally called internally by ordersphere-orders during order creation - exercised here directly against {{demoOrderId}} (a fixed standalone id, not a real order) so this folder doesn't depend on the Orders folder having run. Idempotent: re-running returns the existing reservation instead of erroring."
           }
         },
         {
@@ -260,9 +214,9 @@
             "method": "POST",
             "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
             "url": {
-              "raw": "{{inventoryBaseUrl}}/inventory/reservations/{{orderId}}/confirm",
+              "raw": "{{inventoryBaseUrl}}/inventory/reservations/{{demoOrderId}}/confirm",
               "host": ["{{inventoryBaseUrl}}"],
-              "path": ["inventory", "reservations", "{{orderId}}", "confirm"]
+              "path": ["inventory", "reservations", "{{demoOrderId}}", "confirm"]
             }
           }
         },
@@ -272,16 +226,17 @@
             "method": "POST",
             "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
             "url": {
-              "raw": "{{inventoryBaseUrl}}/inventory/reservations/{{orderId}}/release",
+              "raw": "{{inventoryBaseUrl}}/inventory/reservations/{{demoOrderId}}/release",
               "host": ["{{inventoryBaseUrl}}"],
-              "path": ["inventory", "reservations", "{{orderId}}", "release"]
-            }
+              "path": ["inventory", "reservations", "{{demoOrderId}}", "release"]
+            },
+            "description": "Releasing a CONFIRMED reservation (as just set by Confirm above) is valid - release() only special-cases already-RELEASED/EXPIRED reservations as a no-op, any other status is released normally."
           }
         }
       ]
     },
     {
-      "name": "4. Payment Service (:8084)",
+      "name": "3. Payment Service (:8084)",
       "item": [
         {
           "name": "Create Payment Method",
@@ -296,7 +251,7 @@
               "raw": "{\n  \"type\": \"CARD\",\n  \"token\": \"tok_visa_4242\"\n}"
             },
             "url": { "raw": "{{paymentBaseUrl}}/payment-methods", "host": ["{{paymentBaseUrl}}"], "path": ["payment-methods"] },
-            "description": "type currently only supports CARD. Saves {{paymentMethodId}}."
+            "description": "type currently only supports CARD. Saves {{paymentMethodId}} - kept alive for the Orders folder below, so Delete Payment Method (further down this folder) uses its own throwaway payment method instead of this one."
           },
           "event": [
             {
@@ -320,14 +275,42 @@
           }
         },
         {
+          "name": "Create Payment Method (scratch, for delete demo)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"CARD\",\n  \"token\": \"tok_scratch_0000\"\n}"
+            },
+            "url": { "raw": "{{paymentBaseUrl}}/payment-methods", "host": ["{{paymentBaseUrl}}"], "path": ["payment-methods"] },
+            "description": "A disposable payment method just for the Delete request below, so deleting it doesn't remove the {{paymentMethodId}} the Orders folder needs. Saves {{scratchPaymentMethodId}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('scratchPaymentMethodId', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Delete Payment Method",
           "request": {
             "method": "DELETE",
             "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
             "url": {
-              "raw": "{{paymentBaseUrl}}/payment-methods/{{paymentMethodId}}",
+              "raw": "{{paymentBaseUrl}}/payment-methods/{{scratchPaymentMethodId}}",
               "host": ["{{paymentBaseUrl}}"],
-              "path": ["payment-methods", "{{paymentMethodId}}"]
+              "path": ["payment-methods", "{{scratchPaymentMethodId}}"]
             }
           }
         },
@@ -341,10 +324,10 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"orderId\": {{orderId}},\n  \"paymentMethodId\": {{paymentMethodId}},\n  \"amount\": 49.98,\n  \"currency\": \"USD\"\n}"
+              "raw": "{\n  \"orderId\": {{demoOrderId}},\n  \"paymentMethodId\": {{paymentMethodId}},\n  \"amount\": 49.98,\n  \"currency\": \"USD\"\n}"
             },
             "url": { "raw": "{{paymentBaseUrl}}/payments", "host": ["{{paymentBaseUrl}}"], "path": ["payments"] },
-            "description": "Normally called internally by ordersphere-orders during order creation - exposed here for direct testing. Saves {{paymentId}}."
+            "description": "Normally called internally by ordersphere-orders during order creation - exercised here directly against {{demoOrderId}} so this folder doesn't depend on the Orders folder having run. Idempotent: re-running returns the existing payment. Saves {{paymentId}}. Expect 202 - the payment starts PENDING and only settles to COMPLETED on payment-service's ~5s PaymentProcessingJob sweep, so it likely won't be COMPLETED yet by the time you reach Refund Payment below."
           },
           "event": [
             {
@@ -383,7 +366,57 @@
               "raw": "{{paymentBaseUrl}}/payments/{{paymentId}}/refund",
               "host": ["{{paymentBaseUrl}}"],
               "path": ["payments", "{{paymentId}}", "refund"]
+            },
+            "description": "PaymentService only allows refunding a COMPLETED payment. Run right after Initiate Payment (in a fresh, fast pass through the collection) this will legitimately return an error - the payment is still PENDING until the ~5s settlement sweep runs. Re-send a few seconds later, or run this request on its own once Get Payment shows status COMPLETED, to see the 202/200 success path."
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Orders Service (:8082)",
+      "item": [
+        {
+          "name": "Create Order",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [{ \"sku\": \"{{productSku}}\", \"quantity\": 2 }],\n  \"paymentMethodId\": {{paymentMethodId}},\n  \"amount\": 49.98,\n  \"currency\": \"USD\",\n  \"shippingDestination\": \"123 Main St, Springfield\"\n}"
+            },
+            "url": { "raw": "{{ordersBaseUrl}}/orders", "host": ["{{ordersBaseUrl}}"], "path": ["orders"] },
+            "description": "Needs the product (folder 2) and payment method (folder 3) created above - if either variable is still empty because an earlier request was skipped, this sends invalid JSON and comes back as an empty-bodied 401 rather than a helpful error, so run folders 1-3 first. Expect 201 with status AWAITING_PAYMENT (inventory reservation and payment initiation both happen synchronously inside this call). Saves {{orderId}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('orderId', pm.response.json().id);",
+                  "}"
+                ]
+              }
             }
+          ]
+        },
+        {
+          "name": "List My Orders",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+            "url": { "raw": "{{ordersBaseUrl}}/orders", "host": ["{{ordersBaseUrl}}"], "path": ["orders"] }
+          }
+        },
+        {
+          "name": "Get Order",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+            "url": { "raw": "{{ordersBaseUrl}}/orders/{{orderId}}", "host": ["{{ordersBaseUrl}}"], "path": ["orders", "{{orderId}}"] }
           }
         }
       ]
@@ -404,7 +437,7 @@
               "raw": "{\n  \"orderId\": {{orderId}},\n  \"destination\": \"123 Main St, Springfield\"\n}"
             },
             "url": { "raw": "{{shippingBaseUrl}}/shipments", "host": ["{{shippingBaseUrl}}"], "path": ["shipments"] },
-            "description": "Normally called internally by ordersphere-orders once payment settles - exposed here for direct testing. Saves {{shipmentId}}."
+            "description": "Normally ordersphere-orders creates the shipment itself once payment settles (via its own ~5s OrderSagaProgressJob sweep) - calling this directly, right after Create Order above, gets there first in a fast run. Uses the real {{orderId}} from the Orders folder. Saves {{shipmentId}}."
           },
           "event": [
             {
@@ -467,7 +500,8 @@
               "raw": "{{shippingBaseUrl}}/shipments/{{shipmentId}}/return",
               "host": ["{{shippingBaseUrl}}"],
               "path": ["shipments", "{{shipmentId}}", "return"]
-            }
+            },
+            "description": "ShipmentService only allows a return once the shipment's status is DELIVERED. Run right after Create Shipment above, the shipment is still CREATED, so this legitimately returns an error - shipping-service progresses CREATED -> PICKED -> IN_TRANSIT -> DELIVERED one stage per sweep. Re-send after the shipment has had time to progress (check via Get Shipment) to see the success path."
           }
         }
       ]
@@ -577,6 +611,24 @@
               "host": ["{{notificationBaseUrl}}"],
               "path": ["notification-preferences", "{{preferenceId}}"]
             }
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. Cleanup",
+      "item": [
+        {
+          "name": "Cancel Order",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders/{{orderId}}/cancel",
+              "host": ["{{ordersBaseUrl}}"],
+              "path": ["orders", "{{orderId}}", "cancel"]
+            },
+            "description": "Deliberately last in the run: cancelling {{orderId}} here (rather than immediately after Create Order) means the Shipping folder above still gets a live order to attach a shipment to. Expect 200 with status CANCELLED; safe to re-send, cancellation is idempotent."
           }
         }
       ]
