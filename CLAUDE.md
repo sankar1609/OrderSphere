@@ -423,7 +423,7 @@ Service Registry (Eureka) - 8761
 
 - [ ] Implement React/Vue.js Web UI
 - [ ] Add comprehensive API documentation (OpenAPI/Swagger)
-- [ ] Implement message broker (RabbitMQ/Kafka)
+- [x] Implement message broker (RabbitMQ/Kafka)
 - [ ] Add Hyperledger Fabric Ledger Service
 - [ ] Implement CQRS for analytics/reporting
 - [ ] Add distributed tracing (Jaeger/Zipkin)
