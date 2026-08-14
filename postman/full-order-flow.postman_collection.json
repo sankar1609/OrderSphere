@@ -1,0 +1,401 @@
+{
+  "info": {
+    "name": "OrderSphere - Full Order Flow",
+    "description": "End-to-end manual test collection spanning auth-service, inventory-service, ordersphere-orders, payment-service, shipping-service, and notification-service. Requires the full stack running (docker-compose up). Hits each service directly on its own port rather than through the gateway, matching the auth-service collection's convention. Run folders top to bottom. Several steps are async (payment settlement, shipment progression, notification delivery all happen on ~5s scheduled sweeps in their respective services) - where a request is marked 'poll', just re-send it every few seconds until the status you're expecting shows up.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "authBaseUrl", "value": "http://localhost:8081" },
+    { "key": "inventoryBaseUrl", "value": "http://localhost:8083" },
+    { "key": "ordersBaseUrl", "value": "http://localhost:8082" },
+    { "key": "paymentBaseUrl", "value": "http://localhost:8084" },
+    { "key": "shippingBaseUrl", "value": "http://localhost:8085" },
+    { "key": "notificationBaseUrl", "value": "http://localhost:8086" },
+    { "key": "productSku", "value": "WIDGET-001" },
+    { "key": "customerToken", "value": "" },
+    { "key": "adminToken", "value": "" },
+    { "key": "paymentMethodId", "value": "" },
+    { "key": "declinePaymentMethodId", "value": "" },
+    { "key": "orderId", "value": "" },
+    { "key": "paymentId", "value": "" },
+    { "key": "shipmentId", "value": "" },
+    { "key": "declineOrderId", "value": "" },
+    { "key": "cancelOrderId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "1. Setup - Auth",
+      "item": [
+        {
+          "name": "Register Customer (alice)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"alice\",\n  \"password\": \"password123\",\n  \"role\": \"CUSTOMER\"\n}"
+            },
+            "url": { "raw": "{{authBaseUrl}}/auth/register", "host": ["{{authBaseUrl}}"], "path": ["auth", "register"] },
+            "description": "Expect 201. If alice already exists from a previous run, expect 409 - just proceed to Login."
+          }
+        },
+        {
+          "name": "Login Customer (alice)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"alice\",\n  \"password\": \"password123\"\n}"
+            },
+            "url": { "raw": "{{authBaseUrl}}/auth/login", "host": ["{{authBaseUrl}}"], "path": ["auth", "login"] },
+            "description": "Saves the token into {{customerToken}} - used for every request made 'as the customer' below (payment methods, order creation, cancellation, reading own notifications)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    pm.collectionVariables.set('customerToken', pm.response.json().token);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login Admin (bootstrap)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"admin\",\n  \"password\": \"admin123\"\n}"
+            },
+            "url": { "raw": "{{authBaseUrl}}/auth/login", "host": ["{{authBaseUrl}}"], "path": ["auth", "login"] },
+            "description": "Logs in as auth-service's auto-bootstrapped admin. Saves the token into {{adminToken}} - used to create the product below (inventory product creation is ADMIN/VENDOR only)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    pm.collectionVariables.set('adminToken', pm.response.json().token);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Setup - Inventory (Admin)",
+      "item": [
+        {
+          "name": "Create Product",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sku\": \"{{productSku}}\",\n  \"name\": \"Widget\",\n  \"quantityOnHand\": 50,\n  \"reorderThreshold\": 5\n}"
+            },
+            "url": { "raw": "{{inventoryBaseUrl}}/inventory/products", "host": ["{{inventoryBaseUrl}}"], "path": ["inventory", "products"] },
+            "description": "Expect 201. If {{productSku}} already exists from a previous run, expect 409 (DuplicateSkuException) - either proceed (stock is already there) or change {{productSku}} first."
+          }
+        },
+        {
+          "name": "Get Product (check available stock)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/products/{{productSku}}",
+              "host": ["{{inventoryBaseUrl}}"],
+              "path": ["inventory", "products", "{{productSku}}"]
+            },
+            "description": "Reusable check - run this any time to see quantityOnHand/quantityReserved/availableQuantity move as orders are placed, cancelled, or declined."
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Setup - Payment Methods (Customer)",
+      "item": [
+        {
+          "name": "Create Payment Method (normal - will succeed)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"CARD\",\n  \"token\": \"tok-visa-4242\"\n}"
+            },
+            "url": { "raw": "{{paymentBaseUrl}}/payment-methods", "host": ["{{paymentBaseUrl}}"], "path": ["payment-methods"] },
+            "description": "Any token other than FAIL-DECLINE/FAIL-TRANSIENT settles successfully in the stub gateway. Saves the id into {{paymentMethodId}}, used by the happy-path and cancellation orders below."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('paymentMethodId', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Payment Method (token=FAIL-DECLINE - will be declined)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"CARD\",\n  \"token\": \"FAIL-DECLINE\"\n}"
+            },
+            "url": { "raw": "{{paymentBaseUrl}}/payment-methods", "host": ["{{paymentBaseUrl}}"], "path": ["payment-methods"] },
+            "description": "StubPaymentGateway treats the literal token FAIL-DECLINE as a non-retryable decline - used in folder 5 to exercise the failure/compensation path. Saves the id into {{declinePaymentMethodId}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('declinePaymentMethodId', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Happy Path - Order to Delivery",
+      "item": [
+        {
+          "name": "Create Order",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [{ \"sku\": \"{{productSku}}\", \"quantity\": 2 }],\n  \"paymentMethodId\": {{paymentMethodId}},\n  \"amount\": 39.98,\n  \"currency\": \"USD\",\n  \"shippingDestination\": \"123 Main St, Springfield\"\n}"
+            },
+            "url": { "raw": "{{ordersBaseUrl}}/orders", "host": ["{{ordersBaseUrl}}"], "path": ["orders"] },
+            "description": "Expect 201 with status AWAITING_PAYMENT - inventory has already been reserved synchronously and payment has been initiated (also synchronously) but not yet settled. Saves {{orderId}} and {{paymentId}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    var body = pm.response.json();",
+                  "    pm.collectionVariables.set('orderId', body.id);",
+                  "    pm.collectionVariables.set('paymentId', body.paymentId);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Order Status [poll until CONFIRMED]",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+            "url": { "raw": "{{ordersBaseUrl}}/orders/{{orderId}}", "host": ["{{ordersBaseUrl}}"], "path": ["orders", "{{orderId}}"] },
+            "description": "Re-send every few seconds. payment-service settles PENDING payments on a ~5s sweep, then ordersphere-orders' own saga job polls payment status on its own ~5s sweep and only then creates the shipment and moves the order to CONFIRMED - so allow up to ~10-15s total. Once CONFIRMED, shipmentId will be populated in the response."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var body = pm.response.json();",
+                  "if (body.shipmentId) {",
+                  "    pm.collectionVariables.set('shipmentId', body.shipmentId);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Shipment [poll to watch it progress]",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+            "url": { "raw": "{{shippingBaseUrl}}/shipments/{{shipmentId}}", "host": ["{{shippingBaseUrl}}"], "path": ["shipments", "{{shipmentId}}"] },
+            "description": "Run Get Order Status first so {{shipmentId}} is populated. shipping-service advances CREATED -> PICKED -> IN_TRANSIT -> DELIVERED one stage per ~5s sweep - re-send this a few times to watch it progress."
+          }
+        },
+        {
+          "name": "Get Shipment Tracking History",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+            "url": {
+              "raw": "{{shippingBaseUrl}}/shipments/{{shipmentId}}/tracking",
+              "host": ["{{shippingBaseUrl}}"],
+              "path": ["shipments", "{{shipmentId}}", "tracking"]
+            },
+            "description": "Full ordered history of every stage transition recorded so far."
+          }
+        },
+        {
+          "name": "Get My Notifications",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+            "url": { "raw": "{{notificationBaseUrl}}/notifications", "host": ["{{notificationBaseUrl}}"], "path": ["notifications"] },
+            "description": "Once the order is CONFIRMED, ordersphere-orders queues an ORDER_CONFIRMED notification (ADMIN-only endpoint, called with orders-service's own service-identity token, not your customer token - you just read it back here). It starts PENDING and flips to SENT on notification-service's own ~5s delivery sweep."
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Failure Path - Payment Declined",
+      "item": [
+        {
+          "name": "Create Order (payment will be declined)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [{ \"sku\": \"{{productSku}}\", \"quantity\": 1 }],\n  \"paymentMethodId\": {{declinePaymentMethodId}},\n  \"amount\": 19.99,\n  \"currency\": \"USD\",\n  \"shippingDestination\": \"123 Main St, Springfield\"\n}"
+            },
+            "url": { "raw": "{{ordersBaseUrl}}/orders", "host": ["{{ordersBaseUrl}}"], "path": ["orders"] },
+            "description": "Uses the FAIL-DECLINE payment method from folder 3. Expect 201 with status AWAITING_PAYMENT (inventory was reserved and payment was initiated - the decline only happens once payment-service's job attempts settlement). Saves {{declineOrderId}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('declineOrderId', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Order Status [poll until CANCELLED]",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+            "url": { "raw": "{{ordersBaseUrl}}/orders/{{declineOrderId}}", "host": ["{{ordersBaseUrl}}"], "path": ["orders", "{{declineOrderId}}"] },
+            "description": "Re-send every few seconds. Once payment-service's sweep marks the payment FAILED, ordersphere-orders' saga job releases the inventory reservation and cancels the order - expect status to flip to CANCELLED within ~10-15s."
+          }
+        },
+        {
+          "name": "Verify Inventory Was Restored",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/products/{{productSku}}",
+              "host": ["{{inventoryBaseUrl}}"],
+              "path": ["inventory", "products", "{{productSku}}"]
+            },
+            "description": "availableQuantity should reflect the reservation from the declined order being released (compare against 'Get Product' from folder 2)."
+          }
+        },
+        {
+          "name": "Get My Notifications",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+            "url": { "raw": "{{notificationBaseUrl}}/notifications", "host": ["{{notificationBaseUrl}}"], "path": ["notifications"] },
+            "description": "Should now also include an ORDER_CANCELLED notification for the declined order."
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Customer-Initiated Cancellation",
+      "item": [
+        {
+          "name": "Create Order (to cancel)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [{ \"sku\": \"{{productSku}}\", \"quantity\": 1 }],\n  \"paymentMethodId\": {{paymentMethodId}},\n  \"amount\": 19.99,\n  \"currency\": \"USD\",\n  \"shippingDestination\": \"123 Main St, Springfield\"\n}"
+            },
+            "url": { "raw": "{{ordersBaseUrl}}/orders", "host": ["{{ordersBaseUrl}}"], "path": ["orders"] },
+            "description": "Uses the normal (succeeding) payment method. Saves {{cancelOrderId}}. You can run 'Cancel Order' below immediately (while still AWAITING_PAYMENT) or wait for it to reach CONFIRMED first - cancellation works, and compensates, from either state."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('cancelOrderId', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancel Order",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders/{{cancelOrderId}}/cancel",
+              "host": ["{{ordersBaseUrl}}"],
+              "path": ["orders", "{{cancelOrderId}}", "cancel"]
+            },
+            "description": "Expect 200 with status CANCELLED. Inventory is always released; a refund is additionally issued if the order had already reached CONFIRMED by the time you cancel it. Safe to re-send - cancellation is idempotent."
+          }
+        },
+        {
+          "name": "Get Order Status",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders/{{cancelOrderId}}",
+              "host": ["{{ordersBaseUrl}}"],
+              "path": ["orders", "{{cancelOrderId}}"]
+            },
+            "description": "Confirms CANCELLED."
+          }
+        }
+      ]
+    }
+  ]
+}
