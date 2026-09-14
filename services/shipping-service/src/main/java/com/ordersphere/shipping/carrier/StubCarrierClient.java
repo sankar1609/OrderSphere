@@ -13,6 +13,7 @@ public class StubCarrierClient implements CarrierClient {
       case PICKED -> new CarrierUpdate(ShipmentStatus.IN_TRANSIT, "Regional sorting facility");
       case IN_TRANSIT -> new CarrierUpdate(ShipmentStatus.DELIVERED, "Destination");
       case DELIVERED -> throw new IllegalStateException("Shipment is already delivered");
+      case CANCELLED -> throw new IllegalStateException("Shipment is cancelled");
     };
   }
 }

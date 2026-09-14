@@ -13,9 +13,11 @@ import com.ordersphere.orders.domain.OrderStatus;
 import com.ordersphere.orders.dto.CreateOrderRequest;
 import com.ordersphere.orders.dto.OrderResponse;
 import com.ordersphere.orders.exception.InventoryReservationException;
+import com.ordersphere.orders.exception.OrderCancellationNotAllowedException;
 import com.ordersphere.orders.exception.OrderNotFoundException;
 import com.ordersphere.orders.exception.PaymentInitiationException;
 import com.ordersphere.orders.exception.ShipmentCreationException;
+import com.ordersphere.orders.exception.ShipmentLookupException;
 import com.ordersphere.orders.repository.OrderRepository;
 import java.util.HashMap;
 import java.util.List;
@@ -117,6 +119,9 @@ public class OrderService {
     if (order.getStatus() == OrderStatus.CANCELLED) {
       return OrderResponse.from(order);
     }
+    if (order.getShipmentId() != null && isDelivered(order.getShipmentId(), bearerToken)) {
+      throw new OrderCancellationNotAllowedException(order.getId());
+    }
     if (order.getStatus() == OrderStatus.AWAITING_PAYMENT
         || order.getStatus() == OrderStatus.CONFIRMED) {
       inventoryClient.release(order.getId(), bearerToken);
@@ -128,6 +133,21 @@ public class OrderService {
     cancelWithReason(order, OrderCancelledEvent.Reason.CUSTOMER_REQUESTED);
 
     return OrderResponse.from(order);
+  }
+
+  /**
+   * Best-effort check: if shipping-service can't be reached, we fail open (allow the cancellation)
+   * rather than block a customer's cancel request over a transient dependency outage.
+   */
+  private boolean isDelivered(Long shipmentId, String bearerToken) {
+    try {
+      return shippingClient.getStatus(shipmentId, bearerToken)
+          == ShippingClient.ShipmentStatus.DELIVERED;
+    } catch (ShipmentLookupException ex) {
+      log.warn(
+          "Unable to verify shipment status for shipmentId {}: {}", shipmentId, ex.getMessage());
+      return false;
+    }
   }
 
   @Transactional
