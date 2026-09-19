@@ -6,6 +6,7 @@ import com.ordersphere.inventory.repository.ReservationRepository;
 import java.time.Instant;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 @Component
 public class ReservationExpiryJob {
@@ -20,6 +21,7 @@ public class ReservationExpiryJob {
   }
 
   @Scheduled(fixedDelayString = "${inventory.reservation.expiry-sweep-interval-ms}")
+  @Transactional
   public void sweepExpiredReservations() {
     for (Reservation reservation :
         reservationRepository.findByStatusAndExpiresAtBefore(

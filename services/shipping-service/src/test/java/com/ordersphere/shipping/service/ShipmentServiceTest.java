@@ -142,4 +142,52 @@ class ShipmentServiceTest {
     verify(carrierClient, never()).nextStage(any());
     verify(eventPublisher, never()).publishEvent(any(ShipmentInTransitEvent.class));
   }
+
+  @Test
+  void advanceOnCancelledShipmentIsNoOp() {
+    Shipment shipment = new Shipment(100L, ShipmentType.OUTBOUND, "123 Main St", null);
+    shipment.advanceTo(ShipmentStatus.CANCELLED);
+
+    shipmentService.advance(shipment);
+
+    verify(carrierClient, never()).nextStage(any());
+  }
+
+  @Test
+  void cancelForOrderHaltsInFlightShipment() {
+    Shipment shipment = new Shipment(100L, ShipmentType.OUTBOUND, "123 Main St", null);
+    shipment.advanceTo(ShipmentStatus.PICKED);
+    when(shipmentRepository.findByOrderIdAndType(100L, ShipmentType.OUTBOUND))
+        .thenReturn(Optional.of(shipment));
+
+    shipmentService.cancelForOrder(100L);
+
+    assertThat(shipment.getStatus()).isEqualTo(ShipmentStatus.CANCELLED);
+    verify(shipmentRepository).save(shipment);
+  }
+
+  @Test
+  void cancelForOrderIsNoOpWhenAlreadyDelivered() {
+    Shipment shipment = new Shipment(100L, ShipmentType.OUTBOUND, "123 Main St", null);
+    shipment.advanceTo(ShipmentStatus.PICKED);
+    shipment.advanceTo(ShipmentStatus.IN_TRANSIT);
+    shipment.advanceTo(ShipmentStatus.DELIVERED);
+    when(shipmentRepository.findByOrderIdAndType(100L, ShipmentType.OUTBOUND))
+        .thenReturn(Optional.of(shipment));
+
+    shipmentService.cancelForOrder(100L);
+
+    assertThat(shipment.getStatus()).isEqualTo(ShipmentStatus.DELIVERED);
+    verify(shipmentRepository, never()).save(any());
+  }
+
+  @Test
+  void cancelForOrderIsNoOpWhenNoShipmentExists() {
+    when(shipmentRepository.findByOrderIdAndType(100L, ShipmentType.OUTBOUND))
+        .thenReturn(Optional.empty());
+
+    shipmentService.cancelForOrder(100L);
+
+    verify(shipmentRepository, never()).save(any());
+  }
 }

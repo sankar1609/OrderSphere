@@ -1,17 +1,18 @@
 {
   "info": {
     "name": "OrderSphere - Full Order Flow",
-    "description": "End-to-end manual test collection spanning auth-service, inventory-service, ordersphere-orders, payment-service, shipping-service, and notification-service. Requires the full stack running (docker-compose up). Hits each service directly on its own port rather than through the gateway, matching the auth-service collection's convention. Run folders top to bottom. Several steps are async (payment settlement, shipment progression, notification delivery all happen on ~5s scheduled sweeps in their respective services) - where a request is marked 'poll', just re-send it every few seconds until the status you're expecting shows up.",
+    "description": "End-to-end manual test collection spanning auth-service, inventory-service, ordersphere-orders, payment-service, shipping-service, and notification-service. Requires the full stack running (docker-compose up). Routes through the API Gateway (http://localhost:8080) using Spring Cloud Gateway's discovery-locator convention (/{service-id}/...), rather than hitting each service directly on its own port. Run folders top to bottom. Several steps are async (payment settlement, shipment progression, notification delivery all happen on ~5s scheduled sweeps in their respective services) - where a request is marked 'poll', just re-send it every few seconds until the status you're expecting shows up.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
-    { "key": "authBaseUrl", "value": "http://localhost:8081" },
-    { "key": "inventoryBaseUrl", "value": "http://localhost:8083" },
-    { "key": "ordersBaseUrl", "value": "http://localhost:8082" },
-    { "key": "paymentBaseUrl", "value": "http://localhost:8084" },
-    { "key": "shippingBaseUrl", "value": "http://localhost:8085" },
-    { "key": "notificationBaseUrl", "value": "http://localhost:8086" },
-    { "key": "productSku", "value": "WIDGET-001" },
+    { "key": "gatewayBaseUrl", "value": "http://localhost:8080" },
+    { "key": "authBaseUrl", "value": "{{gatewayBaseUrl}}/auth-service" },
+    { "key": "inventoryBaseUrl", "value": "{{gatewayBaseUrl}}/inventory-service" },
+    { "key": "ordersBaseUrl", "value": "{{gatewayBaseUrl}}/ordersphere-orders" },
+    { "key": "paymentBaseUrl", "value": "{{gatewayBaseUrl}}/payment-service" },
+    { "key": "shippingBaseUrl", "value": "{{gatewayBaseUrl}}/shipping-service" },
+    { "key": "notificationBaseUrl", "value": "{{gatewayBaseUrl}}/notification-service" },
+    { "key": "productSku", "value": "WIDGET-002" },
     { "key": "customerToken", "value": "" },
     { "key": "adminToken", "value": "" },
     { "key": "paymentMethodId", "value": "" },

@@ -51,7 +51,10 @@ public class DomainEventListener {
     notify(
         event.getCustomerUsername(),
         TemplateKey.PAYMENT_COMPLETED,
-        Map.of("orderId", event.getOrderId().toString()));
+        Map.of(
+            "orderId", event.getOrderId().toString(),
+            "amount", event.getAmount().toPlainString(),
+            "currency", event.getCurrency()));
   }
 
   @RabbitHandler

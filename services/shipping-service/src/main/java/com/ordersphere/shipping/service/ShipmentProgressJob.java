@@ -2,11 +2,15 @@ package com.ordersphere.shipping.service;
 
 import com.ordersphere.shipping.domain.ShipmentStatus;
 import com.ordersphere.shipping.repository.ShipmentRepository;
+import java.util.EnumSet;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 @Component
 public class ShipmentProgressJob {
+
+  private static final EnumSet<ShipmentStatus> TERMINAL_STATUSES =
+      EnumSet.of(ShipmentStatus.DELIVERED, ShipmentStatus.CANCELLED);
 
   private final ShipmentRepository shipmentRepository;
   private final ShipmentService shipmentService;
@@ -23,6 +27,6 @@ public class ShipmentProgressJob {
   }
 
   public void advancePendingShipments() {
-    shipmentRepository.findByStatusNot(ShipmentStatus.DELIVERED).forEach(shipmentService::advance);
+    shipmentRepository.findByStatusNotIn(TERMINAL_STATUSES).forEach(shipmentService::advance);
   }
 }

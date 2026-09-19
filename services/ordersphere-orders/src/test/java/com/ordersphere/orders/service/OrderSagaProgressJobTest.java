@@ -22,13 +22,14 @@ class OrderSagaProgressJobTest {
   @Test
   void progressAwaitingPaymentOrdersDelegatesEachAwaitingPaymentOrder() {
     Order order = new Order("alice");
+    order.setId(10L);
     order.markStatus(OrderStatus.AWAITING_PAYMENT);
     when(orderRepository.findByStatus(OrderStatus.AWAITING_PAYMENT)).thenReturn(List.of(order));
 
     OrderSagaProgressJob job = new OrderSagaProgressJob(orderRepository, orderService);
     job.progressAwaitingPaymentOrders();
 
-    verify(orderService).progressAwaitingPayment(order);
+    verify(orderService).progressAwaitingPayment(10L);
   }
 
   @Test

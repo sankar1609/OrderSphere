@@ -150,9 +150,16 @@ public class OrderService {
     }
   }
 
+  /**
+   * Re-fetches the order under a row lock before progressing it, so this and {@link
+   * #onPaymentEvent} - which can both act on the same AWAITING_PAYMENT order at nearly the same
+   * moment (the saga sweep polling vs. the PaymentCompletedEvent listener) - serialize on the
+   * order row instead of racing into a duplicate confirmation or a lost update on shipmentId.
+   */
   @Transactional
-  public void progressAwaitingPayment(Order order) {
-    if (order.getStatus() != OrderStatus.AWAITING_PAYMENT) {
+  public void progressAwaitingPayment(Long orderId) {
+    Order order = orderRepository.findByIdForUpdate(orderId).orElse(null);
+    if (order == null || order.getStatus() != OrderStatus.AWAITING_PAYMENT) {
       return;
     }
 
@@ -169,13 +176,14 @@ public class OrderService {
   /**
    * Reacts to a PaymentCompletedEvent/PaymentFailedEvent consumed directly off the broker (see
    * PaymentEventListener), skipping the paymentClient.getStatus() round-trip that
-   * progressAwaitingPayment needs when it's polling blind. Guarded the same way, so a redelivered
-   * message against an order that's already past AWAITING_PAYMENT is a no-op.
+   * progressAwaitingPayment needs when it's polling blind. Takes the same row lock as
+   * progressAwaitingPayment so the two paths serialize instead of racing; guarded the same way,
+   * so a redelivered message against an order that's already past AWAITING_PAYMENT is a no-op.
    */
   @Transactional
   public void onPaymentEvent(Long orderId, boolean succeeded) {
     orderRepository
-        .findById(orderId)
+        .findByIdForUpdate(orderId)
         .filter(order -> order.getStatus() == OrderStatus.AWAITING_PAYMENT)
         .ifPresentOrElse(
             order -> {

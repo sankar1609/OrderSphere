@@ -103,8 +103,26 @@ public class ShipmentService {
   }
 
   @Transactional
+  public void cancelForOrder(Long orderId) {
+    shipmentRepository
+        .findByOrderIdAndType(orderId, ShipmentType.OUTBOUND)
+        .filter(
+            shipment ->
+                shipment.getStatus() != ShipmentStatus.DELIVERED
+                    && shipment.getStatus() != ShipmentStatus.CANCELLED)
+        .ifPresent(
+            shipment -> {
+              shipment.advanceTo(ShipmentStatus.CANCELLED);
+              shipmentRepository.save(shipment);
+              trackingEventRepository.save(
+                  new ShipmentTrackingEvent(shipment, ShipmentStatus.CANCELLED, "Order cancelled"));
+            });
+  }
+
+  @Transactional
   public void advance(Shipment shipment) {
-    if (shipment.getStatus() == ShipmentStatus.DELIVERED) {
+    if (shipment.getStatus() == ShipmentStatus.DELIVERED
+        || shipment.getStatus() == ShipmentStatus.CANCELLED) {
       return;
     }
 

@@ -48,6 +48,7 @@ services:
     container_name: ordersphere-auth-service
     ports:
       - "8081:8081"
+      - "5005:5005"
     environment:
       DB_HOST: postgres
       DB_NAME: auth_db
@@ -58,6 +59,7 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USERNAME: ordersphere
       RABBITMQ_PASSWORD: ordersphere
+      JAVA_TOOL_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005"
     depends_on:
       - postgres
       - service-registry
@@ -70,6 +72,7 @@ services:
     container_name: ordersphere-inventory-service
     ports:
       - "8083:8083"
+      - "5006:5006"
     environment:
       DB_HOST: postgres
       DB_NAME: inventory_db
@@ -80,6 +83,7 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USERNAME: ordersphere
       RABBITMQ_PASSWORD: ordersphere
+      JAVA_TOOL_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5006"
     depends_on:
       - postgres
       - service-registry
@@ -92,6 +96,7 @@ services:
     container_name: ordersphere-orders
     ports:
       - "8082:8082"
+      - "5007:5007"
     environment:
       DB_HOST: postgres
       DB_NAME: orders_db
@@ -102,6 +107,7 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USERNAME: ordersphere
       RABBITMQ_PASSWORD: ordersphere
+      JAVA_TOOL_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5007"
     depends_on:
       - postgres
       - service-registry
@@ -114,6 +120,7 @@ services:
     container_name: ordersphere-payment-service
     ports:
       - "8084:8084"
+      - "5008:5008"
     environment:
       DB_HOST: postgres
       DB_NAME: payment_db
@@ -124,6 +131,7 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USERNAME: ordersphere
       RABBITMQ_PASSWORD: ordersphere
+      JAVA_TOOL_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5008"
     depends_on:
       - postgres
       - service-registry
@@ -136,6 +144,7 @@ services:
     container_name: ordersphere-shipping-service
     ports:
       - "8085:8085"
+      - "5009:5009"
     environment:
       DB_HOST: postgres
       DB_NAME: shipping_db
@@ -146,6 +155,7 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USERNAME: ordersphere
       RABBITMQ_PASSWORD: ordersphere
+      JAVA_TOOL_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5009"
     depends_on:
       - postgres
       - service-registry
@@ -158,6 +168,7 @@ services:
     container_name: ordersphere-notification-service
     ports:
       - "8086:8086"
+      - "5010:5010"
     environment:
       DB_HOST: postgres
       DB_NAME: notification_db
@@ -168,6 +179,7 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USERNAME: ordersphere
       RABBITMQ_PASSWORD: ordersphere
+      JAVA_TOOL_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5010"
     depends_on:
       - postgres
       - service-registry

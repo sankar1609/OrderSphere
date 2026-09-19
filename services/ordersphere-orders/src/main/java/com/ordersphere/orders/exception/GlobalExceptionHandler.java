@@ -23,6 +23,12 @@ public class GlobalExceptionHandler {
     return errorResponse(HttpStatus.FAILED_DEPENDENCY, ex.getMessage());
   }
 
+  @ExceptionHandler(OrderCancellationNotAllowedException.class)
+  public ResponseEntity<Object> handleOrderCancellationNotAllowed(
+      OrderCancellationNotAllowedException ex) {
+    return errorResponse(HttpStatus.CONFLICT, ex.getMessage());
+  }
+
   @ExceptionHandler(MethodArgumentNotValidException.class)
   public ResponseEntity<Object> handleValidation(MethodArgumentNotValidException ex) {
     String message =

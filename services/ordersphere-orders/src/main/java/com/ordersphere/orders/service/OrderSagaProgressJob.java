@@ -24,6 +24,6 @@ public class OrderSagaProgressJob {
   public void progressAwaitingPaymentOrders() {
     orderRepository
         .findByStatus(OrderStatus.AWAITING_PAYMENT)
-        .forEach(orderService::progressAwaitingPayment);
+        .forEach(order -> orderService.progressAwaitingPayment(order.getId()));
   }
 }

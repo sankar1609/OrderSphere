@@ -5,6 +5,7 @@ import static org.mockito.Mockito.verify;
 import com.ordersphere.events.PaymentCompletedEvent;
 import com.ordersphere.events.PaymentFailedEvent;
 import com.ordersphere.orders.service.OrderService;
+import java.math.BigDecimal;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -19,7 +20,8 @@ class PaymentEventListenerTest {
   void onPaymentCompletedDelegatesAsSucceeded() {
     PaymentEventListener listener = new PaymentEventListener(orderService);
 
-    listener.onPaymentCompleted(new PaymentCompletedEvent(1L, 10L, "alice"));
+    listener.onPaymentCompleted(
+        new PaymentCompletedEvent(1L, 10L, "alice", new BigDecimal("39.98"), "USD"));
 
     verify(orderService).onPaymentEvent(10L, true);
   }

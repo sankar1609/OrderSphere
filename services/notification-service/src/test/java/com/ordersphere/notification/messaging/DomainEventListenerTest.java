@@ -11,6 +11,7 @@ import com.ordersphere.notification.domain.NotificationChannel;
 import com.ordersphere.notification.domain.TemplateKey;
 import com.ordersphere.notification.dto.CreateNotificationRequest;
 import com.ordersphere.notification.service.NotificationService;
+import java.math.BigDecimal;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -59,7 +60,8 @@ class DomainEventListenerTest {
   void onPaymentCompletedCreatesEmailNotificationForCustomer() {
     DomainEventListener listener = new DomainEventListener(notificationService);
 
-    listener.onPaymentCompleted(new PaymentCompletedEvent(1L, 10L, "alice"));
+    listener.onPaymentCompleted(
+        new PaymentCompletedEvent(1L, 10L, "alice", new BigDecimal("39.98"), "USD"));
 
     verify(notificationService)
         .createNotification(
@@ -68,7 +70,7 @@ class DomainEventListenerTest {
                     "alice",
                     NotificationChannel.EMAIL,
                     TemplateKey.PAYMENT_COMPLETED,
-                    Map.of("orderId", "10"))));
+                    Map.of("orderId", "10", "amount", "39.98", "currency", "USD"))));
   }
 
   @Test

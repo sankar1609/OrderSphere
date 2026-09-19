@@ -1,6 +1,7 @@
 package com.ordersphere.orders.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -23,9 +24,11 @@ import com.ordersphere.orders.domain.OrderStatus;
 import com.ordersphere.orders.dto.CreateOrderRequest;
 import com.ordersphere.orders.dto.OrderResponse;
 import com.ordersphere.orders.exception.InventoryReservationException;
+import com.ordersphere.orders.exception.OrderCancellationNotAllowedException;
 import com.ordersphere.orders.exception.OrderNotFoundException;
 import com.ordersphere.orders.exception.PaymentInitiationException;
 import com.ordersphere.orders.exception.ShipmentCreationException;
+import com.ordersphere.orders.exception.ShipmentLookupException;
 import com.ordersphere.orders.repository.OrderRepository;
 import java.math.BigDecimal;
 import java.util.List;
@@ -132,11 +135,12 @@ class OrderServiceTest {
     order.setPaymentId(42L);
     order.setShippingDestination("1 Test Way");
     order.markStatus(OrderStatus.AWAITING_PAYMENT);
+    when(orderRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(order));
     when(paymentClient.getStatus(42L, "Bearer service-token"))
         .thenReturn(PaymentClient.PaymentStatus.COMPLETED);
     when(shippingClient.createShipment(10L, "1 Test Way", "Bearer service-token")).thenReturn(7L);
 
-    orderService.progressAwaitingPayment(order);
+    orderService.progressAwaitingPayment(10L);
 
     assertThat(order.getStatus()).isEqualTo(OrderStatus.CONFIRMED);
     assertThat(order.getShipmentId()).isEqualTo(7L);
@@ -149,13 +153,14 @@ class OrderServiceTest {
     order.setId(10L);
     order.setPaymentId(42L);
     order.markStatus(OrderStatus.AWAITING_PAYMENT);
+    when(orderRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(order));
     when(paymentClient.getStatus(42L, "Bearer service-token"))
         .thenReturn(PaymentClient.PaymentStatus.COMPLETED);
     doThrow(new ShipmentCreationException("boom"))
         .when(shippingClient)
         .createShipment(any(), any(), anyString());
 
-    orderService.progressAwaitingPayment(order);
+    orderService.progressAwaitingPayment(10L);
 
     assertThat(order.getStatus()).isEqualTo(OrderStatus.CONFIRMED);
     assertThat(order.getShipmentId()).isNull();
@@ -167,10 +172,11 @@ class OrderServiceTest {
     order.setId(10L);
     order.setPaymentId(42L);
     order.markStatus(OrderStatus.AWAITING_PAYMENT);
+    when(orderRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(order));
     when(paymentClient.getStatus(42L, "Bearer service-token"))
         .thenReturn(PaymentClient.PaymentStatus.FAILED);
 
-    orderService.progressAwaitingPayment(order);
+    orderService.progressAwaitingPayment(10L);
 
     assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCELLED);
     verify(inventoryClient).release(10L, "Bearer service-token");
@@ -184,10 +190,11 @@ class OrderServiceTest {
     order.setId(10L);
     order.setPaymentId(42L);
     order.markStatus(OrderStatus.AWAITING_PAYMENT);
+    when(orderRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(order));
     when(paymentClient.getStatus(42L, "Bearer service-token"))
         .thenReturn(PaymentClient.PaymentStatus.PENDING);
 
-    orderService.progressAwaitingPayment(order);
+    orderService.progressAwaitingPayment(10L);
 
     assertThat(order.getStatus()).isEqualTo(OrderStatus.AWAITING_PAYMENT);
     verify(inventoryClient, never()).release(any(), any());
@@ -203,7 +210,7 @@ class OrderServiceTest {
     order.setPaymentId(42L);
     order.setShippingDestination("1 Test Way");
     order.markStatus(OrderStatus.AWAITING_PAYMENT);
-    when(orderRepository.findById(10L)).thenReturn(Optional.of(order));
+    when(orderRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(order));
     when(shippingClient.createShipment(10L, "1 Test Way", "Bearer service-token")).thenReturn(7L);
 
     orderService.onPaymentEvent(10L, true);
@@ -220,7 +227,7 @@ class OrderServiceTest {
     order.setId(10L);
     order.setPaymentId(42L);
     order.markStatus(OrderStatus.AWAITING_PAYMENT);
-    when(orderRepository.findById(10L)).thenReturn(Optional.of(order));
+    when(orderRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(order));
 
     orderService.onPaymentEvent(10L, false);
 
@@ -234,7 +241,7 @@ class OrderServiceTest {
     Order order = new Order("alice");
     order.setId(10L);
     order.markStatus(OrderStatus.CONFIRMED);
-    when(orderRepository.findById(10L)).thenReturn(Optional.of(order));
+    when(orderRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(order));
 
     orderService.onPaymentEvent(10L, true);
 
@@ -274,6 +281,58 @@ class OrderServiceTest {
     OrderResponse second = orderService.cancelOrder("alice", false, 10L, "Bearer token");
     assertThat(second.status()).isEqualTo(OrderStatus.CANCELLED);
     verify(inventoryClient).release(10L, "Bearer token");
+  }
+
+  @Test
+  void cancelOrderIsRejectedWhenShipmentAlreadyDelivered() {
+    Order order = new Order("alice");
+    order.setId(10L);
+    order.setPaymentId(42L);
+    order.setShipmentId(7L);
+    order.markStatus(OrderStatus.CONFIRMED);
+    when(orderRepository.findByIdAndCustomerUsername(10L, "alice")).thenReturn(Optional.of(order));
+    when(shippingClient.getStatus(7L, "Bearer token"))
+        .thenReturn(ShippingClient.ShipmentStatus.DELIVERED);
+
+    assertThatThrownBy(() -> orderService.cancelOrder("alice", false, 10L, "Bearer token"))
+        .isInstanceOf(OrderCancellationNotAllowedException.class);
+
+    verify(inventoryClient, never()).release(any(), any());
+    verify(paymentClient, never()).refund(any(), any(), any());
+  }
+
+  @Test
+  void cancelOrderProceedsWhenShipmentNotYetDelivered() {
+    Order order = new Order("alice");
+    order.setId(10L);
+    order.setPaymentId(42L);
+    order.setShipmentId(7L);
+    order.markStatus(OrderStatus.CONFIRMED);
+    when(orderRepository.findByIdAndCustomerUsername(10L, "alice")).thenReturn(Optional.of(order));
+    when(shippingClient.getStatus(7L, "Bearer token"))
+        .thenReturn(ShippingClient.ShipmentStatus.IN_TRANSIT);
+
+    OrderResponse response = orderService.cancelOrder("alice", false, 10L, "Bearer token");
+
+    assertThat(response.status()).isEqualTo(OrderStatus.CANCELLED);
+    verify(inventoryClient).release(10L, "Bearer token");
+    verify(paymentClient).refund(42L, "Order cancelled by customer", "Bearer token");
+  }
+
+  @Test
+  void cancelOrderFailsOpenWhenShipmentStatusCannotBeFetched() {
+    Order order = new Order("alice");
+    order.setId(10L);
+    order.setPaymentId(42L);
+    order.setShipmentId(7L);
+    order.markStatus(OrderStatus.CONFIRMED);
+    when(orderRepository.findByIdAndCustomerUsername(10L, "alice")).thenReturn(Optional.of(order));
+    when(shippingClient.getStatus(7L, "Bearer token"))
+        .thenThrow(new ShipmentLookupException("unreachable", new RuntimeException()));
+
+    OrderResponse response = orderService.cancelOrder("alice", false, 10L, "Bearer token");
+
+    assertThat(response.status()).isEqualTo(OrderStatus.CANCELLED);
   }
 
   @Test

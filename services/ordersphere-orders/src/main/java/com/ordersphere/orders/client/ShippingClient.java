@@ -1,6 +1,7 @@
 package com.ordersphere.orders.client;
 
 import com.ordersphere.orders.exception.ShipmentCreationException;
+import com.ordersphere.orders.exception.ShipmentLookupException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -39,7 +40,32 @@ public class ShippingClient {
     }
   }
 
+  public ShipmentStatus getStatus(Long shipmentId, String bearerToken) {
+    try {
+      ShipmentStatusResponse response =
+          restClient
+              .get()
+              .uri("/shipments/{shipmentId}", shipmentId)
+              .header(HttpHeaders.AUTHORIZATION, bearerToken)
+              .retrieve()
+              .body(ShipmentStatusResponse.class);
+      return response.status();
+    } catch (RestClientException ex) {
+      throw new ShipmentLookupException("Unable to fetch status for shipmentId " + shipmentId, ex);
+    }
+  }
+
+  public enum ShipmentStatus {
+    CREATED,
+    PICKED,
+    IN_TRANSIT,
+    DELIVERED,
+    CANCELLED
+  }
+
   public record CreateShipmentRequest(Long orderId, String destination) {}
 
   public record ShipmentIdResponse(Long id) {}
+
+  public record ShipmentStatusResponse(Long id, ShipmentStatus status) {}
 }

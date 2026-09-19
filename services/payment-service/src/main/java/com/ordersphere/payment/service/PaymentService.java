@@ -115,7 +115,11 @@ public class PaymentService {
         paymentRepository.save(payment);
         eventPublisher.publishEvent(
             new PaymentCompletedEvent(
-                payment.getId(), payment.getOrderId(), payment.getCustomerUsername()));
+                payment.getId(),
+                payment.getOrderId(),
+                payment.getCustomerUsername(),
+                payment.getAmount(),
+                payment.getCurrency()));
       }
       case DECLINED -> failPayment(payment, "Payment declined by gateway");
       case TRANSIENT_FAILURE -> {
