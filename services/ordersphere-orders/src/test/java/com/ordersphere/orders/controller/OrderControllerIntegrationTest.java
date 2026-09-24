@@ -32,6 +32,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.http.MediaType;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.MockMvc;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.containers.RabbitMQContainer;
@@ -40,6 +41,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 @Testcontainers
 @SpringBootTest(properties = "eureka.client.enabled=false")
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 @AutoConfigureMockMvc
 class OrderControllerIntegrationTest {
 
@@ -131,7 +133,7 @@ class OrderControllerIntegrationTest {
     when(paymentClient.initiate(any(), any(), any(), any(), anyString())).thenReturn(42L);
     when(paymentClient.getStatus(eq(42L), anyString()))
         .thenReturn(PaymentClient.PaymentStatus.COMPLETED);
-    when(shippingClient.createShipment(any(), any(), anyString())).thenReturn(7L);
+    when(shippingClient.createShipment(any(), any(), any(), anyString())).thenReturn(7L);
 
     String createdBody =
         mockMvc
@@ -182,7 +184,7 @@ class OrderControllerIntegrationTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status", is("CANCELLED")));
     verify(inventoryClient).release(eq(orderId), anyString());
-    verify(shippingClient, org.mockito.Mockito.never()).createShipment(any(), any(), any());
+    verify(shippingClient, org.mockito.Mockito.never()).createShipment(any(), any(), any(), any());
   }
 
   @Test

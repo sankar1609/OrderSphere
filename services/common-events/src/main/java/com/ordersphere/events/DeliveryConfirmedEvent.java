@@ -8,12 +8,15 @@ public class DeliveryConfirmedEvent extends BaseEvent {
 
   private final Long shipmentId;
   private final Long orderId;
+  private final String customerUsername;
   private final Instant deliveredAt;
 
-  public DeliveryConfirmedEvent(Long shipmentId, Long orderId, Instant deliveredAt) {
+  public DeliveryConfirmedEvent(
+      Long shipmentId, Long orderId, String customerUsername, Instant deliveredAt) {
     super("DeliveryConfirmedEvent");
     this.shipmentId = shipmentId;
     this.orderId = orderId;
+    this.customerUsername = customerUsername;
     this.deliveredAt = deliveredAt;
   }
 }

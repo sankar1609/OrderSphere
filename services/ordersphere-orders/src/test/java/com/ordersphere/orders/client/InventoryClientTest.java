@@ -73,4 +73,40 @@ class InventoryClientTest {
 
     server.verify();
   }
+
+  @Test
+  void reserveFallbackRethrowsInventoryReservationExceptionUnchanged() {
+    InventoryClient client = new InventoryClient(RestClient.builder());
+    InventoryReservationException original = new InventoryReservationException("boom");
+
+    assertThatThrownBy(
+            () ->
+                client.reserveFallback(
+                    1L,
+                    List.of(new InventoryClient.ReserveRequest.Item("SKU-1", 2)),
+                    "Bearer token",
+                    original))
+        .isSameAs(original);
+  }
+
+  @Test
+  void reserveFallbackWrapsCircuitBreakerExceptionAsInventoryReservationException() {
+    InventoryClient client = new InventoryClient(RestClient.builder());
+
+    assertThatThrownBy(
+            () ->
+                client.reserveFallback(
+                    1L,
+                    List.of(new InventoryClient.ReserveRequest.Item("SKU-1", 2)),
+                    "Bearer token",
+                    new RuntimeException("circuit breaker open")))
+        .isInstanceOf(InventoryReservationException.class);
+  }
+
+  @Test
+  void releaseFallbackLogsAndDoesNotThrow() {
+    InventoryClient client = new InventoryClient(RestClient.builder());
+
+    client.releaseFallback(1L, "Bearer token", new RuntimeException("circuit breaker open"));
+  }
 }

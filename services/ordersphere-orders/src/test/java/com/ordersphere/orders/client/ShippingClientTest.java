@@ -30,11 +30,12 @@ class ShippingClientTest {
         .andExpect(method(HttpMethod.POST))
         .andExpect(header("Authorization", "Bearer token"))
         .andExpect(jsonPath("$.orderId").value(1))
+        .andExpect(jsonPath("$.customerUsername").value("alice"))
         .andExpect(jsonPath("$.destination").value("1 Test Way"))
         .andRespond(
             withSuccess("{\"id\": 7, \"status\": \"CREATED\"}", MediaType.APPLICATION_JSON));
 
-    Long shipmentId = client.createShipment(1L, "1 Test Way", "Bearer token");
+    Long shipmentId = client.createShipment(1L, "alice", "1 Test Way", "Bearer token");
 
     assertThat(shipmentId).isEqualTo(7L);
     server.verify();
@@ -48,7 +49,7 @@ class ShippingClientTest {
 
     server.expect(requestTo("http://shipping-service/shipments")).andRespond(withServerError());
 
-    assertThatThrownBy(() -> client.createShipment(1L, "1 Test Way", "Bearer token"))
+    assertThatThrownBy(() -> client.createShipment(1L, "alice", "1 Test Way", "Bearer token"))
         .isInstanceOf(ShipmentCreationException.class);
   }
 
@@ -80,6 +81,52 @@ class ShippingClientTest {
     server.expect(requestTo("http://shipping-service/shipments/7")).andRespond(withServerError());
 
     assertThatThrownBy(() -> client.getStatus(7L, "Bearer token"))
+        .isInstanceOf(ShipmentLookupException.class);
+  }
+
+  @Test
+  void createShipmentFallbackRethrowsShipmentCreationExceptionUnchanged() {
+    ShippingClient client = new ShippingClient(RestClient.builder());
+    ShipmentCreationException original = new ShipmentCreationException("boom");
+
+    assertThatThrownBy(
+            () ->
+                client.createShipmentFallback(1L, "alice", "1 Test Way", "Bearer token", original))
+        .isSameAs(original);
+  }
+
+  @Test
+  void createShipmentFallbackWrapsCircuitBreakerExceptionAsShipmentCreationException() {
+    ShippingClient client = new ShippingClient(RestClient.builder());
+
+    assertThatThrownBy(
+            () ->
+                client.createShipmentFallback(
+                    1L,
+                    "alice",
+                    "1 Test Way",
+                    "Bearer token",
+                    new RuntimeException("circuit breaker open")))
+        .isInstanceOf(ShipmentCreationException.class);
+  }
+
+  @Test
+  void getStatusFallbackRethrowsShipmentLookupExceptionUnchanged() {
+    ShippingClient client = new ShippingClient(RestClient.builder());
+    ShipmentLookupException original = new ShipmentLookupException("boom", new RuntimeException());
+
+    assertThatThrownBy(() -> client.getStatusFallback(7L, "Bearer token", original))
+        .isSameAs(original);
+  }
+
+  @Test
+  void getStatusFallbackWrapsCircuitBreakerExceptionAsShipmentLookupException() {
+    ShippingClient client = new ShippingClient(RestClient.builder());
+
+    assertThatThrownBy(
+            () ->
+                client.getStatusFallback(
+                    7L, "Bearer token", new RuntimeException("circuit breaker open")))
         .isInstanceOf(ShipmentLookupException.class);
   }
 }

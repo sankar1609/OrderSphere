@@ -1,9 +1,11 @@
 package com.ordersphere.notification.messaging;
 
+import com.ordersphere.events.DeliveryConfirmedEvent;
 import com.ordersphere.events.OrderCancelledEvent;
 import com.ordersphere.events.OrderConfirmedEvent;
 import com.ordersphere.events.PaymentCompletedEvent;
 import com.ordersphere.events.PaymentFailedEvent;
+import com.ordersphere.events.ShipmentCreatedEvent;
 import com.ordersphere.notification.domain.NotificationChannel;
 import com.ordersphere.notification.domain.TemplateKey;
 import com.ordersphere.notification.dto.CreateNotificationRequest;
@@ -17,7 +19,7 @@ import org.springframework.stereotype.Component;
  * Reacts to domain events consumed off the broker by creating the matching notification directly
  * via NotificationService - the same method the (admin-guarded) REST endpoint calls, just without
  * an HTTP principal in the picture. One @RabbitListener class + @RabbitHandler per payload type, so
- * all four event types share a single consumer on notification-service.events rather than racing
+ * all six event types share a single consumer on notification-service.events rather than racing
  * each other as separate listeners on the same queue.
  */
 @Component
@@ -63,6 +65,22 @@ public class DomainEventListener {
         event.getCustomerUsername(),
         TemplateKey.PAYMENT_FAILED,
         Map.of("orderId", event.getOrderId().toString(), "reason", event.getReason()));
+  }
+
+  @RabbitHandler
+  public void onShipmentCreated(ShipmentCreatedEvent event) {
+    notify(
+        event.getCustomerUsername(),
+        TemplateKey.SHIPMENT_CREATED,
+        Map.of("orderId", event.getOrderId().toString(), "destination", event.getDestination()));
+  }
+
+  @RabbitHandler
+  public void onDeliveryConfirmed(DeliveryConfirmedEvent event) {
+    notify(
+        event.getCustomerUsername(),
+        TemplateKey.DELIVERY_CONFIRMED,
+        Map.of("orderId", event.getOrderId().toString()));
   }
 
   private void notify(

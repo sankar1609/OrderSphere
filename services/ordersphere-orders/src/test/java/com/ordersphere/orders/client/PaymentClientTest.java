@@ -88,4 +88,51 @@ class PaymentClientTest {
 
     server.verify();
   }
+
+  @Test
+  void initiateFallbackRethrowsPaymentInitiationExceptionUnchanged() {
+    PaymentClient client = new PaymentClient(RestClient.builder());
+    PaymentInitiationException original = new PaymentInitiationException("boom");
+
+    assertThatThrownBy(
+            () ->
+                client.initiateFallback(
+                    1L, 5L, new BigDecimal("20.00"), "USD", "Bearer token", original))
+        .isSameAs(original);
+  }
+
+  @Test
+  void initiateFallbackWrapsCircuitBreakerExceptionAsPaymentInitiationException() {
+    PaymentClient client = new PaymentClient(RestClient.builder());
+
+    assertThatThrownBy(
+            () ->
+                client.initiateFallback(
+                    1L,
+                    5L,
+                    new BigDecimal("20.00"),
+                    "USD",
+                    "Bearer token",
+                    new RuntimeException("circuit breaker open")))
+        .isInstanceOf(PaymentInitiationException.class);
+  }
+
+  @Test
+  void getStatusFallbackWrapsCircuitBreakerExceptionAsPaymentInitiationException() {
+    PaymentClient client = new PaymentClient(RestClient.builder());
+
+    assertThatThrownBy(
+            () ->
+                client.getStatusFallback(
+                    42L, "Bearer token", new RuntimeException("circuit breaker open")))
+        .isInstanceOf(PaymentInitiationException.class);
+  }
+
+  @Test
+  void refundFallbackLogsAndDoesNotThrow() {
+    PaymentClient client = new PaymentClient(RestClient.builder());
+
+    client.refundFallback(
+        42L, "Order cancelled", "Bearer token", new RuntimeException("circuit breaker open"));
+  }
 }

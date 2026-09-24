@@ -2,6 +2,7 @@ package com.ordersphere.orders.client;
 
 import com.ordersphere.orders.exception.ShipmentCreationException;
 import com.ordersphere.orders.exception.ShipmentLookupException;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -18,7 +19,9 @@ public class ShippingClient {
     this.restClient = loadBalancedRestClientBuilder.baseUrl("http://shipping-service").build();
   }
 
-  public Long createShipment(Long orderId, String destination, String bearerToken) {
+  @CircuitBreaker(name = "shipping-service", fallbackMethod = "createShipmentFallback")
+  public Long createShipment(
+      Long orderId, String customerUsername, String destination, String bearerToken) {
     try {
       ShipmentIdResponse response =
           restClient
@@ -26,7 +29,7 @@ public class ShippingClient {
               .uri("/shipments")
               .header(HttpHeaders.AUTHORIZATION, bearerToken)
               .contentType(MediaType.APPLICATION_JSON)
-              .body(new CreateShipmentRequest(orderId, destination))
+              .body(new CreateShipmentRequest(orderId, customerUsername, destination))
               .retrieve()
               .body(ShipmentIdResponse.class);
       return response.id();
@@ -40,6 +43,15 @@ public class ShippingClient {
     }
   }
 
+  Long createShipmentFallback(
+      Long orderId, String customerUsername, String destination, String bearerToken, Throwable ex) {
+    if (ex instanceof ShipmentCreationException sce) {
+      throw sce;
+    }
+    throw new ShipmentCreationException("Shipping circuit breaker open for orderId " + orderId, ex);
+  }
+
+  @CircuitBreaker(name = "shipping-service", fallbackMethod = "getStatusFallback")
   public ShipmentStatus getStatus(Long shipmentId, String bearerToken) {
     try {
       ShipmentStatusResponse response =
@@ -55,6 +67,14 @@ public class ShippingClient {
     }
   }
 
+  ShipmentStatus getStatusFallback(Long shipmentId, String bearerToken, Throwable ex) {
+    if (ex instanceof ShipmentLookupException sle) {
+      throw sle;
+    }
+    throw new ShipmentLookupException(
+        "Shipping circuit breaker open for shipmentId " + shipmentId, ex);
+  }
+
   public enum ShipmentStatus {
     CREATED,
     PICKED,
@@ -63,7 +83,7 @@ public class ShippingClient {
     CANCELLED
   }
 
-  public record CreateShipmentRequest(Long orderId, String destination) {}
+  public record CreateShipmentRequest(Long orderId, String customerUsername, String destination) {}
 
   public record ShipmentIdResponse(Long id) {}
 

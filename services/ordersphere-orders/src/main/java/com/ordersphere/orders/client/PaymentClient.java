@@ -1,6 +1,7 @@
 package com.ordersphere.orders.client;
 
 import com.ordersphere.orders.exception.PaymentInitiationException;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import java.math.BigDecimal;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,6 +23,7 @@ public class PaymentClient {
     this.restClient = loadBalancedRestClientBuilder.baseUrl("http://payment-service").build();
   }
 
+  @CircuitBreaker(name = "payment-service", fallbackMethod = "initiateFallback")
   public Long initiate(
       Long orderId, Long paymentMethodId, BigDecimal amount, String currency, String bearerToken) {
     try {
@@ -45,6 +47,21 @@ public class PaymentClient {
     }
   }
 
+  Long initiateFallback(
+      Long orderId,
+      Long paymentMethodId,
+      BigDecimal amount,
+      String currency,
+      String bearerToken,
+      Throwable ex) {
+    if (ex instanceof PaymentInitiationException pie) {
+      throw pie;
+    }
+    throw new PaymentInitiationException(
+        "Payment circuit breaker open while initiating for orderId " + orderId, ex);
+  }
+
+  @CircuitBreaker(name = "payment-service", fallbackMethod = "getStatusFallback")
   public PaymentStatus getStatus(Long paymentId, String bearerToken) {
     try {
       PaymentStatusResponse response =
@@ -60,6 +77,15 @@ public class PaymentClient {
     }
   }
 
+  PaymentStatus getStatusFallback(Long paymentId, String bearerToken, Throwable ex) {
+    if (ex instanceof PaymentInitiationException pie) {
+      throw pie;
+    }
+    throw new PaymentInitiationException(
+        "Payment circuit breaker open while fetching status for paymentId " + paymentId, ex);
+  }
+
+  @CircuitBreaker(name = "payment-service", fallbackMethod = "refundFallback")
   public void refund(Long paymentId, String reason, String bearerToken) {
     try {
       restClient
@@ -73,6 +99,10 @@ public class PaymentClient {
     } catch (RestClientException ex) {
       log.warn("Failed to refund paymentId {}: {}", paymentId, ex.getMessage());
     }
+  }
+
+  void refundFallback(Long paymentId, String reason, String bearerToken, Throwable ex) {
+    log.warn("Skipping refund for paymentId {}: {}", paymentId, ex.getMessage());
   }
 
   public enum PaymentStatus {

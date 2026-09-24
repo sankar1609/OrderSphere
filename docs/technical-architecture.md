@@ -22,6 +22,10 @@ Two patterns coexist by design: synchronous orchestration for the order saga its
 
 The Orders service is the saga's orchestrator. When a customer places an order, `OrderService.createOrder` calls Inventory and Payment directly over load-balanced REST (Spring's `RestClient`, resolved through Eureka) and drives compensation inline — a failed reservation cancels the order immediately; a failed payment releases the reservation it just made. This is a deliberate departure from a fully event-choreographed design: REST gives the saga a synchronous, easy-to-reason-about failure path, while the event bus is reserved for everything that doesn't need to block the request.
 
+### Resilience: circuit breakers on the saga's outbound calls
+
+Each of Orders' three REST clients (`InventoryClient`, `PaymentClient`, `ShippingClient`) is wrapped in a Resilience4j circuit breaker, one instance per downstream service (`inventory-service`, `payment-service`, `shipping-service`), so a degraded dependency fails fast instead of piling up blocked saga threads. Fallback methods preserve the exact exception types the saga already expects — `InventoryReservationException`, `PaymentInitiationException`, `ShipmentCreationException`, `ShipmentLookupException` — whether the underlying call actually failed or the breaker is simply open, so `OrderService`'s compensation logic needed no changes. Best-effort calls (`InventoryClient.release`, `PaymentClient.refund`) keep failing silently under an open breaker, matching their existing behavior. Breaker state (open/closed/half-open, failure rate) is exposed via Spring Boot Actuator at `/actuator/circuitbreakers` and `/actuator/circuitbreakerevents`; connect/read timeouts on the underlying `RestClient` are not yet configured, which is the natural next hardening step (a breaker can't count a hang as a failure without one).
+
 ### Events as the async layer
 
 Every state change Orders makes is also published locally as a Spring `ApplicationEvent` and relayed onto a RabbitMQ topic exchange by a shared `DomainEventRelay`. Two things consume off that bus today: Notification service, which reacts to order and payment events to trigger customer messages, and Orders itself, which listens for `PaymentCompletedEvent`/`PaymentFailedEvent` as a low-latency shortcut around its own polling sweep job. Inventory, Payment, and Shipping are not yet wired as message consumers — they participate in the saga purely as REST call targets right now.
@@ -158,6 +162,8 @@ What every service is actually built on, confirmed against each module's `pom.xm
 | Spring Cloud Gateway | API gateway routing |
 | Netflix Eureka | Service discovery, client + server |
 | Spring Cloud LoadBalancer | Client-side balancing for Orders' outbound calls |
+| Resilience4j (Spring Cloud Circuit Breaker) | Per-dependency circuit breakers on Orders' inventory/payment/shipping clients |
+| Spring Boot Actuator | `health`, `circuitbreakers`, `circuitbreakerevents` endpoints (Orders only, currently) |
 | Spring Data JPA | Persistence layer, every business service |
 | PostgreSQL 16 | System of record, one schema per service |
 | Flyway | Schema migrations |
@@ -192,7 +198,7 @@ Every module carries its own test suite; `common-events` is the most heavily cov
 | Module | Test classes |
 |---|---|
 | `common-events` | 22 |
-| `ordersphere-orders` | 9 |
+| `ordersphere-orders` | 10 |
 | `notification-service` | 6 |
 | `inventory-service` | 5 |
 | `payment-service` | 5 |
@@ -211,12 +217,12 @@ Integration coverage runs against real dependencies via Testcontainers (Postgres
 What's shipped versus what's still ahead, per the project's own tracked roadmap.
 
 - [x] Message broker (RabbitMQ) wired for cross-service async events
+- [x] Circuit breakers (Resilience4j) around Orders' outbound REST calls
 - [ ] React/Vue.js web UI
 - [ ] Comprehensive API documentation (OpenAPI/Swagger)
 - [ ] Hyperledger Fabric ledger service for immutable audit trails
 - [ ] CQRS-based analytics/reporting
 - [ ] Distributed tracing (Jaeger/Zipkin)
-- [ ] Circuit breakers (Resilience4j) around Orders' outbound REST calls
 - [ ] Centralized logging (ELK stack)
 - [ ] Caching layer (Redis)
 - [ ] OAuth2/OIDC, Kubernetes manifests

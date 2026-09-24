@@ -1,6 +1,7 @@
 package com.ordersphere.orders.client;
 
 import com.ordersphere.orders.exception.InventoryReservationException;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,6 +23,7 @@ public class InventoryClient {
     this.restClient = loadBalancedRestClientBuilder.baseUrl("http://inventory-service").build();
   }
 
+  @CircuitBreaker(name = "inventory-service", fallbackMethod = "reserveFallback")
   public void reserve(Long orderId, List<ReserveRequest.Item> items, String bearerToken) {
     try {
       restClient
@@ -45,6 +47,16 @@ public class InventoryClient {
     }
   }
 
+  void reserveFallback(
+      Long orderId, List<ReserveRequest.Item> items, String bearerToken, Throwable ex) {
+    if (ex instanceof InventoryReservationException ire) {
+      throw ire;
+    }
+    throw new InventoryReservationException(
+        "Inventory reservation circuit breaker open for orderId " + orderId, ex);
+  }
+
+  @CircuitBreaker(name = "inventory-service", fallbackMethod = "releaseFallback")
   public void release(Long orderId, String bearerToken) {
     try {
       restClient
@@ -57,6 +69,10 @@ public class InventoryClient {
       log.warn(
           "Failed to release inventory reservation for orderId {}: {}", orderId, ex.getMessage());
     }
+  }
+
+  void releaseFallback(Long orderId, String bearerToken, Throwable ex) {
+    log.warn("Skipping inventory release for orderId {}: {}", orderId, ex.getMessage());
   }
 
   public record ReserveRequest(Long orderId, List<Item> items) {

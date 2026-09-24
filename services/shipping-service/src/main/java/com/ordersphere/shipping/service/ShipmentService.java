@@ -20,7 +20,10 @@ import com.ordersphere.shipping.repository.ShipmentRepository;
 import com.ordersphere.shipping.repository.ShipmentTrackingEventRepository;
 import java.util.List;
 import java.util.Optional;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -31,6 +34,14 @@ public class ShipmentService {
   private final ShipmentTrackingEventRepository trackingEventRepository;
   private final CarrierClient carrierClient;
   private final ApplicationEventPublisher eventPublisher;
+
+  /**
+   * Self-reference injected through Spring's proxy, needed so insertShipment/findExistingShipment
+   * run in their own transactions even when called from createShipment/requestReturn on this same
+   * bean (a plain `this.insertShipment(...)` call would bypass the proxy and its @Transactional
+   * advice entirely). Package-private so tests can set it directly instead of via reflection.
+   */
+  @Autowired @Lazy ShipmentService self;
 
   public ShipmentService(
       ShipmentRepository shipmentRepository,
@@ -43,19 +54,25 @@ public class ShipmentService {
     this.eventPublisher = eventPublisher;
   }
 
-  @Transactional
+  /**
+   * The findByOrderIdAndType check below can't be made atomic with the insert via a row lock -
+   * there's no row to lock until the first caller creates one. Two concurrent calls for the same
+   * order can both pass the check and both attempt the insert; the DB's uq_shipments_order_id_type
+   * constraint is what actually serializes them, so the loser's insert fails here and we fall back
+   * to fetching the winner's row instead of surfacing a 500 (which is what used to happen, silently
+   * dropping the order's shipmentId on the orders-service side).
+   */
   public ShipmentResponse createShipment(CreateShipmentRequest request) {
-    Optional<Shipment> existing =
-        shipmentRepository.findByOrderIdAndType(request.orderId(), ShipmentType.OUTBOUND);
-    if (existing.isPresent()) {
-      return ShipmentResponse.from(existing.get());
+    try {
+      return self.insertShipment(
+          request.orderId(),
+          request.customerUsername(),
+          ShipmentType.OUTBOUND,
+          request.destination(),
+          null);
+    } catch (DataIntegrityViolationException ex) {
+      return self.findExistingShipment(request.orderId(), ShipmentType.OUTBOUND);
     }
-
-    Shipment shipment =
-        new Shipment(request.orderId(), ShipmentType.OUTBOUND, request.destination(), null);
-    createWithInitialTracking(shipment);
-
-    return ShipmentResponse.from(shipment);
   }
 
   @Transactional(readOnly = true)
@@ -76,7 +93,6 @@ public class ShipmentService {
         .toList();
   }
 
-  @Transactional
   public ShipmentResponse requestReturn(Long shipmentId, ReturnShipmentRequest request) {
     Shipment original = findShipmentOrThrow(shipmentId);
 
@@ -88,18 +104,16 @@ public class ShipmentService {
           "Cannot return shipment " + shipmentId + " before it is delivered");
     }
 
-    Optional<Shipment> existingReturn =
-        shipmentRepository.findByOrderIdAndType(original.getOrderId(), ShipmentType.RETURN);
-    if (existingReturn.isPresent()) {
-      return ShipmentResponse.from(existingReturn.get());
+    try {
+      return self.insertShipment(
+          original.getOrderId(),
+          original.getCustomerUsername(),
+          ShipmentType.RETURN,
+          original.getDestination(),
+          shipmentId);
+    } catch (DataIntegrityViolationException ex) {
+      return self.findExistingShipment(original.getOrderId(), ShipmentType.RETURN);
     }
-
-    Shipment returnShipment =
-        new Shipment(
-            original.getOrderId(), ShipmentType.RETURN, original.getDestination(), shipmentId);
-    createWithInitialTracking(returnShipment);
-
-    return ShipmentResponse.from(returnShipment);
   }
 
   @Transactional
@@ -142,10 +156,47 @@ public class ShipmentService {
       case DELIVERED ->
           eventPublisher.publishEvent(
               new DeliveryConfirmedEvent(
-                  shipment.getId(), shipment.getOrderId(), shipment.getDeliveredAt()));
+                  shipment.getId(),
+                  shipment.getOrderId(),
+                  shipment.getCustomerUsername(),
+                  shipment.getDeliveredAt()));
       case CREATED ->
           throw new IllegalStateException("Carrier cannot advance a shipment to CREATED");
     }
+  }
+
+  @Transactional
+  protected ShipmentResponse insertShipment(
+      Long orderId,
+      String customerUsername,
+      ShipmentType type,
+      String destination,
+      Long parentShipmentId) {
+    Optional<Shipment> existing = shipmentRepository.findByOrderIdAndType(orderId, type);
+    if (existing.isPresent()) {
+      return ShipmentResponse.from(existing.get());
+    }
+
+    Shipment shipment =
+        new Shipment(orderId, customerUsername, type, destination, parentShipmentId);
+    createWithInitialTracking(shipment);
+
+    return ShipmentResponse.from(shipment);
+  }
+
+  @Transactional(readOnly = true)
+  protected ShipmentResponse findExistingShipment(Long orderId, ShipmentType type) {
+    return shipmentRepository
+        .findByOrderIdAndType(orderId, type)
+        .map(ShipmentResponse::from)
+        .orElseThrow(
+            () ->
+                new IllegalStateException(
+                    "Expected an existing "
+                        + type
+                        + " shipment for orderId "
+                        + orderId
+                        + " after a unique-constraint conflict, but found none"));
   }
 
   private void createWithInitialTracking(Shipment shipment) {
@@ -154,7 +205,10 @@ public class ShipmentService {
         new ShipmentTrackingEvent(shipment, ShipmentStatus.CREATED, "Origin facility"));
     eventPublisher.publishEvent(
         new ShipmentCreatedEvent(
-            shipment.getId(), shipment.getOrderId(), shipment.getDestination()));
+            shipment.getId(),
+            shipment.getOrderId(),
+            shipment.getCustomerUsername(),
+            shipment.getDestination()));
   }
 
   private Shipment findShipmentOrThrow(Long id) {

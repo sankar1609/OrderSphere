@@ -111,10 +111,15 @@ public class OrderService {
     return OrderResponse.from(findOrderOrThrow(username, isAdmin, orderId));
   }
 
+  /**
+   * Takes the same row lock as {@link #onPaymentEvent} and {@link #progressAwaitingPayment}, so a
+   * customer cancelling right as the saga confirms the order can't race it: whichever gets here
+   * first wins, and the loser re-reads the post-lock status instead of acting on a stale one.
+   */
   @Transactional
   public OrderResponse cancelOrder(
       String username, boolean isAdmin, Long orderId, String bearerToken) {
-    Order order = findOrderOrThrow(username, isAdmin, orderId);
+    Order order = findOrderForUpdateOrThrow(username, isAdmin, orderId);
 
     if (order.getStatus() == OrderStatus.CANCELLED) {
       return OrderResponse.from(order);
@@ -153,8 +158,8 @@ public class OrderService {
   /**
    * Re-fetches the order under a row lock before progressing it, so this and {@link
    * #onPaymentEvent} - which can both act on the same AWAITING_PAYMENT order at nearly the same
-   * moment (the saga sweep polling vs. the PaymentCompletedEvent listener) - serialize on the
-   * order row instead of racing into a duplicate confirmation or a lost update on shipmentId.
+   * moment (the saga sweep polling vs. the PaymentCompletedEvent listener) - serialize on the order
+   * row instead of racing into a duplicate confirmation or a lost update on shipmentId.
    */
   @Transactional
   public void progressAwaitingPayment(Long orderId) {
@@ -163,8 +168,14 @@ public class OrderService {
       return;
     }
 
-    PaymentClient.PaymentStatus paymentStatus =
-        paymentClient.getStatus(order.getPaymentId(), serviceTokenProvider.bearerToken());
+    PaymentClient.PaymentStatus paymentStatus;
+    try {
+      paymentStatus =
+          paymentClient.getStatus(order.getPaymentId(), serviceTokenProvider.bearerToken());
+    } catch (PaymentInitiationException ex) {
+      log.warn("Unable to fetch payment status for orderId {}: {}", orderId, ex.getMessage());
+      return;
+    }
 
     if (paymentStatus == PaymentClient.PaymentStatus.COMPLETED) {
       handlePaymentCompleted(order);
@@ -177,8 +188,8 @@ public class OrderService {
    * Reacts to a PaymentCompletedEvent/PaymentFailedEvent consumed directly off the broker (see
    * PaymentEventListener), skipping the paymentClient.getStatus() round-trip that
    * progressAwaitingPayment needs when it's polling blind. Takes the same row lock as
-   * progressAwaitingPayment so the two paths serialize instead of racing; guarded the same way,
-   * so a redelivered message against an order that's already past AWAITING_PAYMENT is a no-op.
+   * progressAwaitingPayment so the two paths serialize instead of racing; guarded the same way, so
+   * a redelivered message against an order that's already past AWAITING_PAYMENT is a no-op.
    */
   @Transactional
   public void onPaymentEvent(Long orderId, boolean succeeded) {
@@ -201,7 +212,10 @@ public class OrderService {
     try {
       Long shipmentId =
           shippingClient.createShipment(
-              order.getId(), order.getShippingDestination(), serviceTokenProvider.bearerToken());
+              order.getId(),
+              order.getCustomerUsername(),
+              order.getShippingDestination(),
+              serviceTokenProvider.bearerToken());
       order.setShipmentId(shipmentId);
     } catch (ShipmentCreationException ex) {
       log.warn("Shipment creation failed for orderId {}: {}", order.getId(), ex.getMessage());
@@ -233,6 +247,17 @@ public class OrderService {
     return orderRepository
         .findByIdAndCustomerUsername(orderId, username)
         .orElseThrow(() -> new OrderNotFoundException(orderId));
+  }
+
+  private Order findOrderForUpdateOrThrow(String username, boolean isAdmin, Long orderId) {
+    Order order =
+        orderRepository
+            .findByIdForUpdate(orderId)
+            .orElseThrow(() -> new OrderNotFoundException(orderId));
+    if (!isAdmin && !order.getCustomerUsername().equals(username)) {
+      throw new OrderNotFoundException(orderId);
+    }
+    return order;
   }
 
   private Map<String, Integer> quantitiesBySku(CreateOrderRequest request) {

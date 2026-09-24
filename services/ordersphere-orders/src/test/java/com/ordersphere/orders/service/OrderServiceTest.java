@@ -138,7 +138,8 @@ class OrderServiceTest {
     when(orderRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(order));
     when(paymentClient.getStatus(42L, "Bearer service-token"))
         .thenReturn(PaymentClient.PaymentStatus.COMPLETED);
-    when(shippingClient.createShipment(10L, "1 Test Way", "Bearer service-token")).thenReturn(7L);
+    when(shippingClient.createShipment(10L, "alice", "1 Test Way", "Bearer service-token"))
+        .thenReturn(7L);
 
     orderService.progressAwaitingPayment(10L);
 
@@ -158,7 +159,7 @@ class OrderServiceTest {
         .thenReturn(PaymentClient.PaymentStatus.COMPLETED);
     doThrow(new ShipmentCreationException("boom"))
         .when(shippingClient)
-        .createShipment(any(), any(), anyString());
+        .createShipment(any(), any(), any(), anyString());
 
     orderService.progressAwaitingPayment(10L);
 
@@ -180,7 +181,7 @@ class OrderServiceTest {
 
     assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCELLED);
     verify(inventoryClient).release(10L, "Bearer service-token");
-    verify(shippingClient, never()).createShipment(any(), any(), any());
+    verify(shippingClient, never()).createShipment(any(), any(), any(), any());
     verify(eventPublisher).publishEvent(any(OrderCancelledEvent.class));
   }
 
@@ -198,7 +199,26 @@ class OrderServiceTest {
 
     assertThat(order.getStatus()).isEqualTo(OrderStatus.AWAITING_PAYMENT);
     verify(inventoryClient, never()).release(any(), any());
-    verify(shippingClient, never()).createShipment(any(), any(), any());
+    verify(shippingClient, never()).createShipment(any(), any(), any(), any());
+    verify(eventPublisher, never()).publishEvent(any(OrderConfirmedEvent.class));
+    verify(eventPublisher, never()).publishEvent(any(OrderCancelledEvent.class));
+  }
+
+  @Test
+  void progressAwaitingPaymentLeavesOrderUnchangedWhenPaymentStatusLookupFails() {
+    Order order = new Order("alice");
+    order.setId(10L);
+    order.setPaymentId(42L);
+    order.markStatus(OrderStatus.AWAITING_PAYMENT);
+    when(orderRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(order));
+    when(paymentClient.getStatus(42L, "Bearer service-token"))
+        .thenThrow(new PaymentInitiationException("circuit breaker open"));
+
+    orderService.progressAwaitingPayment(10L);
+
+    assertThat(order.getStatus()).isEqualTo(OrderStatus.AWAITING_PAYMENT);
+    verify(inventoryClient, never()).release(any(), any());
+    verify(shippingClient, never()).createShipment(any(), any(), any(), any());
     verify(eventPublisher, never()).publishEvent(any(OrderConfirmedEvent.class));
     verify(eventPublisher, never()).publishEvent(any(OrderCancelledEvent.class));
   }
@@ -211,7 +231,8 @@ class OrderServiceTest {
     order.setShippingDestination("1 Test Way");
     order.markStatus(OrderStatus.AWAITING_PAYMENT);
     when(orderRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(order));
-    when(shippingClient.createShipment(10L, "1 Test Way", "Bearer service-token")).thenReturn(7L);
+    when(shippingClient.createShipment(10L, "alice", "1 Test Way", "Bearer service-token"))
+        .thenReturn(7L);
 
     orderService.onPaymentEvent(10L, true);
 
@@ -255,7 +276,7 @@ class OrderServiceTest {
     order.setId(10L);
     order.setPaymentId(42L);
     order.markStatus(OrderStatus.AWAITING_PAYMENT);
-    when(orderRepository.findByIdAndCustomerUsername(10L, "alice")).thenReturn(Optional.of(order));
+    when(orderRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(order));
 
     OrderResponse response = orderService.cancelOrder("alice", false, 10L, "Bearer token");
 
@@ -270,7 +291,7 @@ class OrderServiceTest {
     order.setId(10L);
     order.setPaymentId(42L);
     order.markStatus(OrderStatus.CONFIRMED);
-    when(orderRepository.findByIdAndCustomerUsername(10L, "alice")).thenReturn(Optional.of(order));
+    when(orderRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(order));
 
     OrderResponse response = orderService.cancelOrder("alice", false, 10L, "Bearer token");
 
@@ -290,7 +311,7 @@ class OrderServiceTest {
     order.setPaymentId(42L);
     order.setShipmentId(7L);
     order.markStatus(OrderStatus.CONFIRMED);
-    when(orderRepository.findByIdAndCustomerUsername(10L, "alice")).thenReturn(Optional.of(order));
+    when(orderRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(order));
     when(shippingClient.getStatus(7L, "Bearer token"))
         .thenReturn(ShippingClient.ShipmentStatus.DELIVERED);
 
@@ -308,7 +329,7 @@ class OrderServiceTest {
     order.setPaymentId(42L);
     order.setShipmentId(7L);
     order.markStatus(OrderStatus.CONFIRMED);
-    when(orderRepository.findByIdAndCustomerUsername(10L, "alice")).thenReturn(Optional.of(order));
+    when(orderRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(order));
     when(shippingClient.getStatus(7L, "Bearer token"))
         .thenReturn(ShippingClient.ShipmentStatus.IN_TRANSIT);
 
@@ -326,7 +347,7 @@ class OrderServiceTest {
     order.setPaymentId(42L);
     order.setShipmentId(7L);
     order.markStatus(OrderStatus.CONFIRMED);
-    when(orderRepository.findByIdAndCustomerUsername(10L, "alice")).thenReturn(Optional.of(order));
+    when(orderRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(order));
     when(shippingClient.getStatus(7L, "Bearer token"))
         .thenThrow(new ShipmentLookupException("unreachable", new RuntimeException()));
 

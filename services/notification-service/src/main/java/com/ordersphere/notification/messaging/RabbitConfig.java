@@ -1,9 +1,11 @@
 package com.ordersphere.notification.messaging;
 
+import com.ordersphere.events.DeliveryConfirmedEvent;
 import com.ordersphere.events.OrderCancelledEvent;
 import com.ordersphere.events.OrderConfirmedEvent;
 import com.ordersphere.events.PaymentCompletedEvent;
 import com.ordersphere.events.PaymentFailedEvent;
+import com.ordersphere.events.ShipmentCreatedEvent;
 import com.ordersphere.events.messaging.RoutingKeys;
 import org.springframework.amqp.core.Binding;
 import org.springframework.amqp.core.BindingBuilder;
@@ -18,8 +20,10 @@ import org.springframework.context.annotation.Configuration;
 /**
  * Durable queue realizing "notification-service consumes all major events" - bound to exactly the
  * event types that map to an existing TemplateKey (order confirmed/cancelled, payment
- * completed/failed). ShipmentCreatedEvent/DeliveryConfirmedEvent are deliberately not bound here:
- * shipping-service has no customer identity in its schema to address a notification with.
+ * completed/failed, shipment created, delivery confirmed). Shipping-service's Shipment rows carry a
+ * denormalized customerUsername (see shipping-service's V2 migration) specifically so
+ * ShipmentCreatedEvent/DeliveryConfirmedEvent can address a notification the same way every other
+ * bound event here does - a plain payload read, no synchronous lookup back into another service.
  */
 @Configuration
 public class RabbitConfig {
@@ -62,7 +66,9 @@ public class RabbitConfig {
         bindingFor(domainEventsExchange, notificationEventsQueue, OrderConfirmedEvent.class),
         bindingFor(domainEventsExchange, notificationEventsQueue, OrderCancelledEvent.class),
         bindingFor(domainEventsExchange, notificationEventsQueue, PaymentCompletedEvent.class),
-        bindingFor(domainEventsExchange, notificationEventsQueue, PaymentFailedEvent.class));
+        bindingFor(domainEventsExchange, notificationEventsQueue, PaymentFailedEvent.class),
+        bindingFor(domainEventsExchange, notificationEventsQueue, ShipmentCreatedEvent.class),
+        bindingFor(domainEventsExchange, notificationEventsQueue, DeliveryConfirmedEvent.class));
   }
 
   private static Binding bindingFor(TopicExchange exchange, Queue queue, Class<?> eventType) {

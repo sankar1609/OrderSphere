@@ -3,15 +3,18 @@ package com.ordersphere.notification.messaging;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 
+import com.ordersphere.events.DeliveryConfirmedEvent;
 import com.ordersphere.events.OrderCancelledEvent;
 import com.ordersphere.events.OrderConfirmedEvent;
 import com.ordersphere.events.PaymentCompletedEvent;
 import com.ordersphere.events.PaymentFailedEvent;
+import com.ordersphere.events.ShipmentCreatedEvent;
 import com.ordersphere.notification.domain.NotificationChannel;
 import com.ordersphere.notification.domain.TemplateKey;
 import com.ordersphere.notification.dto.CreateNotificationRequest;
 import com.ordersphere.notification.service.NotificationService;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -87,5 +90,38 @@ class DomainEventListenerTest {
                     NotificationChannel.EMAIL,
                     TemplateKey.PAYMENT_FAILED,
                     Map.of("orderId", "10", "reason", "declined"))));
+  }
+
+  @Test
+  void onShipmentCreatedCreatesEmailNotificationForCustomer() {
+    DomainEventListener listener = new DomainEventListener(notificationService);
+
+    listener.onShipmentCreated(
+        new ShipmentCreatedEvent(7L, 10L, "alice", "123 Main St, Springfield"));
+
+    verify(notificationService)
+        .createNotification(
+            eq(
+                new CreateNotificationRequest(
+                    "alice",
+                    NotificationChannel.EMAIL,
+                    TemplateKey.SHIPMENT_CREATED,
+                    Map.of("orderId", "10", "destination", "123 Main St, Springfield"))));
+  }
+
+  @Test
+  void onDeliveryConfirmedCreatesEmailNotificationForCustomer() {
+    DomainEventListener listener = new DomainEventListener(notificationService);
+
+    listener.onDeliveryConfirmed(new DeliveryConfirmedEvent(7L, 10L, "alice", Instant.now()));
+
+    verify(notificationService)
+        .createNotification(
+            eq(
+                new CreateNotificationRequest(
+                    "alice",
+                    NotificationChannel.EMAIL,
+                    TemplateKey.DELIVERY_CONFIRMED,
+                    Map.of("orderId", "10"))));
   }
 }

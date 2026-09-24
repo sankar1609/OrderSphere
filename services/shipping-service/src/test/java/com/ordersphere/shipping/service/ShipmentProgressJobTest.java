@@ -23,7 +23,7 @@ class ShipmentProgressJobTest {
 
   @Test
   void advancePendingShipmentsAdvancesEachNonTerminalShipment() {
-    Shipment pending = new Shipment(100L, ShipmentType.OUTBOUND, "123 Main St", null);
+    Shipment pending = new Shipment(100L, "alice", ShipmentType.OUTBOUND, "123 Main St", null);
     when(shipmentRepository.findByStatusNotIn(any(Collection.class))).thenReturn(List.of(pending));
 
     ShipmentProgressJob job = new ShipmentProgressJob(shipmentRepository, shipmentService);

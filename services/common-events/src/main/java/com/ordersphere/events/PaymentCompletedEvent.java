@@ -13,11 +13,7 @@ public class PaymentCompletedEvent extends BaseEvent {
   private final String currency;
 
   public PaymentCompletedEvent(
-      Long paymentId,
-      Long orderId,
-      String customerUsername,
-      BigDecimal amount,
-      String currency) {
+      Long paymentId, Long orderId, String customerUsername, BigDecimal amount, String currency) {
     super("PaymentCompletedEvent");
     this.paymentId = paymentId;
     this.orderId = orderId;

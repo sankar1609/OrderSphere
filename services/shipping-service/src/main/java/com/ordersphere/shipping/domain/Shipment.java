@@ -28,6 +28,9 @@ public class Shipment {
   @Column(name = "order_id", nullable = false)
   private Long orderId;
 
+  @Column(name = "customer_username", nullable = false)
+  private String customerUsername;
+
   @Enumerated(EnumType.STRING)
   @Column(nullable = false)
   private ShipmentType type;
@@ -57,8 +60,14 @@ public class Shipment {
   @Column(name = "delivered_at")
   private Instant deliveredAt;
 
-  public Shipment(Long orderId, ShipmentType type, String destination, Long parentShipmentId) {
+  public Shipment(
+      Long orderId,
+      String customerUsername,
+      ShipmentType type,
+      String destination,
+      Long parentShipmentId) {
     this.orderId = orderId;
+    this.customerUsername = customerUsername;
     this.type = type;
     this.destination = destination;
     this.parentShipmentId = parentShipmentId;

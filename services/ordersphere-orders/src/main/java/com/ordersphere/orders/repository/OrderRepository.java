@@ -20,8 +20,8 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
 
   /**
    * Row-locking read used to serialize the two independent paths that can progress an
-   * AWAITING_PAYMENT order (the PaymentCompletedEvent listener and the saga sweep job's polling)
-   * so they can't race each other into a lost update or a duplicate OrderConfirmedEvent.
+   * AWAITING_PAYMENT order (the PaymentCompletedEvent listener and the saga sweep job's polling) so
+   * they can't race each other into a lost update or a duplicate OrderConfirmedEvent.
    */
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("select o from Order o where o.id = :id")
