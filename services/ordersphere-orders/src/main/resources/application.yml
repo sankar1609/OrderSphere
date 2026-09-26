@@ -33,6 +33,9 @@ jwt:
 orders:
   saga:
     sweep-interval-ms: ${ORDERS_SAGA_SWEEP_INTERVAL_MS:5000}
+  rest-client:
+    connect-timeout-ms: ${ORDERS_REST_CLIENT_CONNECT_TIMEOUT_MS:2000}
+    read-timeout-ms: ${ORDERS_REST_CLIENT_READ_TIMEOUT_MS:5000}
 
 resilience4j:
   circuitbreaker:

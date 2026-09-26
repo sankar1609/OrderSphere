@@ -2,13 +2,13 @@
 
 This document describes how OrderSphere is actually built today — architecture, service design, event messaging, data model, security, and the technology stack — verified against the codebase (Maven POMs, RabbitMQ config classes, service code, Flyway migrations) rather than restated from planning docs. See [product-functionality.md](./product-functionality.md) for the business-facing view.
 
-**Version:** 1.0.0-SNAPSHOT | **Status:** Active development | **Verified against:** commit `fc6114f`
+**Version:** 1.0.0-SNAPSHOT | **Status:** Active development | **Verified against:** commit `fb04d21`
 
 ---
 
 ## 1. Overview
 
-OrderSphere is a cloud-native order and inventory management platform built as ten independently deployable Spring Boot services. It exists to demonstrate — and exercise — the hard parts of distributed order processing: reserving stock without overselling, keeping payment and fulfillment eventually consistent, and giving every state transition a compensating path back out.
+OrderSphere is a cloud-native order and inventory management platform built as ten Maven modules — eight independently deployable Spring Boot services plus two shared libraries. It exists to demonstrate — and exercise — the hard parts of distributed order processing: reserving stock without overselling, keeping payment and fulfillment eventually consistent, giving every state transition a compensating path back out, and — the part that's easy to get wrong — making sure the two independent things that can each try to finish the same step don't race each other into a lost update.
 
 The system runs today as a full Docker Compose stack: a Eureka service registry, an API gateway, six business services, PostgreSQL (one schema per service), and RabbitMQ for asynchronous fan-out. Every service builds, has a Flyway-managed schema, and carries its own test suite.
 
@@ -24,11 +24,17 @@ The Orders service is the saga's orchestrator. When a customer places an order, 
 
 ### Resilience: circuit breakers on the saga's outbound calls
 
-Each of Orders' three REST clients (`InventoryClient`, `PaymentClient`, `ShippingClient`) is wrapped in a Resilience4j circuit breaker, one instance per downstream service (`inventory-service`, `payment-service`, `shipping-service`), so a degraded dependency fails fast instead of piling up blocked saga threads. Fallback methods preserve the exact exception types the saga already expects — `InventoryReservationException`, `PaymentInitiationException`, `ShipmentCreationException`, `ShipmentLookupException` — whether the underlying call actually failed or the breaker is simply open, so `OrderService`'s compensation logic needed no changes. Best-effort calls (`InventoryClient.release`, `PaymentClient.refund`) keep failing silently under an open breaker, matching their existing behavior. Breaker state (open/closed/half-open, failure rate) is exposed via Spring Boot Actuator at `/actuator/circuitbreakers` and `/actuator/circuitbreakerevents`; connect/read timeouts on the underlying `RestClient` are not yet configured, which is the natural next hardening step (a breaker can't count a hang as a failure without one).
+Each of Orders' three REST clients (`InventoryClient`, `PaymentClient`, `ShippingClient`) is wrapped in a Resilience4j circuit breaker, one instance per downstream service (`inventory-service`, `payment-service`, `shipping-service`), so a degraded dependency fails fast instead of piling up blocked saga threads. Fallback methods preserve the exact exception types the saga already expects — `InventoryReservationException`, `PaymentInitiationException`, `ShipmentCreationException`, `ShipmentLookupException` — whether the underlying call actually failed or the breaker is simply open, so `OrderService`'s compensation logic needed no changes. Best-effort calls (`InventoryClient.release`, `PaymentClient.refund`) keep failing silently under an open breaker, matching their existing behavior. Breaker state (open/closed/half-open, failure rate) is exposed via Spring Boot Actuator at `/actuator/circuitbreakers` and `/actuator/circuitbreakerevents`. The shared `RestClient.Builder` (`RestClientConfig`) carries a connect timeout of `ORDERS_REST_CLIENT_CONNECT_TIMEOUT_MS` (default 2s) and a read timeout of `ORDERS_REST_CLIENT_READ_TIMEOUT_MS` (default 5s) — comfortably under every breaker's `wait-duration-in-open-state` (15–20s) — so a hung downstream call fails fast enough to actually register as a breaker failure instead of blocking a saga thread indefinitely.
+
+### Concurrency: serializing the saga's competing paths
+
+Orders confirms a payment two independent ways — a `PaymentEventListener` reacting to `PaymentCompletedEvent`/`PaymentFailedEvent` off the broker, and `OrderSagaProgressJob`'s polling sweep, which exists precisely so a dropped event doesn't strand an order forever. Both paths can see the same order as `AWAITING_PAYMENT` at once, so both now take a `SELECT ... FOR UPDATE` row lock (`OrderRepository.findByIdForUpdate`) before checking or mutating status: whichever gets there first wins, and the loser re-reads the now-`CONFIRMED`/`CANCELLED` order and no-ops instead of double-confirming it. `OrderService.cancelOrder` takes the same lock, so a customer cancelling right as the saga confirms can't race it either.
+
+A row lock only works once a row exists, so it can't protect Shipping's own create-shipment endpoint — the first call for a given order has nothing to lock yet. There, the `shipments` table's `uq_shipments_order_id_type` unique constraint is the actual serialization point: two concurrent creates can both pass the check-then-insert, but the loser's insert fails the constraint, and `ShipmentService` catches that and falls back to fetching the winner's row instead of surfacing a 500.
 
 ### Events as the async layer
 
-Every state change Orders makes is also published locally as a Spring `ApplicationEvent` and relayed onto a RabbitMQ topic exchange by a shared `DomainEventRelay`. Two things consume off that bus today: Notification service, which reacts to order and payment events to trigger customer messages, and Orders itself, which listens for `PaymentCompletedEvent`/`PaymentFailedEvent` as a low-latency shortcut around its own polling sweep job. Inventory, Payment, and Shipping are not yet wired as message consumers — they participate in the saga purely as REST call targets right now.
+Every state change Orders, Payment, or Shipping makes is also published locally as a Spring `ApplicationEvent` and relayed onto a RabbitMQ topic exchange by a shared `DomainEventRelay`. Three things consume off that bus today: Notification service, which reacts to order, payment, and shipment events to trigger customer messages; Orders itself, listening for `PaymentCompletedEvent`/`PaymentFailedEvent` as a low-latency shortcut around its own polling sweep job; and Shipping, which halts an in-flight shipment when it hears `OrderCancelledEvent`. Inventory and Payment are not yet wired as message consumers — every service publishes into the same exchange (see §4), but only 6 of the 19 event types anyone publishes actually have a bound queue reading them.
 
 ### Request topology
 
@@ -66,7 +72,7 @@ All external traffic enters through the gateway; every service resolves its peer
 
 ## 3. Service catalog
 
-Nine runtime services plus two shared libraries. Ports match the Docker Compose configuration and are stable across local and containerized runs.
+Eight runtime services plus two shared libraries. Ports match the Docker Compose configuration and are stable across local and containerized runs.
 
 | Service | Port | Responsibility | Database |
 |---|---|---|---|
@@ -89,37 +95,44 @@ All async traffic moves through a single RabbitMQ topic exchange, `ordersphere.e
 
 ### Routing
 
-Each of the 18 event types defined in `common-events` (`OrderCreatedEvent`, `PaymentCompletedEvent`, `ShipmentCreatedEvent`, and so on) is published under a routing key mechanically derived from its class name — `RoutingKeys.forEventType` turns `PaymentCompletedEvent` into `payment.completed`. A `DomainEventRelay` subscribes to every locally-published `BaseEvent` and forwards it to the exchange, so publishing a new event type never requires touching messaging wiring.
+Each of the 19 event types defined in `common-events` (`OrderCreatedEvent`, `PaymentCompletedEvent`, `ShipmentCreatedEvent`, and so on) is published under a routing key mechanically derived from its class name — `RoutingKeys.forEventType` turns `PaymentCompletedEvent` into `payment.completed`. A `DomainEventRelay` subscribes to every locally-published `BaseEvent` and forwards it to the exchange, so publishing a new event type never requires touching messaging wiring — publishing always succeeds. Binding a queue to actually read it is a separate, deliberate choice, and most event types don't have one yet (see below).
 
 ### Consumers
 
-Two durable queues exist today, each with its own dead-letter exchange and queue for redelivery failures:
+Three durable queues exist today, each with its own dead-letter exchange and queue for redelivery failures:
 
 | Queue | Owner | Bound routing keys |
 |---|---|---|
 | `ordersphere-orders.payment-events` | `ordersphere-orders` | `payment.completed`, `payment.failed` |
-| `notification-service.events` | `notification-service` | `order.confirmed`, `order.cancelled`, `payment.completed`, `payment.failed` |
+| `shipping-service.order-events` | `shipping-service` | `order.cancelled` |
+| `notification-service.events` | `notification-service` | `order.confirmed`, `order.cancelled`, `payment.completed`, `payment.failed`, `shipment.created`, `delivery.confirmed` |
 
-Notification deliberately doesn't bind shipment events yet — `ShipmentCreatedEvent` and `DeliveryConfirmedEvent` carry no customer identity in the shipping schema to address a notification with, so that wiring is on hold until shipping-service tracks it.
+That's 6 of the 19 published event types actually reaching a consumer. The other 13 — everything auth-service and inventory-service publish, plus `PaymentInitiatedEvent`, `RefundIssuedEvent`, `ShipmentPickedEvent`, `ShipmentInTransitEvent`, `NotificationSentEvent`, `NotificationFailedEvent` — currently reach the exchange and go nowhere; there's no bound queue to route them to.
+
+`ShipmentCreatedEvent`/`DeliveryConfirmedEvent` binding to notification is recent: shipping-service's schema had no customer identity to address a notification with, so those two were deliberately left unbound. The fix was a denormalized `customer_username` column on `shipments` (`V2__add_shipment_customer_username`, populated once at shipment-creation time from the order) — event-carried state transfer, not a foreign key, so `DomainEventListener` can read it straight off the event payload the same way it already does for every other bound event, with no synchronous lookup back into another service.
 
 ```mermaid
 flowchart LR
     ord["ordersphere-orders"] -- "order.created / .confirmed / .cancelled" --> ex(("ordersphere.events\ntopic exchange"))
     pay["payment-service"] -- "payment.completed / .failed" --> ex
+    ship["shipping-service"] -- "shipment.created /\ndelivery.confirmed" --> ex
 
     ex -- "payment.*" --> q1["ordersphere-orders.payment-events"]
-    ex -- "order.confirmed/.cancelled, payment.*" --> q2["notification-service.events"]
+    ex -- "order.cancelled" --> q3["shipping-service.order-events"]
+    ex -- "order.confirmed/.cancelled, payment.*,\nshipment.created, delivery.confirmed" --> q2["notification-service.events"]
 
     q1 -. failed delivery .-> dlq1[["...payment-events.dlq"]]
     q2 -. failed delivery .-> dlq2[["notification-service.events.dlq"]]
+    q3 -. failed delivery .-> dlq3[["...order-events.dlq"]]
 
     q1 --> l1["PaymentEventListener\n(ordersphere-orders)"]
     q2 --> l2["DomainEventListener\n(notification-service)"]
+    q3 --> l3["OrderEventListener\n(shipping-service)"]
 ```
 
-Orders drives the saga synchronously (see §2) and publishes lifecycle events as a byproduct; only two consumers exist on the broker today, each with a dead-letter queue for redelivery failures.
+Orders drives the saga synchronously (see §2) and publishes lifecycle events as a byproduct; three consumers exist on the broker today, each with a dead-letter queue for redelivery failures.
 
-> **Why both patterns exist:** REST orchestration keeps the order-placement request's success/failure path synchronous and easy to test. The event bus exists for consumers that shouldn't be on that critical path — notifications, and a faster-than-polling signal back to Orders. It is not (yet) the mechanism inventory or shipping use to react to order state.
+> **Why both patterns exist:** REST orchestration keeps the order-placement request's success/failure path synchronous and easy to test. The event bus exists for consumers that shouldn't be on that critical path — notifications, a faster-than-polling signal back to Orders, and Shipping reacting to a cancellation it wasn't otherwise told about. Inventory and Payment don't participate as consumers yet; they're purely REST call targets from Orders' side.
 
 ---
 
@@ -133,10 +146,10 @@ Database-per-service, no cross-service foreign keys. Every service ships its own
 | `ordersphere-orders` | `V1__create_orders_tables`, `V2__add_payment_and_shipment_tracking_to_orders` |
 | `inventory-service` | `V1__create_inventory_tables` |
 | `payment-service` | `V1__create_payment_tables` |
-| `shipping-service` | `V1__create_shipping_tables` |
+| `shipping-service` | `V1__create_shipping_tables`, `V2__add_shipment_customer_username` |
 | `notification-service` | `V1__create_notification_tables` |
 
-Orders' second migration is a small but telling design signal: rather than joining out to Inventory or Payment for status, Orders keeps its own denormalized `paymentId`/`shipmentId` tracking columns — consistent with treating those services as call targets, not sources of truth Orders queries live.
+Orders' second migration is a small but telling design signal: rather than joining out to Inventory or Payment for status, Orders keeps its own denormalized `paymentId`/`shipmentId` tracking columns — consistent with treating those services as call targets, not sources of truth Orders queries live. Shipping's second migration is the one deliberate exception to "no cross-service data" in this codebase: a `customer_username` column copied from the order at shipment-creation time, purely so shipment events can address a notification (see §2, §4) — not a foreign key, and not queried back against Orders.
 
 ---
 
@@ -158,7 +171,7 @@ What every service is actually built on, confirmed against each module's `pom.xm
 | Technology | Role |
 |---|---|
 | Java 17 | Language baseline, parent POM |
-| Spring Boot 3.2.1 | Service framework across all nine modules |
+| Spring Boot 3.2.1 | Service framework across all ten modules |
 | Spring Cloud Gateway | API gateway routing |
 | Netflix Eureka | Service discovery, client + server |
 | Spring Cloud LoadBalancer | Client-side balancing for Orders' outbound calls |
@@ -202,13 +215,13 @@ Every module carries its own test suite; `common-events` is the most heavily cov
 | `notification-service` | 6 |
 | `inventory-service` | 5 |
 | `payment-service` | 5 |
-| `shipping-service` | 4 |
+| `shipping-service` | 5 |
 | `auth-service` | 3 |
 | `common-security` | 2 |
 | `ordersphere-gateway` | 1 |
 | `service-registry` | 1 |
 
-Integration coverage runs against real dependencies via Testcontainers (Postgres and RabbitMQ), rather than mocking the database or broker — the suites in `ordersphere-orders` and `common-events` in particular exercise actual message publish/consume round-trips.
+Integration coverage runs against real dependencies via Testcontainers (Postgres and RabbitMQ), rather than mocking the database or broker — the suites in `ordersphere-orders` and `common-events` in particular exercise actual message publish/consume round-trips. Every `@SpringBootTest`-based integration test class carries `@DirtiesContext(classMode = AFTER_CLASS)`: without it, Testcontainers tears down the Postgres/RabbitMQ containers right after the test class finishes, but the cached Spring context (and its live `@Scheduled` jobs and AMQP listeners) can outlive them until the JVM exits — the mismatch shows up as retry-spam against dead containers and, eventually, Surefire force-killing the fork after a 30s hang.
 
 ---
 
