@@ -149,10 +149,12 @@ public class ShipmentService {
     switch (update.nextStatus()) {
       case PICKED ->
           eventPublisher.publishEvent(
-              new ShipmentPickedEvent(shipment.getId(), shipment.getOrderId()));
+              new ShipmentPickedEvent(
+                  shipment.getId(), shipment.getOrderId(), shipment.getCustomerUsername()));
       case IN_TRANSIT ->
           eventPublisher.publishEvent(
-              new ShipmentInTransitEvent(shipment.getId(), shipment.getOrderId()));
+              new ShipmentInTransitEvent(
+                  shipment.getId(), shipment.getOrderId(), shipment.getCustomerUsername()));
       case DELIVERED ->
           eventPublisher.publishEvent(
               new DeliveryConfirmedEvent(

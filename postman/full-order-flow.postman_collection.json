@@ -270,7 +270,7 @@
             "method": "GET",
             "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
             "url": { "raw": "{{notificationBaseUrl}}/notifications", "host": ["{{notificationBaseUrl}}"], "path": ["notifications"] },
-            "description": "Once the order is CONFIRMED, ordersphere-orders queues an ORDER_CONFIRMED notification (ADMIN-only endpoint, called with orders-service's own service-identity token, not your customer token - you just read it back here). It starts PENDING and flips to SENT on notification-service's own ~5s delivery sweep."
+            "description": "A full happy-path run queues six notifications, in order: PAYMENT_COMPLETED, SHIPMENT_CREATED, ORDER_CONFIRMED, SHIPMENT_PICKED, SHIPMENT_IN_TRANSIT, DELIVERY_CONFIRMED - each queued by the owning service (payment-service, shipping-service, ordersphere-orders) using its own service-identity token, not your customer token; you just read them back here. Each starts PENDING and flips to SENT on notification-service's own ~5s delivery sweep, so re-send this a few times to see the full set land."
           }
         }
       ]

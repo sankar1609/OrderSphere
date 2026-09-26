@@ -105,21 +105,21 @@ Three durable queues exist today, each with its own dead-letter exchange and que
 |---|---|---|
 | `ordersphere-orders.payment-events` | `ordersphere-orders` | `payment.completed`, `payment.failed` |
 | `shipping-service.order-events` | `shipping-service` | `order.cancelled` |
-| `notification-service.events` | `notification-service` | `order.confirmed`, `order.cancelled`, `payment.completed`, `payment.failed`, `shipment.created`, `delivery.confirmed` |
+| `notification-service.events` | `notification-service` | `order.confirmed`, `order.cancelled`, `payment.completed`, `payment.failed`, `shipment.created`, `shipment.picked`, `shipment.in.transit`, `delivery.confirmed` |
 
-That's 6 of the 19 published event types actually reaching a consumer. The other 13 — everything auth-service and inventory-service publish, plus `PaymentInitiatedEvent`, `RefundIssuedEvent`, `ShipmentPickedEvent`, `ShipmentInTransitEvent`, `NotificationSentEvent`, `NotificationFailedEvent` — currently reach the exchange and go nowhere; there's no bound queue to route them to.
+That's 8 of the 19 published event types actually reaching a consumer. The other 11 — everything auth-service and inventory-service publish, plus `PaymentInitiatedEvent`, `RefundIssuedEvent`, `NotificationSentEvent`, `NotificationFailedEvent` — currently reach the exchange and go nowhere; there's no bound queue to route them to.
 
-`ShipmentCreatedEvent`/`DeliveryConfirmedEvent` binding to notification is recent: shipping-service's schema had no customer identity to address a notification with, so those two were deliberately left unbound. The fix was a denormalized `customer_username` column on `shipments` (`V2__add_shipment_customer_username`, populated once at shipment-creation time from the order) — event-carried state transfer, not a foreign key, so `DomainEventListener` can read it straight off the event payload the same way it already does for every other bound event, with no synchronous lookup back into another service.
+Every shipment milestone binding to notification is recent: shipping-service's schema had no customer identity to address a notification with, so these were deliberately left unbound. The fix was a denormalized `customer_username` column on `shipments` (`V2__add_shipment_customer_username`, populated once at shipment-creation time from the order) — event-carried state transfer, not a foreign key, so `DomainEventListener` can read it straight off the event payload the same way it already does for every other bound event, with no synchronous lookup back into another service.
 
 ```mermaid
 flowchart LR
     ord["ordersphere-orders"] -- "order.created / .confirmed / .cancelled" --> ex(("ordersphere.events\ntopic exchange"))
     pay["payment-service"] -- "payment.completed / .failed" --> ex
-    ship["shipping-service"] -- "shipment.created /\ndelivery.confirmed" --> ex
+    ship["shipping-service"] -- "shipment.created / .picked /\n.in.transit, delivery.confirmed" --> ex
 
     ex -- "payment.*" --> q1["ordersphere-orders.payment-events"]
     ex -- "order.cancelled" --> q3["shipping-service.order-events"]
-    ex -- "order.confirmed/.cancelled, payment.*,\nshipment.created, delivery.confirmed" --> q2["notification-service.events"]
+    ex -- "order.confirmed/.cancelled, payment.*,\nshipment.*, delivery.confirmed" --> q2["notification-service.events"]
 
     q1 -. failed delivery .-> dlq1[["...payment-events.dlq"]]
     q2 -. failed delivery .-> dlq2[["notification-service.events.dlq"]]

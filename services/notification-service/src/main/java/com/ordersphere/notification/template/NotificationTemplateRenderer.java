@@ -16,6 +16,9 @@ public class NotificationTemplateRenderer {
           TemplateKey.PAYMENT_FAILED, "Payment for order #{orderId} failed: {reason}",
           TemplateKey.SHIPMENT_CREATED,
               "Your shipment for order #{orderId} is on its way to {destination}.",
+          TemplateKey.SHIPMENT_PICKED,
+              "Your shipment for order #{orderId} has been picked up and is on its way.",
+          TemplateKey.SHIPMENT_IN_TRANSIT, "Your shipment for order #{orderId} is in transit.",
           TemplateKey.DELIVERY_CONFIRMED, "Your order #{orderId} has been delivered.");
 
   public String render(TemplateKey templateKey, Map<String, String> variables) {

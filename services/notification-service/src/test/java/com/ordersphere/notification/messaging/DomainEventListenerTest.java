@@ -9,6 +9,8 @@ import com.ordersphere.events.OrderConfirmedEvent;
 import com.ordersphere.events.PaymentCompletedEvent;
 import com.ordersphere.events.PaymentFailedEvent;
 import com.ordersphere.events.ShipmentCreatedEvent;
+import com.ordersphere.events.ShipmentInTransitEvent;
+import com.ordersphere.events.ShipmentPickedEvent;
 import com.ordersphere.notification.domain.NotificationChannel;
 import com.ordersphere.notification.domain.TemplateKey;
 import com.ordersphere.notification.dto.CreateNotificationRequest;
@@ -107,6 +109,38 @@ class DomainEventListenerTest {
                     NotificationChannel.EMAIL,
                     TemplateKey.SHIPMENT_CREATED,
                     Map.of("orderId", "10", "destination", "123 Main St, Springfield"))));
+  }
+
+  @Test
+  void onShipmentPickedCreatesEmailNotificationForCustomer() {
+    DomainEventListener listener = new DomainEventListener(notificationService);
+
+    listener.onShipmentPicked(new ShipmentPickedEvent(7L, 10L, "alice"));
+
+    verify(notificationService)
+        .createNotification(
+            eq(
+                new CreateNotificationRequest(
+                    "alice",
+                    NotificationChannel.EMAIL,
+                    TemplateKey.SHIPMENT_PICKED,
+                    Map.of("orderId", "10"))));
+  }
+
+  @Test
+  void onShipmentInTransitCreatesEmailNotificationForCustomer() {
+    DomainEventListener listener = new DomainEventListener(notificationService);
+
+    listener.onShipmentInTransit(new ShipmentInTransitEvent(7L, 10L, "alice"));
+
+    verify(notificationService)
+        .createNotification(
+            eq(
+                new CreateNotificationRequest(
+                    "alice",
+                    NotificationChannel.EMAIL,
+                    TemplateKey.SHIPMENT_IN_TRANSIT,
+                    Map.of("orderId", "10"))));
   }
 
   @Test

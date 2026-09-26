@@ -8,10 +8,11 @@ class ShipmentInTransitEventTest {
 
   @Test
   void carriesShipmentAndOrderIdAndEventType() {
-    ShipmentInTransitEvent event = new ShipmentInTransitEvent(1L, 100L);
+    ShipmentInTransitEvent event = new ShipmentInTransitEvent(1L, 100L, "alice");
 
     assertThat(event.getShipmentId()).isEqualTo(1L);
     assertThat(event.getOrderId()).isEqualTo(100L);
+    assertThat(event.getCustomerUsername()).isEqualTo("alice");
     assertThat(event.getEventType()).isEqualTo("ShipmentInTransitEvent");
   }
 }
