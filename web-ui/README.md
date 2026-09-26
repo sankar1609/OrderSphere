@@ -25,8 +25,8 @@ Opens on `http://localhost:5173`. Log in with an existing account, or register a
 - `src/components/PlaceOrder.jsx` — builds an item list from the product catalog and calls `POST /ordersphere-orders/orders`. Two backend gaps this screen works around:
   - **Pricing isn't modeled anywhere in the backend** (no price field on any product) — the order create DTO still requires a pre-computed `amount`, so the user types the total manually instead of it being calculated from items.
   - **No payment-method UI exists yet** — the screen auto-creates one (`POST /payment-service/payment-methods`, type `CARD`, a generated placeholder token) the first time a customer places an order if they don't already have one, then reuses their first payment method on subsequent orders.
-- `src/App.jsx` — holds the token (synced to `localStorage` on every change, read back on load) and the current auth view (`login`/`register`) and authenticated page (`orders`/`products`/`placeOrder`) in memory.
+- `src/App.jsx` — holds the token (synced to `localStorage` on every change, read back on load) and the current auth view (`login`/`register`) and authenticated page (`orders`/`products`/`placeOrder`) in memory. Also owns session-expiry handling: `api.js`'s fetch wrapper tags a non-2xx response's thrown `Error` with `error.status`, and each authenticated screen calls the `onUnauthorized` prop it's given when a call comes back `401` (the JWT expires after 1 hour) instead of just showing a raw error — `App.jsx` clears the token and bounces back to the login screen with an explanatory message.
 
 ## Not in this slice (next iterations)
 
-Token expiry handling (the JWT expires after 1 hour but nothing detects/refreshes that yet — an expired token just surfaces as a failed API call), real pricing/payment-method management, admin views, routing.
+Real pricing/payment-method management, admin views, routing.

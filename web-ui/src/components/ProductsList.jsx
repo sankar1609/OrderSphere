@@ -2,14 +2,20 @@ import { useEffect, useState } from "react";
 import { listProducts } from "../api";
 import { cellStyle } from "../styles";
 
-export default function ProductsList({ token }) {
+export default function ProductsList({ token, onUnauthorized }) {
   const [products, setProducts] = useState(null);
   const [error, setError] = useState(null);
 
   useEffect(() => {
     listProducts(token)
       .then(setProducts)
-      .catch((err) => setError(err.message));
+      .catch((err) => {
+        if (err.status === 401) {
+          onUnauthorized();
+        } else {
+          setError(err.message);
+        }
+      });
   }, [token]);
 
   return (

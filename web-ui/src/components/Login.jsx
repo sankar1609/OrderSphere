@@ -2,7 +2,7 @@ import { useState } from "react";
 import { login } from "../api";
 import { linkButtonStyle } from "../styles";
 
-export default function Login({ onLoggedIn, onSwitchToRegister }) {
+export default function Login({ onLoggedIn, onSwitchToRegister, message }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState(null);
@@ -25,6 +25,7 @@ export default function Login({ onLoggedIn, onSwitchToRegister }) {
   return (
     <div style={{ maxWidth: 320, margin: "80px auto", fontFamily: "sans-serif" }}>
       <h1>OrderSphere</h1>
+      {message && <p style={{ color: "#a15c00" }}>{message}</p>}
       <form onSubmit={handleSubmit}>
         <div style={{ marginBottom: 12 }}>
           <label>

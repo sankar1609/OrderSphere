@@ -17,6 +17,17 @@ export default function App() {
   const [token, setToken] = useState(readStoredToken);
   const [view, setView] = useState("login"); // "login" | "register"
   const [page, setPage] = useState("orders"); // "orders" | "products" | "placeOrder"
+  const [sessionMessage, setSessionMessage] = useState(null);
+
+  function handleUnauthorized() {
+    setToken(null);
+    setSessionMessage("Your session has expired. Please log in again.");
+  }
+
+  function handleLoggedIn(newToken) {
+    setSessionMessage(null);
+    setToken(newToken);
+  }
 
   useEffect(() => {
     try {
@@ -60,18 +71,30 @@ export default function App() {
             Place Order
           </button>
         </nav>
-        {page === "orders" && <OrdersList token={token} />}
-        {page === "products" && <ProductsList token={token} />}
+        {page === "orders" && <OrdersList token={token} onUnauthorized={handleUnauthorized} />}
+        {page === "products" && <ProductsList token={token} onUnauthorized={handleUnauthorized} />}
         {page === "placeOrder" && (
-          <PlaceOrder token={token} onOrderPlaced={() => setPage("orders")} />
+          <PlaceOrder
+            token={token}
+            onOrderPlaced={() => setPage("orders")}
+            onUnauthorized={handleUnauthorized}
+          />
         )}
       </div>
     );
   }
 
   if (view === "register") {
-    return <Register onRegistered={setToken} onSwitchToLogin={() => setView("login")} />;
+    return (
+      <Register onRegistered={handleLoggedIn} onSwitchToLogin={() => setView("login")} />
+    );
   }
 
-  return <Login onLoggedIn={setToken} onSwitchToRegister={() => setView("register")} />;
+  return (
+    <Login
+      onLoggedIn={handleLoggedIn}
+      onSwitchToRegister={() => setView("register")}
+      message={sessionMessage}
+    />
+  );
 }

@@ -19,7 +19,7 @@ async function resolvePaymentMethodId(token) {
   return created.id;
 }
 
-export default function PlaceOrder({ token, onOrderPlaced }) {
+export default function PlaceOrder({ token, onOrderPlaced, onUnauthorized }) {
   const [products, setProducts] = useState(null);
   const [productsError, setProductsError] = useState(null);
   const [selectedSku, setSelectedSku] = useState("");
@@ -40,7 +40,13 @@ export default function PlaceOrder({ token, onOrderPlaced }) {
           setSelectedSku(data[0].sku);
         }
       })
-      .catch((err) => setProductsError(err.message));
+      .catch((err) => {
+        if (err.status === 401) {
+          onUnauthorized();
+        } else {
+          setProductsError(err.message);
+        }
+      });
   }, [token]);
 
   function addItem() {
@@ -81,7 +87,11 @@ export default function PlaceOrder({ token, onOrderPlaced }) {
       setShippingDestination("");
       onOrderPlaced?.(order);
     } catch (err) {
-      setError(err.message);
+      if (err.status === 401) {
+        onUnauthorized();
+      } else {
+        setError(err.message);
+      }
     } finally {
       setSubmitting(false);
     }

@@ -21,7 +21,9 @@ async function request(path, { method = "GET", token, body } = {}) {
   const data = text ? JSON.parse(text) : null;
 
   if (!response.ok) {
-    throw new Error(data?.message ?? `Request failed with status ${response.status}`);
+    const error = new Error(data?.message ?? `Request failed with status ${response.status}`);
+    error.status = response.status;
+    throw error;
   }
 
   return data;

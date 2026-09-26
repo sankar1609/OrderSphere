@@ -2,14 +2,20 @@ import { useEffect, useState } from "react";
 import { listMyOrders } from "../api";
 import { cellStyle } from "../styles";
 
-export default function OrdersList({ token }) {
+export default function OrdersList({ token, onUnauthorized }) {
   const [orders, setOrders] = useState(null);
   const [error, setError] = useState(null);
 
   useEffect(() => {
     listMyOrders(token)
       .then(setOrders)
-      .catch((err) => setError(err.message));
+      .catch((err) => {
+        if (err.status === 401) {
+          onUnauthorized();
+        } else {
+          setError(err.message);
+        }
+      });
   }, [token]);
 
   return (
