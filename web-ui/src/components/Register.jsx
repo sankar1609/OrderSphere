@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { login } from "../api";
+import { register, login } from "../api";
 
-export default function Login({ onLoggedIn, onSwitchToRegister }) {
+export default function Register({ onRegistered, onSwitchToLogin }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState(null);
@@ -12,8 +12,11 @@ export default function Login({ onLoggedIn, onSwitchToRegister }) {
     setError(null);
     setSubmitting(true);
     try {
+      await register(username, password);
+      // Registration doesn't return a token - log straight in with the same
+      // credentials so signing up is a single flow, not two.
       const { token } = await login(username, password);
-      onLoggedIn(token);
+      onRegistered(token);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -24,6 +27,7 @@ export default function Login({ onLoggedIn, onSwitchToRegister }) {
   return (
     <div style={{ maxWidth: 320, margin: "80px auto", fontFamily: "sans-serif" }}>
       <h1>OrderSphere</h1>
+      <h2 style={{ fontSize: 16, fontWeight: "normal" }}>Create an account</h2>
       <form onSubmit={handleSubmit}>
         <div style={{ marginBottom: 12 }}>
           <label>
@@ -45,19 +49,21 @@ export default function Login({ onLoggedIn, onSwitchToRegister }) {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               style={{ display: "block", width: "100%" }}
+              minLength={8}
               required
             />
           </label>
+          <small>At least 8 characters.</small>
         </div>
         <button type="submit" disabled={submitting}>
-          {submitting ? "Logging in..." : "Log in"}
+          {submitting ? "Creating account..." : "Create account"}
         </button>
       </form>
       {error && <p style={{ color: "crimson" }}>{error}</p>}
       <p>
-        No account?{" "}
-        <button type="button" onClick={onSwitchToRegister} style={linkButtonStyle}>
-          Register
+        Already have an account?{" "}
+        <button type="button" onClick={onSwitchToLogin} style={linkButtonStyle}>
+          Log in
         </button>
       </p>
     </div>

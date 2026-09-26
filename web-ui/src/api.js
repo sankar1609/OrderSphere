@@ -34,6 +34,13 @@ export function login(username, password) {
   });
 }
 
+export function register(username, password) {
+  return request("/auth-service/auth/register", {
+    method: "POST",
+    body: { username, password, role: "CUSTOMER" },
+  });
+}
+
 export function listMyOrders(token) {
   return request("/ordersphere-orders/orders", { token });
 }
