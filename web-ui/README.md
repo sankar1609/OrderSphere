@@ -1,6 +1,6 @@
 # OrderSphere Web UI
 
-Log in (or register), and browse your own orders and the product catalog. Talks to the API Gateway directly — no server of its own, no routing library, no state persistence beyond the current tab.
+Log in (or register), browse your own orders and the product catalog, and place new orders. Talks to the API Gateway directly — no server of its own, no routing library, no state persistence beyond the current tab.
 
 ## Prerequisites
 
@@ -22,8 +22,11 @@ Opens on `http://localhost:5173`. Log in with an existing account, or register a
 - `src/components/Register.jsx` — calls `POST /auth-service/auth/register`, then logs in with the same credentials (registration itself returns no token).
 - `src/components/OrdersList.jsx` — calls `GET /ordersphere-orders/orders` with the bearer token, scoped server-side to the logged-in customer.
 - `src/components/ProductsList.jsx` — calls `GET /inventory-service/inventory/products` with the bearer token; shows SKU, name, and stock levels.
-- `src/App.jsx` — holds the token, the current auth view (`login`/`register`), and the current authenticated page (`orders`/`products`) in memory; refreshing the page logs you out.
+- `src/components/PlaceOrder.jsx` — builds an item list from the product catalog and calls `POST /ordersphere-orders/orders`. Two backend gaps this screen works around:
+  - **Pricing isn't modeled anywhere in the backend** (no price field on any product) — the order create DTO still requires a pre-computed `amount`, so the user types the total manually instead of it being calculated from items.
+  - **No payment-method UI exists yet** — the screen auto-creates one (`POST /payment-service/payment-methods`, type `CARD`, a generated placeholder token) the first time a customer places an order if they don't already have one, then reuses their first payment method on subsequent orders.
+- `src/App.jsx` — holds the token, the current auth view (`login`/`register`), and the current authenticated page (`orders`/`products`/`placeOrder`) in memory; refreshing the page logs you out.
 
 ## Not in this slice (next iterations)
 
-`localStorage` token persistence, order placement, admin views, routing.
+`localStorage` token persistence, real pricing/payment-method management, admin views, routing.

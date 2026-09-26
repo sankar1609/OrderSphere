@@ -3,11 +3,12 @@ import Login from "./components/Login";
 import Register from "./components/Register";
 import OrdersList from "./components/OrdersList";
 import ProductsList from "./components/ProductsList";
+import PlaceOrder from "./components/PlaceOrder";
 
 export default function App() {
   const [token, setToken] = useState(null);
   const [view, setView] = useState("login"); // "login" | "register"
-  const [page, setPage] = useState("orders"); // "orders" | "products"
+  const [page, setPage] = useState("orders"); // "orders" | "products" | "placeOrder"
 
   if (token) {
     return (
@@ -27,11 +28,23 @@ export default function App() {
           >
             My Orders
           </button>
-          <button type="button" onClick={() => setPage("products")} disabled={page === "products"}>
+          <button
+            type="button"
+            onClick={() => setPage("products")}
+            disabled={page === "products"}
+            style={{ marginRight: 8 }}
+          >
             Products
           </button>
+          <button type="button" onClick={() => setPage("placeOrder")} disabled={page === "placeOrder"}>
+            Place Order
+          </button>
         </nav>
-        {page === "orders" ? <OrdersList token={token} /> : <ProductsList token={token} />}
+        {page === "orders" && <OrdersList token={token} />}
+        {page === "products" && <ProductsList token={token} />}
+        {page === "placeOrder" && (
+          <PlaceOrder token={token} onOrderPlaced={() => setPage("orders")} />
+        )}
       </div>
     );
   }

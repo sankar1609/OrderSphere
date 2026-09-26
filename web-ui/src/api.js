@@ -48,3 +48,15 @@ export function listMyOrders(token) {
 export function listProducts(token) {
   return request("/inventory-service/inventory/products", { token });
 }
+
+export function listPaymentMethods(token) {
+  return request("/payment-service/payment-methods", { token });
+}
+
+export function createPaymentMethod(token, body) {
+  return request("/payment-service/payment-methods", { method: "POST", token, body });
+}
+
+export function createOrder(token, body) {
+  return request("/ordersphere-orders/orders", { method: "POST", token, body });
+}
