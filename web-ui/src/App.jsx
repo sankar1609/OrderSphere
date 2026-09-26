@@ -1,14 +1,34 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Login from "./components/Login";
 import Register from "./components/Register";
 import OrdersList from "./components/OrdersList";
 import ProductsList from "./components/ProductsList";
 import PlaceOrder from "./components/PlaceOrder";
 
+function readStoredToken() {
+  try {
+    return localStorage.getItem("token");
+  } catch {
+    return null;
+  }
+}
+
 export default function App() {
-  const [token, setToken] = useState(null);
+  const [token, setToken] = useState(readStoredToken);
   const [view, setView] = useState("login"); // "login" | "register"
   const [page, setPage] = useState("orders"); // "orders" | "products" | "placeOrder"
+
+  useEffect(() => {
+    try {
+      if (token) {
+        localStorage.setItem("token", token);
+      } else {
+        localStorage.removeItem("token");
+      }
+    } catch {
+      // e.g. private browsing with storage disabled — token just won't survive a refresh
+    }
+  }, [token]);
 
   if (token) {
     return (
