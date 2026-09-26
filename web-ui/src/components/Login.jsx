@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { login } from "../api";
+import { linkButtonStyle } from "../styles";
 
 export default function Login({ onLoggedIn, onSwitchToRegister }) {
   const [username, setUsername] = useState("");
@@ -63,12 +64,3 @@ export default function Login({ onLoggedIn, onSwitchToRegister }) {
     </div>
   );
 }
-
-const linkButtonStyle = {
-  background: "none",
-  border: "none",
-  padding: 0,
-  color: "#0645ad",
-  textDecoration: "underline",
-  cursor: "pointer",
-};

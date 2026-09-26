@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { listMyOrders } from "../api";
+import { cellStyle } from "../styles";
 
-export default function OrdersList({ token, onLogout }) {
+export default function OrdersList({ token }) {
   const [orders, setOrders] = useState(null);
   const [error, setError] = useState(null);
 
@@ -12,11 +13,8 @@ export default function OrdersList({ token, onLogout }) {
   }, [token]);
 
   return (
-    <div style={{ maxWidth: 720, margin: "40px auto", fontFamily: "sans-serif" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h1>My Orders</h1>
-        <button onClick={onLogout}>Log out</button>
-      </div>
+    <div>
+      <h2>My Orders</h2>
 
       {error && <p style={{ color: "crimson" }}>{error}</p>}
       {!error && orders === null && <p>Loading...</p>}
@@ -49,9 +47,3 @@ export default function OrdersList({ token, onLogout }) {
     </div>
   );
 }
-
-const cellStyle = {
-  border: "1px solid #ddd",
-  padding: "8px",
-  textAlign: "left",
-};

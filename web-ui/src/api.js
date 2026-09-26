@@ -44,3 +44,7 @@ export function register(username, password) {
 export function listMyOrders(token) {
   return request("/ordersphere-orders/orders", { token });
 }
+
+export function listProducts(token) {
+  return request("/inventory-service/inventory/products", { token });
+}
