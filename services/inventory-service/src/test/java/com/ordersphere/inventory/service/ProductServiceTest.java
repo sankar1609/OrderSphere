@@ -50,7 +50,9 @@ class ProductServiceTest {
     when(productRepository.existsBySku("SKU-1")).thenReturn(true);
 
     assertThatThrownBy(
-            () -> productService.createProduct(new CreateProductRequest("SKU-1", "Widget", 5, 1, new BigDecimal("9.99"))))
+            () ->
+                productService.createProduct(
+                    new CreateProductRequest("SKU-1", "Widget", 5, 1, new BigDecimal("9.99"))))
         .isInstanceOf(DuplicateSkuException.class);
   }
 

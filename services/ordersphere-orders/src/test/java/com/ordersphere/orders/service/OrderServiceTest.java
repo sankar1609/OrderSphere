@@ -80,9 +80,7 @@ class OrderServiceTest {
             invocation -> {
               List<InventoryClient.ReserveRequest.Item> items = invocation.getArgument(1);
               return new InventoryClient.ReserveResponse(
-                  items.stream()
-                      .map(item -> priced(item.sku(), item.quantity(), "10.00"))
-                      .toList(),
+                  items.stream().map(item -> priced(item.sku(), item.quantity(), "10.00")).toList(),
                   List.of());
             });
   }
@@ -127,7 +125,8 @@ class OrderServiceTest {
     when(paymentClient.initiate(any(), any(), any(), any(), anyString())).thenReturn(42L);
     CreateOrderRequest request =
         new CreateOrderRequest(
-            List.of(new CreateOrderRequest.Item("SKU-A", 2), new CreateOrderRequest.Item("SKU-B", 3)),
+            List.of(
+                new CreateOrderRequest.Item("SKU-A", 2), new CreateOrderRequest.Item("SKU-B", 3)),
             5L,
             "USD",
             "1 Test Way");

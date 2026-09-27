@@ -85,10 +85,7 @@ class OrderControllerIntegrationTest {
 
   private CreateOrderRequest requestFor(String sku) {
     return new CreateOrderRequest(
-        List.of(new CreateOrderRequest.Item(sku, 2)),
-        5L,
-        "USD",
-        "1 Test Way");
+        List.of(new CreateOrderRequest.Item(sku, 2)), 5L, "USD", "1 Test Way");
   }
 
   @Test

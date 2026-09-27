@@ -58,7 +58,8 @@ class InventoryControllerIntegrationTest {
 
   @Test
   void nonAdminCannotCreateProducts() throws Exception {
-    CreateProductRequest request = new CreateProductRequest("SKU-FORBIDDEN", "Widget", 5, 1, new BigDecimal("9.99"));
+    CreateProductRequest request =
+        new CreateProductRequest("SKU-FORBIDDEN", "Widget", 5, 1, new BigDecimal("9.99"));
 
     mockMvc
         .perform(
@@ -71,7 +72,8 @@ class InventoryControllerIntegrationTest {
 
   @Test
   void duplicateSkuIsRejected() throws Exception {
-    CreateProductRequest request = new CreateProductRequest("SKU-DUP", "Widget", 5, 1, new BigDecimal("9.99"));
+    CreateProductRequest request =
+        new CreateProductRequest("SKU-DUP", "Widget", 5, 1, new BigDecimal("9.99"));
     createProduct(request);
 
     mockMvc

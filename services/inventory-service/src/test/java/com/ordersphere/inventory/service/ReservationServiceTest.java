@@ -69,7 +69,8 @@ class ReservationServiceTest {
         reservationService.reserve(
             new ReserveStockRequest(2L, List.of(new ReserveStockRequest.Item("SKU-1", 5))));
 
-    assertThat(response.reserved()).containsExactly(new ReservationResponse.LineItem("SKU-1", 5, new BigDecimal("9.99")));
+    assertThat(response.reserved())
+        .containsExactly(new ReservationResponse.LineItem("SKU-1", 5, new BigDecimal("9.99")));
     assertThat(response.backordered()).isEmpty();
     assertThat(product.getQuantityReserved()).isEqualTo(5);
     verify(eventPublisher).publishEvent(any(InventoryReservedEvent.class));
@@ -86,7 +87,8 @@ class ReservationServiceTest {
         reservationService.reserve(
             new ReserveStockRequest(3L, List.of(new ReserveStockRequest.Item("SKU-1", 5))));
 
-    assertThat(response.reserved()).containsExactly(new ReservationResponse.LineItem("SKU-1", 2, new BigDecimal("9.99")));
+    assertThat(response.reserved())
+        .containsExactly(new ReservationResponse.LineItem("SKU-1", 2, new BigDecimal("9.99")));
     assertThat(response.backordered())
         .containsExactly(new ReservationResponse.LineItem("SKU-1", 3, new BigDecimal("9.99")));
     verify(eventPublisher).publishEvent(any(InventoryReservedEvent.class));
