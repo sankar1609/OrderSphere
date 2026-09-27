@@ -20,6 +20,7 @@ import com.ordersphere.inventory.repository.ProductRepository;
 import com.ordersphere.inventory.repository.ReservationRepository;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -61,7 +62,7 @@ public class ReservationService {
         new Reservation(request.orderId(), Instant.now().plus(holdTtlMinutes, ChronoUnit.MINUTES));
 
     Map<String, Integer> reservedQuantities = new HashMap<>();
-    Map<String, Integer> backorderedQuantities = new HashMap<>();
+    List<Backorder> backorders = new ArrayList<>();
 
     for (ReserveStockRequest.Item item : request.items()) {
       Product product =
@@ -87,8 +88,9 @@ public class ReservationService {
       }
 
       if (shortfall > 0) {
-        backorderRepository.save(new Backorder(product, request.orderId(), shortfall));
-        backorderedQuantities.merge(item.sku(), shortfall, Integer::sum);
+        Backorder backorder = new Backorder(product, request.orderId(), shortfall);
+        backorderRepository.save(backorder);
+        backorders.add(backorder);
         eventPublisher.publishEvent(
             new BackorderCreatedEvent(request.orderId(), item.sku(), shortfall));
       }
@@ -101,7 +103,7 @@ public class ReservationService {
           new InventoryReservedEvent(request.orderId(), reservedQuantities));
     }
 
-    return ReservationResponse.of(reservation, backorderedQuantities);
+    return ReservationResponse.of(reservation, backorders);
   }
 
   @Transactional
@@ -109,7 +111,7 @@ public class ReservationService {
     Reservation reservation = findReservationOrThrow(orderId);
 
     if (reservation.getStatus() == ReservationStatus.CONFIRMED) {
-      return ReservationResponse.of(reservation, Map.of());
+      return ReservationResponse.of(reservation, List.of());
     }
     if (reservation.getStatus() != ReservationStatus.ACTIVE) {
       throw new InvalidReservationStateException(
@@ -123,7 +125,7 @@ public class ReservationService {
     reservation.setExpiresAt(null);
     reservationRepository.save(reservation);
 
-    return ReservationResponse.of(reservation, Map.of());
+    return ReservationResponse.of(reservation, List.of());
   }
 
   @Transactional
@@ -132,7 +134,7 @@ public class ReservationService {
 
     if (reservation.getStatus() == ReservationStatus.RELEASED
         || reservation.getStatus() == ReservationStatus.EXPIRED) {
-      return ReservationResponse.of(reservation, Map.of());
+      return ReservationResponse.of(reservation, List.of());
     }
 
     restoreStock(reservation);
@@ -143,7 +145,7 @@ public class ReservationService {
     eventPublisher.publishEvent(
         new InventoryReleasedEvent(orderId, InventoryReleasedEvent.Reason.MANUAL));
 
-    return ReservationResponse.of(reservation, Map.of());
+    return ReservationResponse.of(reservation, List.of());
   }
 
   @Transactional
@@ -172,12 +174,7 @@ public class ReservationService {
   private ReservationResponse buildResponseForExisting(Reservation reservation) {
     List<Backorder> openBackorders =
         backorderRepository.findByOrderIdAndStatus(reservation.getOrderId(), BackorderStatus.OPEN);
-    Map<String, Integer> backorderedQuantities = new HashMap<>();
-    for (Backorder backorder : openBackorders) {
-      backorderedQuantities.merge(
-          backorder.getProduct().getSku(), backorder.getQuantity(), Integer::sum);
-    }
-    return ReservationResponse.of(reservation, backorderedQuantities);
+    return ReservationResponse.of(reservation, openBackorders);
   }
 
   private Reservation findReservationOrThrow(Long orderId) {

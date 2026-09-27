@@ -1,5 +1,6 @@
 package com.ordersphere.orders.client;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath;
@@ -9,6 +10,7 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import com.ordersphere.orders.exception.InventoryReservationException;
+import java.math.BigDecimal;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpMethod;
@@ -30,12 +32,24 @@ class InventoryClientTest {
         .andExpect(header("Authorization", "Bearer token"))
         .andExpect(jsonPath("$.orderId").value(1))
         .andExpect(jsonPath("$.items[0].sku").value("SKU-1"))
-        .andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
+        .andRespond(
+            withSuccess(
+                """
+                {"orderId": 1, "status": "ACTIVE",
+                 "reserved": [{"sku": "SKU-1", "quantity": 1, "unitPrice": 9.99}],
+                 "backordered": [{"sku": "SKU-1", "quantity": 1, "unitPrice": 9.99}]}
+                """,
+                MediaType.APPLICATION_JSON));
 
-    client.reserve(
-        1L, List.of(new InventoryClient.ReserveRequest.Item("SKU-1", 2)), "Bearer token");
+    InventoryClient.ReserveResponse response =
+        client.reserve(
+            1L, List.of(new InventoryClient.ReserveRequest.Item("SKU-1", 2)), "Bearer token");
 
     server.verify();
+    assertThat(response.reserved())
+        .containsExactly(
+            new InventoryClient.ReserveResponse.LineItem("SKU-1", 1, new BigDecimal("9.99")));
+    assertThat(response.backordered()).hasSize(1);
   }
 
   @Test

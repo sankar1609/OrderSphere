@@ -147,7 +147,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"sku\": \"{{productSku}}\",\n  \"name\": \"Wireless Mouse\",\n  \"quantityOnHand\": 100,\n  \"reorderThreshold\": 10\n}"
+              "raw": "{\n  \"sku\": \"{{productSku}}\",\n  \"name\": \"Wireless Mouse\",\n  \"quantityOnHand\": 100,\n  \"reorderThreshold\": 10,\n  \"unitPrice\": 24.99\n}"
             },
             "url": { "raw": "{{inventoryBaseUrl}}/inventory/products", "host": ["{{inventoryBaseUrl}}"], "path": ["inventory", "products"] },
             "description": "Expect 201; 409 if {{productSku}} already exists from a previous run - safe to ignore, the Orders folder just needs the product to exist either way."
@@ -385,7 +385,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"items\": [{ \"sku\": \"{{productSku}}\", \"quantity\": 2 }],\n  \"paymentMethodId\": {{paymentMethodId}},\n  \"amount\": 49.98,\n  \"currency\": \"USD\",\n  \"shippingDestination\": \"123 Main St, Springfield\"\n}"
+              "raw": "{\n  \"items\": [{ \"sku\": \"{{productSku}}\", \"quantity\": 2 }],\n  \"paymentMethodId\": {{paymentMethodId}},\n  \"currency\": \"USD\",\n  \"shippingDestination\": \"123 Main St, Springfield\"\n}"
             },
             "url": { "raw": "{{ordersBaseUrl}}/orders", "host": ["{{ordersBaseUrl}}"], "path": ["orders"] },
             "description": "Needs the product (folder 2) and payment method (folder 3) created above - if either variable is still empty because an earlier request was skipped, this sends invalid JSON and comes back as an empty-bodied 401 rather than a helpful error, so run folders 1-3 first. Expect 201 with status AWAITING_PAYMENT (inventory reservation and payment initiation both happen synchronously inside this call). Saves {{orderId}}."

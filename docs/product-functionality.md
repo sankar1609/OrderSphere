@@ -12,8 +12,8 @@ This document describes what OrderSphere can do today, from a business and user 
 
 ## Product Catalog & Inventory
 
-- Admins and vendors can add new products to the catalog, each with a unique SKU, name, and starting stock level.
-- Any signed-in user can browse the catalog or look up a specific product to check its current availability.
+- Admins and vendors can add new products to the catalog, each with a unique SKU, name, unit price, and starting stock level.
+- Any signed-in user can browse the catalog or look up a specific product to check its current price and availability.
 - Admins and vendors can restock a product, increasing the quantity on hand.
 - When a customer places an order, the required stock is automatically set aside so the same inventory can't be sold to two customers at once.
 - That set-aside stock is automatically confirmed once the order's payment succeeds, or automatically released back to available inventory if the order doesn't go through.
@@ -31,6 +31,7 @@ This document describes what OrderSphere can do today, from a business and user 
 
 - Customers can place an order for one or more products, specifying a delivery address and which saved payment method to use.
 - Placing an order automatically reserves the needed inventory and starts payment processing — no separate steps required.
+- The order total is always calculated by the system from each product's catalog price (including any quantity that has to be backordered); customers never enter or influence the amount charged. Each order records the unit price it was placed at, so later catalog price changes don't alter past orders.
 - Customers can view their full order history and check the current status of any order at any time.
 - Customers can cancel their own order; cancelling is safe to do more than once without causing problems.
 - Every order automatically moves through its lifecycle on its own — from awaiting payment, to confirmed, to shipped, to delivered — without needing manual updates.

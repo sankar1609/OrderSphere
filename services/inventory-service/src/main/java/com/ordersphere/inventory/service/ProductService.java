@@ -45,7 +45,11 @@ public class ProductService {
     }
     Product product =
         new Product(
-            request.sku(), request.name(), request.quantityOnHand(), request.reorderThreshold());
+            request.sku(),
+            request.name(),
+            request.quantityOnHand(),
+            request.reorderThreshold(),
+            request.unitPrice());
     return ProductResponse.from(productRepository.save(product));
   }
 

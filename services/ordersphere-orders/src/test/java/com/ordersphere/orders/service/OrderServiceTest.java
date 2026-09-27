@@ -73,31 +73,84 @@ class OrderServiceTest {
               }
               return order;
             });
+    // By default Inventory reserves everything requested at 10.00 per unit.
+    lenient()
+        .when(inventoryClient.reserve(any(), anyList(), anyString()))
+        .thenAnswer(
+            invocation -> {
+              List<InventoryClient.ReserveRequest.Item> items = invocation.getArgument(1);
+              return new InventoryClient.ReserveResponse(
+                  items.stream()
+                      .map(item -> priced(item.sku(), item.quantity(), "10.00"))
+                      .toList(),
+                  List.of());
+            });
+  }
+
+  private static InventoryClient.ReserveResponse.LineItem priced(
+      String sku, int quantity, String unitPrice) {
+    return new InventoryClient.ReserveResponse.LineItem(
+        sku, quantity, unitPrice == null ? null : new BigDecimal(unitPrice));
   }
 
   private CreateOrderRequest requestFor(String sku) {
     return new CreateOrderRequest(
-        List.of(new CreateOrderRequest.Item(sku, 3)),
-        5L,
-        new BigDecimal("20.00"),
-        "USD",
-        "1 Test Way");
+        List.of(new CreateOrderRequest.Item(sku, 3)), 5L, "USD", "1 Test Way");
   }
 
   @Test
   void createOrderAwaitsPaymentWhenReservationAndInitiationSucceed() {
     when(paymentClient.initiate(
-            any(), eq(5L), eq(new BigDecimal("20.00")), eq("USD"), eq("Bearer token")))
+            any(), eq(5L), eq(new BigDecimal("30.00")), eq("USD"), eq("Bearer token")))
         .thenReturn(42L);
 
     OrderResponse response = orderService.createOrder("alice", requestFor("SKU-1"), "Bearer token");
 
     assertThat(response.status()).isEqualTo(OrderStatus.AWAITING_PAYMENT);
     assertThat(response.paymentId()).isEqualTo(42L);
+    assertThat(response.totalAmount()).isEqualByComparingTo("30.00");
+    assertThat(response.currency()).isEqualTo("USD");
+    assertThat(response.items().get(0).unitPrice()).isEqualByComparingTo("10.00");
     verify(inventoryClient).reserve(any(), anyList(), eq("Bearer token"));
     verify(eventPublisher).publishEvent(any(OrderCreatedEvent.class));
     verify(eventPublisher, never()).publishEvent(any(OrderConfirmedEvent.class));
     verify(eventPublisher, never()).publishEvent(any(OrderCancelledEvent.class));
+  }
+
+  @Test
+  void createOrderChargesInventoryPricesIncludingBackorderedQuantity() {
+    when(inventoryClient.reserve(any(), anyList(), anyString()))
+        .thenReturn(
+            new InventoryClient.ReserveResponse(
+                List.of(priced("SKU-A", 2, "4.50"), priced("SKU-B", 1, "12.25")),
+                List.of(priced("SKU-B", 2, "12.25"))));
+    when(paymentClient.initiate(any(), any(), any(), any(), anyString())).thenReturn(42L);
+    CreateOrderRequest request =
+        new CreateOrderRequest(
+            List.of(new CreateOrderRequest.Item("SKU-A", 2), new CreateOrderRequest.Item("SKU-B", 3)),
+            5L,
+            "USD",
+            "1 Test Way");
+
+    OrderResponse response = orderService.createOrder("alice", request, "Bearer token");
+
+    // 2 x 4.50 + 3 x 12.25 (1 reserved + 2 backordered) = 45.75
+    verify(paymentClient)
+        .initiate(any(), eq(5L), eq(new BigDecimal("45.75")), eq("USD"), eq("Bearer token"));
+    assertThat(response.totalAmount()).isEqualByComparingTo("45.75");
+  }
+
+  @Test
+  void createOrderCancelsWithoutChargingWhenInventoryReturnsNoPrice() {
+    when(inventoryClient.reserve(any(), anyList(), anyString()))
+        .thenReturn(
+            new InventoryClient.ReserveResponse(List.of(priced("SKU-1", 3, null)), List.of()));
+
+    OrderResponse response = orderService.createOrder("alice", requestFor("SKU-1"), "Bearer token");
+
+    assertThat(response.status()).isEqualTo(OrderStatus.CANCELLED);
+    verify(inventoryClient).release(any(), eq("Bearer token"));
+    verify(paymentClient, never()).initiate(any(), any(), any(), any(), any());
   }
 
   @Test

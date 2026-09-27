@@ -17,6 +17,7 @@ import com.ordersphere.inventory.exception.DuplicateSkuException;
 import com.ordersphere.inventory.repository.BackorderRepository;
 import com.ordersphere.inventory.repository.ProductRepository;
 import com.ordersphere.inventory.repository.ReservationRepository;
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -49,13 +50,13 @@ class ProductServiceTest {
     when(productRepository.existsBySku("SKU-1")).thenReturn(true);
 
     assertThatThrownBy(
-            () -> productService.createProduct(new CreateProductRequest("SKU-1", "Widget", 5, 1)))
+            () -> productService.createProduct(new CreateProductRequest("SKU-1", "Widget", 5, 1, new BigDecimal("9.99"))))
         .isInstanceOf(DuplicateSkuException.class);
   }
 
   @Test
   void restockFullyFulfillsAnOpenBackorder() {
-    Product product = new Product("SKU-1", "Widget", 0, 0);
+    Product product = new Product("SKU-1", "Widget", 0, 0, new BigDecimal("9.99"));
     product.setId(1L);
     Backorder backorder = new Backorder(product, 42L, 4);
     Reservation reservation = new Reservation(42L, Instant.now().plusSeconds(60));
@@ -77,7 +78,7 @@ class ProductServiceTest {
 
   @Test
   void restockPartiallyFulfillsBackorderWhenStockStillInsufficient() {
-    Product product = new Product("SKU-1", "Widget", 0, 0);
+    Product product = new Product("SKU-1", "Widget", 0, 0, new BigDecimal("9.99"));
     product.setId(1L);
     Backorder backorder = new Backorder(product, 42L, 10);
     Reservation reservation = new Reservation(42L, Instant.now().plusSeconds(60));

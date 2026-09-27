@@ -1,8 +1,12 @@
 package com.ordersphere.inventory.dto;
 
+import com.ordersphere.inventory.domain.Backorder;
+import com.ordersphere.inventory.domain.Product;
 import com.ordersphere.inventory.domain.Reservation;
 import com.ordersphere.inventory.domain.ReservationStatus;
+import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -13,18 +17,25 @@ public record ReservationResponse(
     List<LineItem> reserved,
     List<LineItem> backordered) {
 
-  public record LineItem(String sku, int quantity) {}
+  /** {@code unitPrice} is the product's current price, so callers can price the order. */
+  public record LineItem(String sku, int quantity, BigDecimal unitPrice) {}
 
-  public static ReservationResponse of(Reservation reservation, Map<String, Integer> backordered) {
+  public static ReservationResponse of(Reservation reservation, List<Backorder> backorders) {
     List<LineItem> reservedItems =
         reservation.getItems().stream()
-            .map(item -> new LineItem(item.getProduct().getSku(), item.getQuantityReserved()))
+            .map(item -> lineItem(item.getProduct(), item.getQuantityReserved()))
             .toList();
+
+    Map<String, LineItem> backorderedBySku = new LinkedHashMap<>();
+    for (Backorder backorder : backorders) {
+      Product product = backorder.getProduct();
+      backorderedBySku.merge(
+          product.getSku(),
+          lineItem(product, backorder.getQuantity()),
+          (a, b) -> new LineItem(a.sku(), a.quantity() + b.quantity(), a.unitPrice()));
+    }
     List<LineItem> backorderedItems =
-        backordered.entrySet().stream()
-            .filter(entry -> entry.getValue() > 0)
-            .map(entry -> new LineItem(entry.getKey(), entry.getValue()))
-            .toList();
+        backorderedBySku.values().stream().filter(item -> item.quantity() > 0).toList();
 
     return new ReservationResponse(
         reservation.getOrderId(),
@@ -32,5 +43,9 @@ public record ReservationResponse(
         reservation.getExpiresAt(),
         reservedItems,
         backorderedItems);
+  }
+
+  private static LineItem lineItem(Product product, int quantity) {
+    return new LineItem(product.getSku(), quantity, product.getUnitPrice());
   }
 }

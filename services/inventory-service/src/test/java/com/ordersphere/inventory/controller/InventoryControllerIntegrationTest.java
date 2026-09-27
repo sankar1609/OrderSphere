@@ -11,6 +11,7 @@ import com.ordersphere.inventory.dto.CreateProductRequest;
 import com.ordersphere.inventory.dto.ReserveStockRequest;
 import com.ordersphere.inventory.dto.RestockRequest;
 import com.ordersphere.security.JwtTokenProvider;
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -57,7 +58,7 @@ class InventoryControllerIntegrationTest {
 
   @Test
   void nonAdminCannotCreateProducts() throws Exception {
-    CreateProductRequest request = new CreateProductRequest("SKU-FORBIDDEN", "Widget", 5, 1);
+    CreateProductRequest request = new CreateProductRequest("SKU-FORBIDDEN", "Widget", 5, 1, new BigDecimal("9.99"));
 
     mockMvc
         .perform(
@@ -70,7 +71,7 @@ class InventoryControllerIntegrationTest {
 
   @Test
   void duplicateSkuIsRejected() throws Exception {
-    CreateProductRequest request = new CreateProductRequest("SKU-DUP", "Widget", 5, 1);
+    CreateProductRequest request = new CreateProductRequest("SKU-DUP", "Widget", 5, 1, new BigDecimal("9.99"));
     createProduct(request);
 
     mockMvc
@@ -84,7 +85,7 @@ class InventoryControllerIntegrationTest {
 
   @Test
   void fullReserveIdempotentReleaseBackorderRestockAndConfirmFlow() throws Exception {
-    createProduct(new CreateProductRequest("SKU-FLOW", "Widget", 10, 3));
+    createProduct(new CreateProductRequest("SKU-FLOW", "Widget", 10, 3, new BigDecimal("9.99")));
 
     ReserveStockRequest firstReserve =
         new ReserveStockRequest(100L, List.of(new ReserveStockRequest.Item("SKU-FLOW", 8)));
@@ -97,6 +98,7 @@ class InventoryControllerIntegrationTest {
         .andExpect(status().isCreated())
         .andExpect(jsonPath("$.reserved[0].sku", is("SKU-FLOW")))
         .andExpect(jsonPath("$.reserved[0].quantity", is(8)))
+        .andExpect(jsonPath("$.reserved[0].unitPrice", is(9.99)))
         .andExpect(jsonPath("$.backordered", org.hamcrest.Matchers.hasSize(0)));
 
     // Re-reserving the same orderId must be idempotent, not double-reserve.
@@ -115,7 +117,8 @@ class InventoryControllerIntegrationTest {
                 .header("Authorization", "Bearer " + customerToken()))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.quantityReserved", is(8)))
-        .andExpect(jsonPath("$.availableQuantity", is(2)));
+        .andExpect(jsonPath("$.availableQuantity", is(2)))
+        .andExpect(jsonPath("$.unitPrice", is(9.99)));
 
     // Release restores stock.
     mockMvc

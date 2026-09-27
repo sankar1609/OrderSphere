@@ -6,6 +6,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import java.math.BigDecimal;
 import java.time.Instant;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -37,15 +38,20 @@ public class Product {
   @Column(name = "reorder_threshold", nullable = false)
   private int reorderThreshold;
 
+  @Column(name = "unit_price", nullable = false, precision = 12, scale = 2)
+  private BigDecimal unitPrice;
+
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
 
-  public Product(String sku, String name, int quantityOnHand, int reorderThreshold) {
+  public Product(
+      String sku, String name, int quantityOnHand, int reorderThreshold, BigDecimal unitPrice) {
     this.sku = sku;
     this.name = name;
     this.quantityOnHand = quantityOnHand;
     this.quantityReserved = 0;
     this.reorderThreshold = reorderThreshold;
+    this.unitPrice = unitPrice;
     this.createdAt = Instant.now();
   }
 

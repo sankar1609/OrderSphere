@@ -6,6 +6,7 @@ import {
   createOrder,
 } from "../api";
 import { cellStyle, linkButtonStyle } from "../styles";
+import { formatMoney } from "../format";
 
 async function resolvePaymentMethodId(token) {
   const existing = await listPaymentMethods(token);
@@ -25,7 +26,6 @@ export default function PlaceOrder({ token, onOrderPlaced, onUnauthorized }) {
   const [selectedSku, setSelectedSku] = useState("");
   const [quantity, setQuantity] = useState(1);
   const [items, setItems] = useState([]);
-  const [amount, setAmount] = useState("");
   const [currency, setCurrency] = useState("USD");
   const [shippingDestination, setShippingDestination] = useState("");
   const [error, setError] = useState(null);
@@ -48,6 +48,16 @@ export default function PlaceOrder({ token, onOrderPlaced, onUnauthorized }) {
         }
       });
   }, [token]);
+
+  // Display-only estimate from the catalog; the backend recalculates the charged total itself.
+  function unitPriceFor(sku) {
+    return products?.find((product) => product.sku === sku)?.unitPrice ?? 0;
+  }
+
+  const estimatedTotal = items.reduce(
+    (sum, item) => sum + unitPriceFor(item.sku) * item.quantity,
+    0
+  );
 
   function addItem() {
     if (!selectedSku || quantity < 1) {
@@ -77,13 +87,16 @@ export default function PlaceOrder({ token, onOrderPlaced, onUnauthorized }) {
       const order = await createOrder(token, {
         items,
         paymentMethodId,
-        amount: Number(amount),
         currency,
         shippingDestination,
       });
-      setSuccess(`Order #${order.id} placed (status: ${order.status}).`);
+      setSuccess(
+        `Order #${order.id} placed (status: ${order.status}, total: ${formatMoney(
+          order.totalAmount,
+          order.currency
+        )}).`
+      );
       setItems([]);
-      setAmount("");
       setShippingDestination("");
       onOrderPlaced?.(order);
     } catch (err) {
@@ -111,7 +124,9 @@ export default function PlaceOrder({ token, onOrderPlaced, onUnauthorized }) {
             <select value={selectedSku} onChange={(e) => setSelectedSku(e.target.value)}>
               {products.map((product) => (
                 <option key={product.id} value={product.sku}>
-                  {product.sku} — {product.name} ({product.availableQuantity} available)
+                  {`${product.sku} — ${product.name} — ${formatMoney(product.unitPrice)} (${
+                    product.availableQuantity
+                  } available)`}
                 </option>
               ))}
             </select>
@@ -138,6 +153,8 @@ export default function PlaceOrder({ token, onOrderPlaced, onUnauthorized }) {
             <tr>
               <th style={cellStyle}>SKU</th>
               <th style={cellStyle}>Quantity</th>
+              <th style={cellStyle}>Unit price</th>
+              <th style={cellStyle}>Subtotal</th>
               <th style={cellStyle}></th>
             </tr>
           </thead>
@@ -146,6 +163,8 @@ export default function PlaceOrder({ token, onOrderPlaced, onUnauthorized }) {
               <tr key={`${item.sku}-${index}`}>
                 <td style={cellStyle}>{item.sku}</td>
                 <td style={cellStyle}>{item.quantity}</td>
+                <td style={cellStyle}>{formatMoney(unitPriceFor(item.sku))}</td>
+                <td style={cellStyle}>{formatMoney(unitPriceFor(item.sku) * item.quantity)}</td>
                 <td style={cellStyle}>
                   <button type="button" onClick={() => removeItem(index)} style={linkButtonStyle}>
                     Remove
@@ -154,28 +173,21 @@ export default function PlaceOrder({ token, onOrderPlaced, onUnauthorized }) {
               </tr>
             ))}
           </tbody>
+          <tfoot>
+            <tr>
+              <td style={cellStyle} colSpan={3}>
+                <strong>Estimated total</strong>
+              </td>
+              <td style={cellStyle}>
+                <strong>{formatMoney(estimatedTotal, currency)}</strong>
+              </td>
+              <td style={cellStyle}></td>
+            </tr>
+          </tfoot>
         </table>
       )}
 
       <form onSubmit={handleSubmit}>
-        <div style={{ marginBottom: 12 }}>
-          <label>
-            Amount
-            <input
-              type="number"
-              step="0.01"
-              min="0.01"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              style={{ display: "block" }}
-              required
-            />
-          </label>
-          <small>
-            Not calculated from items — pricing isn't modeled in the backend yet, so enter the
-            total to charge.
-          </small>
-        </div>
         <div style={{ marginBottom: 12 }}>
           <label>
             Currency

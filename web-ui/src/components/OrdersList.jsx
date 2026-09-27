@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { listMyOrders } from "../api";
 import { cellStyle } from "../styles";
+import { formatMoney } from "../format";
 
 export default function OrdersList({ token, onUnauthorized }) {
   const [orders, setOrders] = useState(null);
@@ -33,6 +34,7 @@ export default function OrdersList({ token, onUnauthorized }) {
               <th style={cellStyle}>Order #</th>
               <th style={cellStyle}>Status</th>
               <th style={cellStyle}>Items</th>
+              <th style={cellStyle}>Total</th>
               <th style={cellStyle}>Created</th>
             </tr>
           </thead>
@@ -44,6 +46,7 @@ export default function OrdersList({ token, onUnauthorized }) {
                 <td style={cellStyle}>
                   {order.items.map((item) => `${item.sku} x${item.quantity}`).join(", ")}
                 </td>
+                <td style={cellStyle}>{formatMoney(order.totalAmount, order.currency)}</td>
                 <td style={cellStyle}>{new Date(order.createdAt).toLocaleString()}</td>
               </tr>
             ))}

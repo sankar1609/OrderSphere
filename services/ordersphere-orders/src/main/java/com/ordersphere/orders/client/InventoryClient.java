@@ -2,6 +2,7 @@ package com.ordersphere.orders.client;
 
 import com.ordersphere.orders.exception.InventoryReservationException;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import java.math.BigDecimal;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,16 +25,17 @@ public class InventoryClient {
   }
 
   @CircuitBreaker(name = "inventory-service", fallbackMethod = "reserveFallback")
-  public void reserve(Long orderId, List<ReserveRequest.Item> items, String bearerToken) {
+  public ReserveResponse reserve(
+      Long orderId, List<ReserveRequest.Item> items, String bearerToken) {
     try {
-      restClient
+      return restClient
           .post()
           .uri("/inventory/reservations")
           .header(HttpHeaders.AUTHORIZATION, bearerToken)
           .contentType(MediaType.APPLICATION_JSON)
           .body(new ReserveRequest(orderId, items))
           .retrieve()
-          .toBodilessEntity();
+          .body(ReserveResponse.class);
     } catch (RestClientResponseException ex) {
       throw new InventoryReservationException(
           "Inventory reservation failed for orderId "
@@ -47,7 +49,7 @@ public class InventoryClient {
     }
   }
 
-  void reserveFallback(
+  ReserveResponse reserveFallback(
       Long orderId, List<ReserveRequest.Item> items, String bearerToken, Throwable ex) {
     if (ex instanceof InventoryReservationException ire) {
       throw ire;
@@ -77,5 +79,13 @@ public class InventoryClient {
 
   public record ReserveRequest(Long orderId, List<Item> items) {
     public record Item(String sku, int quantity) {}
+  }
+
+  /**
+   * Inventory prices every line, reserved or backordered, with the product's current unit price.
+   * Orders uses those prices as the authoritative source for the order total.
+   */
+  public record ReserveResponse(List<LineItem> reserved, List<LineItem> backordered) {
+    public record LineItem(String sku, int quantity, BigDecimal unitPrice) {}
   }
 }

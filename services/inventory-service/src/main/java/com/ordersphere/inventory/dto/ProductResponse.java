@@ -1,6 +1,7 @@
 package com.ordersphere.inventory.dto;
 
 import com.ordersphere.inventory.domain.Product;
+import java.math.BigDecimal;
 
 public record ProductResponse(
     Long id,
@@ -9,7 +10,8 @@ public record ProductResponse(
     int quantityOnHand,
     int quantityReserved,
     int availableQuantity,
-    int reorderThreshold) {
+    int reorderThreshold,
+    BigDecimal unitPrice) {
 
   public static ProductResponse from(Product product) {
     return new ProductResponse(
@@ -19,6 +21,7 @@ public record ProductResponse(
         product.getQuantityOnHand(),
         product.getQuantityReserved(),
         product.getAvailableQuantity(),
-        product.getReorderThreshold());
+        product.getReorderThreshold(),
+        product.getUnitPrice());
   }
 }

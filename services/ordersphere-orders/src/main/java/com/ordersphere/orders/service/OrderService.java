@@ -19,9 +19,12 @@ import com.ordersphere.orders.exception.PaymentInitiationException;
 import com.ordersphere.orders.exception.ShipmentCreationException;
 import com.ordersphere.orders.exception.ShipmentLookupException;
 import com.ordersphere.orders.repository.OrderRepository;
+import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.stream.Stream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
@@ -73,20 +76,30 @@ public class OrderService {
             .map(item -> new InventoryClient.ReserveRequest.Item(item.sku(), item.quantity()))
             .toList();
 
+    InventoryClient.ReserveResponse reservation;
     try {
-      inventoryClient.reserve(order.getId(), reserveItems, bearerToken);
+      reservation = inventoryClient.reserve(order.getId(), reserveItems, bearerToken);
     } catch (InventoryReservationException ex) {
       cancelWithReason(order, OrderCancelledEvent.Reason.INVENTORY_UNAVAILABLE);
       return OrderResponse.from(order);
     }
+
+    // The total is always derived from Inventory's prices, never supplied by the client.
+    if (!applyPricing(order, reservation)) {
+      inventoryClient.release(order.getId(), bearerToken);
+      cancelWithReason(order, OrderCancelledEvent.Reason.INVENTORY_UNAVAILABLE);
+      return OrderResponse.from(order);
+    }
+    order.setCurrency(request.currency());
+    orderRepository.save(order);
 
     try {
       Long paymentId =
           paymentClient.initiate(
               order.getId(),
               request.paymentMethodId(),
-              request.amount(),
-              request.currency(),
+              order.getTotalAmount(),
+              order.getCurrency(),
               bearerToken);
       order.setPaymentId(paymentId);
       order.markStatus(OrderStatus.AWAITING_PAYMENT);
@@ -266,5 +279,37 @@ public class OrderService {
       quantities.merge(item.sku(), item.quantity(), Integer::sum);
     }
     return quantities;
+  }
+
+  /**
+   * Stamps each item with Inventory's unit price and sets the order total. Backordered lines are
+   * priced too: the customer pays for the full quantity ordered, not just what was in stock.
+   * Returns false if any item came back unpriced, in which case the order must not be charged.
+   */
+  private boolean applyPricing(Order order, InventoryClient.ReserveResponse reservation) {
+    Map<String, BigDecimal> unitPriceBySku = new HashMap<>();
+    if (reservation != null) {
+      Stream.of(reservation.reserved(), reservation.backordered())
+          .filter(Objects::nonNull)
+          .flatMap(List::stream)
+          .filter(line -> line.unitPrice() != null)
+          .forEach(line -> unitPriceBySku.put(line.sku(), line.unitPrice()));
+    }
+
+    BigDecimal total = BigDecimal.ZERO;
+    for (OrderItem item : order.getItems()) {
+      BigDecimal unitPrice = unitPriceBySku.get(item.getSku());
+      if (unitPrice == null) {
+        log.error(
+            "Inventory returned no unit price for sku {} on orderId {}",
+            item.getSku(),
+            order.getId());
+        return false;
+      }
+      item.setUnitPrice(unitPrice);
+      total = total.add(unitPrice.multiply(BigDecimal.valueOf(item.getQuantity())));
+    }
+    order.setTotalAmount(total);
+    return true;
   }
 }

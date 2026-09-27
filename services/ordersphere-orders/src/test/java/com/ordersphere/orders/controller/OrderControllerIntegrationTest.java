@@ -25,6 +25,7 @@ import com.ordersphere.security.JwtTokenProvider;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -60,6 +61,24 @@ class OrderControllerIntegrationTest {
   @MockBean private PaymentClient paymentClient;
   @MockBean private ShippingClient shippingClient;
 
+  @BeforeEach
+  void stubPricedReservation() {
+    // By default Inventory reserves everything requested at 10.00 per unit.
+    when(inventoryClient.reserve(any(), any(), anyString()))
+        .thenAnswer(
+            invocation -> {
+              List<InventoryClient.ReserveRequest.Item> items = invocation.getArgument(1);
+              return new InventoryClient.ReserveResponse(
+                  items.stream()
+                      .map(
+                          item ->
+                              new InventoryClient.ReserveResponse.LineItem(
+                                  item.sku(), item.quantity(), new BigDecimal("10.00")))
+                      .toList(),
+                  List.of());
+            });
+  }
+
   private String tokenFor(String username) {
     return jwtTokenProvider.generateToken(username, Map.of("role", "CUSTOMER"));
   }
@@ -68,7 +87,6 @@ class OrderControllerIntegrationTest {
     return new CreateOrderRequest(
         List.of(new CreateOrderRequest.Item(sku, 2)),
         5L,
-        new BigDecimal("20.00"),
         "USD",
         "1 Test Way");
   }
@@ -91,6 +109,8 @@ class OrderControllerIntegrationTest {
         .andExpect(status().isCreated())
         .andExpect(jsonPath("$.status", is("AWAITING_PAYMENT")))
         .andExpect(jsonPath("$.paymentId", is(42)))
+        .andExpect(jsonPath("$.totalAmount", is(20.0)))
+        .andExpect(jsonPath("$.currency", is("USD")))
         .andExpect(jsonPath("$.customerUsername", is("alice")));
   }
 

@@ -18,6 +18,7 @@ import com.ordersphere.inventory.dto.ReserveStockRequest;
 import com.ordersphere.inventory.repository.BackorderRepository;
 import com.ordersphere.inventory.repository.ProductRepository;
 import com.ordersphere.inventory.repository.ReservationRepository;
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -60,7 +61,7 @@ class ReservationServiceTest {
 
   @Test
   void fullyReservesWhenStockSufficient() {
-    Product product = new Product("SKU-1", "Widget", 10, 3);
+    Product product = new Product("SKU-1", "Widget", 10, 3, new BigDecimal("9.99"));
     when(reservationRepository.findByOrderId(2L)).thenReturn(Optional.empty());
     when(productRepository.findWithLockBySku("SKU-1")).thenReturn(Optional.of(product));
 
@@ -68,7 +69,7 @@ class ReservationServiceTest {
         reservationService.reserve(
             new ReserveStockRequest(2L, List.of(new ReserveStockRequest.Item("SKU-1", 5))));
 
-    assertThat(response.reserved()).containsExactly(new ReservationResponse.LineItem("SKU-1", 5));
+    assertThat(response.reserved()).containsExactly(new ReservationResponse.LineItem("SKU-1", 5, new BigDecimal("9.99")));
     assertThat(response.backordered()).isEmpty();
     assertThat(product.getQuantityReserved()).isEqualTo(5);
     verify(eventPublisher).publishEvent(any(InventoryReservedEvent.class));
@@ -77,7 +78,7 @@ class ReservationServiceTest {
 
   @Test
   void partiallyReservesAndBackordersShortfall() {
-    Product product = new Product("SKU-1", "Widget", 2, 0);
+    Product product = new Product("SKU-1", "Widget", 2, 0, new BigDecimal("9.99"));
     when(reservationRepository.findByOrderId(3L)).thenReturn(Optional.empty());
     when(productRepository.findWithLockBySku("SKU-1")).thenReturn(Optional.of(product));
 
@@ -85,16 +86,16 @@ class ReservationServiceTest {
         reservationService.reserve(
             new ReserveStockRequest(3L, List.of(new ReserveStockRequest.Item("SKU-1", 5))));
 
-    assertThat(response.reserved()).containsExactly(new ReservationResponse.LineItem("SKU-1", 2));
+    assertThat(response.reserved()).containsExactly(new ReservationResponse.LineItem("SKU-1", 2, new BigDecimal("9.99")));
     assertThat(response.backordered())
-        .containsExactly(new ReservationResponse.LineItem("SKU-1", 3));
+        .containsExactly(new ReservationResponse.LineItem("SKU-1", 3, new BigDecimal("9.99")));
     verify(eventPublisher).publishEvent(any(InventoryReservedEvent.class));
     verify(eventPublisher).publishEvent(any(BackorderCreatedEvent.class));
   }
 
   @Test
   void createsBackorderOnlyWhenNoStockAvailable() {
-    Product product = new Product("SKU-1", "Widget", 0, 0);
+    Product product = new Product("SKU-1", "Widget", 0, 0, new BigDecimal("9.99"));
     when(reservationRepository.findByOrderId(4L)).thenReturn(Optional.empty());
     when(productRepository.findWithLockBySku("SKU-1")).thenReturn(Optional.of(product));
 
@@ -104,7 +105,7 @@ class ReservationServiceTest {
 
     assertThat(response.reserved()).isEmpty();
     assertThat(response.backordered())
-        .containsExactly(new ReservationResponse.LineItem("SKU-1", 5));
+        .containsExactly(new ReservationResponse.LineItem("SKU-1", 5, new BigDecimal("9.99")));
     verify(eventPublisher, never()).publishEvent(any(InventoryReservedEvent.class));
     verify(eventPublisher).publishEvent(any(BackorderCreatedEvent.class));
   }
@@ -125,7 +126,7 @@ class ReservationServiceTest {
 
   @Test
   void releaseRestoresStockAndIsIdempotent() {
-    Product product = new Product("SKU-1", "Widget", 10, 0);
+    Product product = new Product("SKU-1", "Widget", 10, 0, new BigDecimal("9.99"));
     product.setQuantityReserved(4);
     Reservation reservation = new Reservation(6L, Instant.now().plusSeconds(60));
     reservation.addItem(new ReservationItem(product, 4));
