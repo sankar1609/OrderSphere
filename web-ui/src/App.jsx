@@ -4,6 +4,7 @@ import Register from "./components/Register";
 import OrdersList from "./components/OrdersList";
 import ProductsList from "./components/ProductsList";
 import PlaceOrder from "./components/PlaceOrder";
+import PaymentMethods from "./components/PaymentMethods";
 
 function readStoredToken() {
   try {
@@ -16,7 +17,7 @@ function readStoredToken() {
 export default function App() {
   const [token, setToken] = useState(readStoredToken);
   const [view, setView] = useState("login"); // "login" | "register"
-  const [page, setPage] = useState("orders"); // "orders" | "products" | "placeOrder"
+  const [page, setPage] = useState("orders"); // "orders" | "products" | "placeOrder" | "paymentMethods"
   const [sessionMessage, setSessionMessage] = useState(null);
 
   function handleUnauthorized() {
@@ -67,8 +68,20 @@ export default function App() {
           >
             Products
           </button>
-          <button type="button" onClick={() => setPage("placeOrder")} disabled={page === "placeOrder"}>
+          <button
+            type="button"
+            onClick={() => setPage("placeOrder")}
+            disabled={page === "placeOrder"}
+            style={{ marginRight: 8 }}
+          >
             Place Order
+          </button>
+          <button
+            type="button"
+            onClick={() => setPage("paymentMethods")}
+            disabled={page === "paymentMethods"}
+          >
+            Payment Methods
           </button>
         </nav>
         {page === "orders" && <OrdersList token={token} onUnauthorized={handleUnauthorized} />}
@@ -79,6 +92,9 @@ export default function App() {
             onOrderPlaced={() => setPage("orders")}
             onUnauthorized={handleUnauthorized}
           />
+        )}
+        {page === "paymentMethods" && (
+          <PaymentMethods token={token} onUnauthorized={handleUnauthorized} />
         )}
       </div>
     );

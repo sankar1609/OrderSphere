@@ -59,6 +59,10 @@ export function createPaymentMethod(token, body) {
   return request("/payment-service/payment-methods", { method: "POST", token, body });
 }
 
+export function deletePaymentMethod(token, id) {
+  return request(`/payment-service/payment-methods/${id}`, { method: "DELETE", token });
+}
+
 export function createOrder(token, body) {
   return request("/ordersphere-orders/orders", { method: "POST", token, body });
 }
