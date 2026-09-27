@@ -136,5 +136,30 @@ class ShippingControllerIntegrationTest {
                 .header("Authorization", "Bearer " + tokenFor("alice", "CUSTOMER")))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$", hasSize(2)));
+
+    String mallory = "Bearer " + tokenFor("mallory", "CUSTOMER");
+    mockMvc
+        .perform(get("/shipments/" + shipmentId).header("Authorization", mallory))
+        .andExpect(status().isNotFound());
+    mockMvc
+        .perform(get("/shipments/" + shipmentId + "/tracking").header("Authorization", mallory))
+        .andExpect(status().isNotFound());
+    mockMvc
+        .perform(get("/shipments/order/900").header("Authorization", mallory))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$", hasSize(0)));
+    mockMvc
+        .perform(
+            post("/shipments/" + shipmentId + "/return")
+                .header("Authorization", mallory)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(new ReturnShipmentRequest("not mine"))))
+        .andExpect(status().isNotFound());
+
+    mockMvc
+        .perform(
+            get("/shipments/" + shipmentId)
+                .header("Authorization", "Bearer " + tokenFor("admin", "ADMIN")))
+        .andExpect(status().isOk());
   }
 }

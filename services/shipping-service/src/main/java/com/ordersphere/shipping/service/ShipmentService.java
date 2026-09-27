@@ -76,25 +76,31 @@ public class ShipmentService {
   }
 
   @Transactional(readOnly = true)
-  public ShipmentResponse getShipment(Long id) {
-    return ShipmentResponse.from(findShipmentOrThrow(id));
+  public ShipmentResponse getShipment(String username, boolean isAdmin, Long id) {
+    return ShipmentResponse.from(findShipmentOrThrow(username, isAdmin, id));
   }
 
   @Transactional(readOnly = true)
-  public List<ShipmentResponse> listByOrder(Long orderId) {
-    return shipmentRepository.findByOrderId(orderId).stream().map(ShipmentResponse::from).toList();
+  public List<ShipmentResponse> listByOrder(String username, boolean isAdmin, Long orderId) {
+    List<Shipment> shipments =
+        isAdmin
+            ? shipmentRepository.findByOrderId(orderId)
+            : shipmentRepository.findByOrderIdAndCustomerUsername(orderId, username);
+    return shipments.stream().map(ShipmentResponse::from).toList();
   }
 
   @Transactional(readOnly = true)
-  public List<TrackingEventResponse> getTracking(Long shipmentId) {
-    findShipmentOrThrow(shipmentId);
+  public List<TrackingEventResponse> getTracking(
+      String username, boolean isAdmin, Long shipmentId) {
+    findShipmentOrThrow(username, isAdmin, shipmentId);
     return trackingEventRepository.findByShipmentIdOrderByOccurredAtAsc(shipmentId).stream()
         .map(TrackingEventResponse::from)
         .toList();
   }
 
-  public ShipmentResponse requestReturn(Long shipmentId, ReturnShipmentRequest request) {
-    Shipment original = findShipmentOrThrow(shipmentId);
+  public ShipmentResponse requestReturn(
+      String username, boolean isAdmin, Long shipmentId, ReturnShipmentRequest request) {
+    Shipment original = findShipmentOrThrow(username, isAdmin, shipmentId);
 
     if (original.getType() != ShipmentType.OUTBOUND) {
       throw new InvalidShipmentStateException("Only outbound shipments can be returned");
@@ -213,7 +219,16 @@ public class ShipmentService {
             shipment.getDestination()));
   }
 
-  private Shipment findShipmentOrThrow(Long id) {
-    return shipmentRepository.findById(id).orElseThrow(() -> new ShipmentNotFoundException(id));
+  /**
+   * Customers only see their own shipments; anyone else's is reported as not found (not 403) so a
+   * caller can't probe which shipment ids exist. ADMIN - including the orders saga's service token
+   * - sees all.
+   */
+  private Shipment findShipmentOrThrow(String username, boolean isAdmin, Long id) {
+    Optional<Shipment> shipment =
+        isAdmin
+            ? shipmentRepository.findById(id)
+            : shipmentRepository.findByIdAndCustomerUsername(id, username);
+    return shipment.orElseThrow(() -> new ShipmentNotFoundException(id));
   }
 }

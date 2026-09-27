@@ -10,6 +10,8 @@ import java.util.List;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -35,23 +37,32 @@ public class ShipmentController {
   }
 
   @GetMapping("/{id}")
-  public ShipmentResponse getShipment(@PathVariable Long id) {
-    return shipmentService.getShipment(id);
+  public ShipmentResponse getShipment(@PathVariable Long id, Authentication authentication) {
+    return shipmentService.getShipment(authentication.getName(), isAdmin(authentication), id);
   }
 
   @GetMapping("/{id}/tracking")
-  public List<TrackingEventResponse> getTracking(@PathVariable Long id) {
-    return shipmentService.getTracking(id);
+  public List<TrackingEventResponse> getTracking(
+      @PathVariable Long id, Authentication authentication) {
+    return shipmentService.getTracking(authentication.getName(), isAdmin(authentication), id);
   }
 
   @GetMapping("/order/{orderId}")
-  public List<ShipmentResponse> listByOrder(@PathVariable Long orderId) {
-    return shipmentService.listByOrder(orderId);
+  public List<ShipmentResponse> listByOrder(
+      @PathVariable Long orderId, Authentication authentication) {
+    return shipmentService.listByOrder(authentication.getName(), isAdmin(authentication), orderId);
   }
 
   @PostMapping("/{id}/return")
   public ShipmentResponse requestReturn(
-      @PathVariable Long id, @Valid @RequestBody ReturnShipmentRequest request) {
-    return shipmentService.requestReturn(id, request);
+      @PathVariable Long id,
+      @Valid @RequestBody ReturnShipmentRequest request,
+      Authentication authentication) {
+    return shipmentService.requestReturn(
+        authentication.getName(), isAdmin(authentication), id, request);
+  }
+
+  private boolean isAdmin(Authentication authentication) {
+    return authentication.getAuthorities().contains(new SimpleGrantedAuthority("ROLE_ADMIN"));
   }
 }
