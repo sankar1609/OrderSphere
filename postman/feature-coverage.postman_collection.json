@@ -1,0 +1,2846 @@
+{
+  "info": {
+    "name": "OrderSphere - Feature Coverage",
+    "description": "Assertion-based coverage of every implemented feature listed in CLAUDE.md that the Full Order Flow collection doesn't already exercise: auth & RBAC, inventory catalog/restock/backorders, payment methods, payment idempotency and transient-failure retries, shipment returns, notification preferences and delivery, service discovery, the RabbitMQ topology, and circuit breaker registration.\n\nRun top to bottom (`npx newman run postman/feature-coverage.postman_collection.json`) against the docker-compose stack. Every run uses fresh users/SKU suffixed with {{runId}}, so it is re-runnable. Async steps poll themselves (3s, up to 20 tries).\n\nThe RabbitMQ requests use the docker-compose default management credentials (ordersphere/ordersphere).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "gatewayBaseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "eurekaUrl",
+      "value": "http://localhost:8761"
+    },
+    {
+      "key": "rabbitApiUrl",
+      "value": "http://localhost:15672/api"
+    },
+    {
+      "key": "authBaseUrl",
+      "value": "{{gatewayBaseUrl}}/auth-service"
+    },
+    {
+      "key": "inventoryBaseUrl",
+      "value": "{{gatewayBaseUrl}}/inventory-service"
+    },
+    {
+      "key": "ordersBaseUrl",
+      "value": "{{gatewayBaseUrl}}/ordersphere-orders"
+    },
+    {
+      "key": "paymentBaseUrl",
+      "value": "{{gatewayBaseUrl}}/payment-service"
+    },
+    {
+      "key": "shippingBaseUrl",
+      "value": "{{gatewayBaseUrl}}/shipping-service"
+    },
+    {
+      "key": "notificationBaseUrl",
+      "value": "{{gatewayBaseUrl}}/notification-service"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Auth & RBAC",
+      "item": [
+        {
+          "name": "Register Customer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"cust_{{runId}}\",\n  \"password\": \"password123\",\n  \"role\": \"CUSTOMER\"\n}"
+            },
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/register",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ]
+            },
+            "description": "Each run uses fresh usernames suffixed with {{runId}}."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('runId', String(Date.now()));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.test(\"Registered as CUSTOMER\", function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.role).to.eql('CUSTOMER');",
+                  "});",
+                  "pm.collectionVariables.set('custUserId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register Duplicate [expect 409]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"cust_{{runId}}\",\n  \"password\": \"password123\",\n  \"role\": \"CUSTOMER\"\n}"
+            },
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/register",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 409', function () { pm.response.to.have.status(409); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register Short Password [expect 400]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"short_{{runId}}\",\n  \"password\": \"1234567\",\n  \"role\": \"CUSTOMER\"\n}"
+            },
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/register",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ]
+            },
+            "description": "Passwords must be at least 8 characters."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register Missing Role [expect 400]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"norole_{{runId}}\",\n  \"password\": \"password123\"\n}"
+            },
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/register",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login Wrong Password [expect 401]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"cust_{{runId}}\",\n  \"password\": \"wrong-password\"\n}"
+            },
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/login",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 401', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login Customer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"cust_{{runId}}\",\n  \"password\": \"password123\"\n}"
+            },
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/login",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Saves {{custToken}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.collectionVariables.set('custToken', pm.response.json().token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Me (customer)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/me",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "me"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"Returns the logged-in user\", function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.username).to.eql('cust_' + pm.collectionVariables.get('runId'));",
+                  "    pm.expect(b.role).to.eql('CUSTOMER');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register Other Customer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"other_{{runId}}\",\n  \"password\": \"password123\",\n  \"role\": \"CUSTOMER\"\n}"
+            },
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/register",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login Other Customer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"other_{{runId}}\",\n  \"password\": \"password123\"\n}"
+            },
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/login",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Saves {{otherToken}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.collectionVariables.set('otherToken', pm.response.json().token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register Future Vendor",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"vend_{{runId}}\",\n  \"password\": \"password123\",\n  \"role\": \"CUSTOMER\"\n}"
+            },
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/register",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ]
+            },
+            "description": "Registered as CUSTOMER; promoted to VENDOR by the admin below."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('vendUserId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login Admin",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"admin\",\n  \"password\": \"admin123\"\n}"
+            },
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/login",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Saves {{adminToken}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.collectionVariables.set('adminToken', pm.response.json().token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Change Role as Customer [expect 403]",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"role\": \"ADMIN\"\n}"
+            },
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/admin/users/{{vendUserId}}/role",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "admin",
+                "users",
+                "{{vendUserId}}",
+                "role"
+              ]
+            },
+            "description": "Only ADMIN can change roles."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 403', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Admin Promotes User to VENDOR",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"role\": \"VENDOR\"\n}"
+            },
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/admin/users/{{vendUserId}}/role",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "admin",
+                "users",
+                "{{vendUserId}}",
+                "role"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"Role is now VENDOR\", function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.role).to.eql('VENDOR');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login Vendor (new role in token)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"vend_{{runId}}\",\n  \"password\": \"password123\"\n}"
+            },
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/login",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Saves {{vendToken}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.collectionVariables.set('vendToken', pm.response.json().token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Me (vendor)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{vendToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/me",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "me"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"Role VENDOR after re-login\", function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.role).to.eql('VENDOR');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Tampered JWT Rejected [expect 401]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tamperedToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders",
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            },
+            "description": "A token with a broken signature must be rejected by the resource services (shared JWT validation in common-security)."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var t = pm.collectionVariables.get('custToken');",
+                  "pm.collectionVariables.set('tamperedToken', t.slice(0, -4) + (t.slice(-4) === 'AAAA' ? 'BBBB' : 'AAAA'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 401', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Circuit Breakers Registered & CLOSED",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{ordersBaseUrl}}/actuator/circuitbreakers",
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "actuator",
+                "circuitbreakers"
+              ]
+            },
+            "description": "Resilience4j: ordersphere-orders wraps its calls to inventory, payment and shipping in circuit breakers."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"inventory/payment/shipping breakers are CLOSED\", function () {",
+                  "    var b = pm.response.json();",
+                  "    var cb = b.circuitBreakers;",
+                  "    ['inventory-service', 'payment-service', 'shipping-service'].forEach(function (n) {",
+                  "        pm.expect(cb[n], n).to.exist;",
+                  "        pm.expect(cb[n].state, n).to.eql('CLOSED');",
+                  "    });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Platform (Discovery, Messaging)",
+      "item": [
+        {
+          "name": "Eureka: all services registered and UP",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{eurekaUrl}}/eureka/apps",
+              "host": [
+                "{{eurekaUrl}}"
+              ],
+              "path": [
+                "eureka",
+                "apps"
+              ]
+            },
+            "description": "Service discovery: every service registers with the Eureka registry."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var apps = pm.response.json().applications.application;",
+                  "var up = {};",
+                  "apps.forEach(function (a) { up[a.name] = a.instance.some(function (i) { return i.status === 'UP'; }); });",
+                  "['AUTH-SERVICE', 'INVENTORY-SERVICE', 'ORDERSPHERE-ORDERS', 'PAYMENT-SERVICE', 'SHIPPING-SERVICE', 'NOTIFICATION-SERVICE', 'ORDERSPHERE-GATEWAY'].forEach(function (s) {",
+                  "    pm.test(s + ' is UP', function () { pm.expect(up[s], s).to.be.true; });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "RabbitMQ: event exchanges exist",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic b3JkZXJzcGhlcmU6b3JkZXJzcGhlcmU="
+              }
+            ],
+            "url": {
+              "raw": "{{rabbitApiUrl}}/exchanges",
+              "host": [
+                "{{rabbitApiUrl}}"
+              ],
+              "path": [
+                "exchanges"
+              ]
+            },
+            "description": "Message broker: topic exchange for domain events plus its dead-letter exchange."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var names = pm.response.json().map(function (e) { return e.name + ':' + e.type; });",
+                  "pm.test('ordersphere.events (topic) and ordersphere.events.dlx (direct) exist', function () {",
+                  "    pm.expect(names).to.include.members(['ordersphere.events:topic', 'ordersphere.events.dlx:direct']);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "RabbitMQ: consumers attached, nothing dead-lettered",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic b3JkZXJzcGhlcmU6b3JkZXJzcGhlcmU="
+              }
+            ],
+            "url": {
+              "raw": "{{rabbitApiUrl}}/queues",
+              "host": [
+                "{{rabbitApiUrl}}"
+              ],
+              "path": [
+                "queues"
+              ]
+            },
+            "description": "Each listener queue has a live consumer; the DLQs are empty (no event has failed processing)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var q = {};",
+                  "pm.response.json().forEach(function (x) { q[x.name] = x; });",
+                  "['notification-service.events', 'ordersphere-orders.payment-events', 'shipping-service.order-events'].forEach(function (n) {",
+                  "    pm.test(n + ' has a consumer', function () { pm.expect(q[n] && q[n].consumers, n).to.be.at.least(1); });",
+                  "    pm.test(n + '.dlq is empty', function () { pm.expect(q[n + '.dlq'] && q[n + '.dlq'].messages, n + '.dlq').to.eql(0); });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. Inventory",
+      "item": [
+        {
+          "name": "Vendor Creates Product",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{vendToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sku\": \"{{sku}}\",\n  \"name\": \"Coverage Widget\",\n  \"quantityOnHand\": 10,\n  \"reorderThreshold\": 3,\n  \"unitPrice\": 5.00\n}"
+            },
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/products",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "inventory",
+                "products"
+              ]
+            },
+            "description": "VENDOR role may create products."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('sku', 'COV-' + pm.collectionVariables.get('runId'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Duplicate SKU [expect 409]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{vendToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sku\": \"{{sku}}\",\n  \"name\": \"Coverage Widget\",\n  \"quantityOnHand\": 10,\n  \"reorderThreshold\": 3,\n  \"unitPrice\": 5.00\n}"
+            },
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/products",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "inventory",
+                "products"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 409', function () { pm.response.to.have.status(409); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Negative Price [expect 400]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{vendToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sku\": \"{{sku}}-NEG\",\n  \"name\": \"Coverage Widget\",\n  \"quantityOnHand\": 10,\n  \"reorderThreshold\": 3,\n  \"unitPrice\": -1\n}"
+            },
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/products",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "inventory",
+                "products"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Products",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/products",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "inventory",
+                "products"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"Catalog contains the new SKU\", function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.map(function (p) { return p.sku; })).to.include(pm.collectionVariables.get('sku'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unknown SKU [expect 404]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/products/NO-SUCH-{{runId}}",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "inventory",
+                "products",
+                "NO-SUCH-{{runId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 404', function () { pm.response.to.have.status(404); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Restock as Customer [expect 403]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quantity\": 5\n}"
+            },
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/products/{{sku}}/restock",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "inventory",
+                "products",
+                "{{sku}}",
+                "restock"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 403', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Restock Zero [expect 400]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{vendToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quantity\": 0\n}"
+            },
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/products/{{sku}}/restock",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "inventory",
+                "products",
+                "{{sku}}",
+                "restock"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Vendor Restocks +5",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{vendToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quantity\": 5\n}"
+            },
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/products/{{sku}}/restock",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "inventory",
+                "products",
+                "{{sku}}",
+                "restock"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"quantityOnHand 10 -> 15\", function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.quantityOnHand).to.eql(15);",
+                  "    pm.expect(b.availableQuantity).to.eql(15);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Payment",
+      "item": [
+        {
+          "name": "Create Payment Method (normal)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"CARD\",\n  \"token\": \"tok-cov-{{runId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{paymentBaseUrl}}/payment-methods",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "payment-methods"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('pmId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Payment Method (FAIL-TRANSIENT)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"CARD\",\n  \"token\": \"FAIL-TRANSIENT\"\n}"
+            },
+            "url": {
+              "raw": "{{paymentBaseUrl}}/payment-methods",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "payment-methods"
+              ]
+            },
+            "description": "The stub gateway always answers FAIL-TRANSIENT with a retryable failure."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('transientPmId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Payment Method (scratch)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"CARD\",\n  \"token\": \"tok-scratch\"\n}"
+            },
+            "url": {
+              "raw": "{{paymentBaseUrl}}/payment-methods",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "payment-methods"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('scratchPmId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Payment Methods",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentBaseUrl}}/payment-methods",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "payment-methods"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"Lists exactly this customer's 3 methods\", function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.length).to.eql(3);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete Another Customer's Method [expect 404]",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{otherToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentBaseUrl}}/payment-methods/{{scratchPmId}}",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "payment-methods",
+                "{{scratchPmId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 404', function () { pm.response.to.have.status(404); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete Payment Method",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentBaseUrl}}/payment-methods/{{scratchPmId}}",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "payment-methods",
+                "{{scratchPmId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 204', function () { pm.response.to.have.status(204); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete Again [expect 404]",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentBaseUrl}}/payment-methods/{{scratchPmId}}",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "payment-methods",
+                "{{scratchPmId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 404', function () { pm.response.to.have.status(404); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Initiate Payment Directly",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderId\": \"{{directOrderId}}\",\n  \"paymentMethodId\": \"{{pmId}}\",\n  \"amount\": 1.00,\n  \"currency\": \"USD\"\n}"
+            },
+            "url": {
+              "raw": "{{paymentBaseUrl}}/payments",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "payments"
+              ]
+            },
+            "description": "Uses a synthetic orderId that no real order will ever have. Settlement is async, so the API answers 202 Accepted with status PENDING."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('directOrderId', String(900000000 + Math.floor(Math.random() * 99999999)));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 202', function () { pm.response.to.have.status(202); });",
+                  "pm.test(\"Accepted as PENDING\", function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.status).to.eql('PENDING');",
+                  "});",
+                  "pm.collectionVariables.set('directPaymentId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Initiate Same Order Again (idempotent)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderId\": \"{{directOrderId}}\",\n  \"paymentMethodId\": \"{{pmId}}\",\n  \"amount\": 1.00,\n  \"currency\": \"USD\"\n}"
+            },
+            "url": {
+              "raw": "{{paymentBaseUrl}}/payments",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "payments"
+              ]
+            },
+            "description": "Payment initiation is idempotent per orderId - the existing payment comes back, no second charge."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Same payment id returned\", function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.id).to.eql(Number(pm.collectionVariables.get('directPaymentId')));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Initiate with Another Customer's Method [expect 404]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{otherToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderId\": \"{{directOrderId}}1\",\n  \"paymentMethodId\": \"{{pmId}}\",\n  \"amount\": 1.00,\n  \"currency\": \"USD\"\n}"
+            },
+            "url": {
+              "raw": "{{paymentBaseUrl}}/payments",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "payments"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 404', function () { pm.response.to.have.status(404); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Another Customer's Payment [expect 404]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{otherToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentBaseUrl}}/payments/{{directPaymentId}}",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "{{directPaymentId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 404', function () { pm.response.to.have.status(404); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5. Orders (retries, backorders, isolation)",
+      "item": [
+        {
+          "name": "List My Orders (none yet)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders",
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"New customer has no orders\", function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.eql([]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Order with FAIL-TRANSIENT Card",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"sku\": \"{{sku}}\",\n      \"quantity\": 1\n    }\n  ],\n  \"paymentMethodId\": \"{{transientPmId}}\",\n  \"currency\": \"USD\",\n  \"shippingDestination\": \"42 Coverage Rd\"\n}"
+            },
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders",
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('transientOrderId', pm.response.json().id);",
+                  "pm.collectionVariables.set('transientPaymentId', pm.response.json().paymentId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Transient Payment Retries then FAILS",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentBaseUrl}}/payments/{{transientPaymentId}}",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "{{transientPaymentId}}"
+              ]
+            },
+            "description": "payment-service retries a transient gateway failure up to payment.processing.max-retries (3), one attempt per ~5s sweep, then gives up."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var body = pm.response.code === 200 ? pm.response.json() : null;",
+                  "var pollKey = 'poll_' + pm.info.requestId;",
+                  "var polls = Number(pm.collectionVariables.get(pollKey) || 0);",
+                  "var done = !!body && (body.status === 'FAILED');",
+                  "if (done || polls >= 20) {",
+                  "    pm.collectionVariables.unset(pollKey);",
+                  "    pm.test(\"Payment FAILED after retries\", function () {",
+                  "        pm.expect(done, 'still not reached after ' + polls + ' polls (currently: ' + (body ? body.status : pm.response.code) + ')').to.be.true;",
+                  "    });",
+                  "    pm.test('It was retried, not failed on the first sweep', function () {",
+                  "        var secs = (new Date(body.updatedAt) - new Date(body.createdAt)) / 1000;",
+                  "        pm.expect(secs).to.be.above(9);",
+                  "    });",
+                  "} else {",
+                  "    pm.collectionVariables.set(pollKey, polls + 1);",
+                  "    console.log(pm.info.requestName + ': waiting (' + (polls + 1) + '/20), currently ' + (body ? body.status : pm.response.code));",
+                  "    setTimeout(function () {}, 3000);",
+                  "    pm.execution.setNextRequest(pm.info.requestId);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Transient Order Cancelled",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders/{{transientOrderId}}",
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "{{transientOrderId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var body = pm.response.code === 200 ? pm.response.json() : null;",
+                  "var pollKey = 'poll_' + pm.info.requestId;",
+                  "var polls = Number(pm.collectionVariables.get(pollKey) || 0);",
+                  "var done = !!body && (body.status === 'CANCELLED');",
+                  "if (done || polls >= 20) {",
+                  "    pm.collectionVariables.unset(pollKey);",
+                  "    pm.test(\"Order CANCELLED after payment failure\", function () {",
+                  "        pm.expect(done, 'still not reached after ' + polls + ' polls (currently: ' + (body ? body.status : pm.response.code) + ')').to.be.true;",
+                  "    });",
+                  "",
+                  "} else {",
+                  "    pm.collectionVariables.set(pollKey, polls + 1);",
+                  "    console.log(pm.info.requestName + ': waiting (' + (polls + 1) + '/20), currently ' + (body ? body.status : pm.response.code));",
+                  "    setTimeout(function () {}, 3000);",
+                  "    pm.execution.setNextRequest(pm.info.requestId);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refund a FAILED Payment [expect 409]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"should not be allowed\"\n}"
+            },
+            "url": {
+              "raw": "{{paymentBaseUrl}}/payments/{{transientPaymentId}}/refund",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "{{transientPaymentId}}",
+                "refund"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 409', function () { pm.response.to.have.status(409); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Backorder: Order More Than In Stock",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"sku\": \"{{sku}}\",\n      \"quantity\": 20\n    }\n  ],\n  \"paymentMethodId\": \"{{pmId}}\",\n  \"currency\": \"USD\",\n  \"shippingDestination\": \"42 Coverage Rd\"\n}"
+            },
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders",
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            },
+            "description": "15 available, 20 ordered: 15 are reserved and 5 backordered. The order still proceeds and is charged for all 20."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('boOrderId', pm.response.json().id);",
+                  "pm.test(\"Order accepted and priced for the full 20\", function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.status).to.eql('AWAITING_PAYMENT');",
+                  "    pm.expect(Number(b.totalAmount)).to.be.closeTo(100, 0.001);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Stock After Backorder",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/products/{{sku}}",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "inventory",
+                "products",
+                "{{sku}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"All 15 reserved, 0 available\", function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.quantityReserved).to.eql(15);",
+                  "    pm.expect(b.availableQuantity).to.eql(0);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List My Orders",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders",
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"Both orders listed\", function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.map(function (o) { return o.id; })).to.include.members([Number(pm.collectionVariables.get('transientOrderId')), Number(pm.collectionVariables.get('boOrderId'))]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Other Customer Sees None of Them",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{otherToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders",
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"Empty list\", function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b).to.eql([]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Backorder Order Confirmed",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders/{{boOrderId}}",
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "{{boOrderId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var body = pm.response.code === 200 ? pm.response.json() : null;",
+                  "var pollKey = 'poll_' + pm.info.requestId;",
+                  "var polls = Number(pm.collectionVariables.get(pollKey) || 0);",
+                  "var done = !!body && (body.status === 'CONFIRMED' && !!body.shipmentId);",
+                  "if (done || polls >= 20) {",
+                  "    pm.collectionVariables.unset(pollKey);",
+                  "    pm.test(\"Order CONFIRMED with shipment\", function () {",
+                  "        pm.expect(done, 'still not reached after ' + polls + ' polls (currently: ' + (body ? body.status : pm.response.code) + ')').to.be.true;",
+                  "    });",
+                  "    pm.collectionVariables.set('boShipmentId', body && body.shipmentId);",
+                  "} else {",
+                  "    pm.collectionVariables.set(pollKey, polls + 1);",
+                  "    console.log(pm.info.requestName + ': waiting (' + (polls + 1) + '/20), currently ' + (body ? body.status : pm.response.code));",
+                  "    setTimeout(function () {}, 3000);",
+                  "    pm.execution.setNextRequest(pm.info.requestId);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "6. Shipping (returns, isolation)",
+      "item": [
+        {
+          "name": "Shipments by Order",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{shippingBaseUrl}}/shipments/order/{{boOrderId}}",
+              "host": [
+                "{{shippingBaseUrl}}"
+              ],
+              "path": [
+                "shipments",
+                "order",
+                "{{boOrderId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"One OUTBOUND shipment\", function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.length).to.eql(1);",
+                  "    pm.expect(b[0].type).to.eql('OUTBOUND');",
+                  "    pm.expect(b[0].carrier).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Return Before Delivery [expect 409]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"changed my mind\"\n}"
+            },
+            "url": {
+              "raw": "{{shippingBaseUrl}}/shipments/{{boShipmentId}}/return",
+              "host": [
+                "{{shippingBaseUrl}}"
+              ],
+              "path": [
+                "shipments",
+                "{{boShipmentId}}",
+                "return"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 409', function () { pm.response.to.have.status(409); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Customer Creates Shipment [expect 403]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderId\": \"{{boOrderId}}\",\n  \"customerUsername\": \"cust_{{runId}}\",\n  \"destination\": \"x\"\n}"
+            },
+            "url": {
+              "raw": "{{shippingBaseUrl}}/shipments",
+              "host": [
+                "{{shippingBaseUrl}}"
+              ],
+              "path": [
+                "shipments"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 403', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Shipment Delivered",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{shippingBaseUrl}}/shipments/{{boShipmentId}}",
+              "host": [
+                "{{shippingBaseUrl}}"
+              ],
+              "path": [
+                "shipments",
+                "{{boShipmentId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var body = pm.response.code === 200 ? pm.response.json() : null;",
+                  "var pollKey = 'poll_' + pm.info.requestId;",
+                  "var polls = Number(pm.collectionVariables.get(pollKey) || 0);",
+                  "var done = !!body && (body.status === 'DELIVERED');",
+                  "if (done || polls >= 20) {",
+                  "    pm.collectionVariables.unset(pollKey);",
+                  "    pm.test(\"Shipment DELIVERED\", function () {",
+                  "        pm.expect(done, 'still not reached after ' + polls + ' polls (currently: ' + (body ? body.status : pm.response.code) + ')').to.be.true;",
+                  "    });",
+                  "",
+                  "} else {",
+                  "    pm.collectionVariables.set(pollKey, polls + 1);",
+                  "    console.log(pm.info.requestName + ': waiting (' + (polls + 1) + '/20), currently ' + (body ? body.status : pm.response.code));",
+                  "    setTimeout(function () {}, 3000);",
+                  "    pm.execution.setNextRequest(pm.info.requestId);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Request Return",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"damaged\"\n}"
+            },
+            "url": {
+              "raw": "{{shippingBaseUrl}}/shipments/{{boShipmentId}}/return",
+              "host": [
+                "{{shippingBaseUrl}}"
+              ],
+              "path": [
+                "shipments",
+                "{{boShipmentId}}",
+                "return"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.collectionVariables.set('returnShipmentId', pm.response.json().id);",
+                  "pm.test(\"RETURN shipment linked to the original\", function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.type).to.eql('RETURN');",
+                  "    pm.expect(b.parentShipmentId).to.eql(Number(pm.collectionVariables.get('boShipmentId')));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Return a Return [expect 409]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"x\"\n}"
+            },
+            "url": {
+              "raw": "{{shippingBaseUrl}}/shipments/{{returnShipmentId}}/return",
+              "host": [
+                "{{shippingBaseUrl}}"
+              ],
+              "path": [
+                "shipments",
+                "{{returnShipmentId}}",
+                "return"
+              ]
+            },
+            "description": "Only OUTBOUND shipments can be returned."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 409', function () { pm.response.to.have.status(409); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Other Customer Requests Return [expect 404]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{otherToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"not mine\"\n}"
+            },
+            "url": {
+              "raw": "{{shippingBaseUrl}}/shipments/{{boShipmentId}}/return",
+              "host": [
+                "{{shippingBaseUrl}}"
+              ],
+              "path": [
+                "shipments",
+                "{{boShipmentId}}",
+                "return"
+              ]
+            },
+            "description": "SECURITY: another customer must not be able to open a return on someone else's delivered shipment."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 403 or 404', function () { pm.expect(pm.response.code).to.be.oneOf([403, 404]); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Other Customer Reads Shipment [expect 404]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{otherToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{shippingBaseUrl}}/shipments/{{boShipmentId}}",
+              "host": [
+                "{{shippingBaseUrl}}"
+              ],
+              "path": [
+                "shipments",
+                "{{boShipmentId}}"
+              ]
+            },
+            "description": "SECURITY: shipments should be private to the order's customer, like orders and payments are."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 403 or 404', function () { pm.expect(pm.response.code).to.be.oneOf([403, 404]); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Other Customer Reads Tracking [expect 404]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{otherToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{shippingBaseUrl}}/shipments/{{boShipmentId}}/tracking",
+              "host": [
+                "{{shippingBaseUrl}}"
+              ],
+              "path": [
+                "shipments",
+                "{{boShipmentId}}",
+                "tracking"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 403 or 404', function () { pm.expect(pm.response.code).to.be.oneOf([403, 404]); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Other Customer Lists Shipments by Order [expect 404/empty]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{otherToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{shippingBaseUrl}}/shipments/order/{{boOrderId}}",
+              "host": [
+                "{{shippingBaseUrl}}"
+              ],
+              "path": [
+                "shipments",
+                "order",
+                "{{boOrderId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Not visible to other customer', function () { pm.expect(pm.response.code === 404 || pm.response.code === 403 || (pm.response.code === 200 && pm.response.json().length === 0)).to.be.true; });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "7. Notifications (preferences, delivery)",
+      "item": [
+        {
+          "name": "Disable EMAIL Preference",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"channel\": \"EMAIL\",\n  \"enabled\": false\n}"
+            },
+            "url": {
+              "raw": "{{notificationBaseUrl}}/notification-preferences",
+              "host": [
+                "{{notificationBaseUrl}}"
+              ],
+              "path": [
+                "notification-preferences"
+              ]
+            },
+            "description": "Upsert per channel - answers 200."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.collectionVariables.set('prefId', pm.response.json().id);",
+                  "pm.test(\"EMAIL disabled\", function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.channel).to.eql('EMAIL');",
+                  "    pm.expect(b.enabled).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Preferences",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{notificationBaseUrl}}/notification-preferences",
+              "host": [
+                "{{notificationBaseUrl}}"
+              ],
+              "path": [
+                "notification-preferences"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"Contains the EMAIL preference\", function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.some(function (p) { return p.channel === 'EMAIL' && p.enabled === false; })).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Customer Sends Notification [expect 403]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipientUsername\": \"cust_{{runId}}\",\n  \"channel\": \"IN_APP\",\n  \"templateKey\": \"ORDER_CONFIRMED\",\n  \"variables\": {\n    \"orderId\": \"1\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{notificationBaseUrl}}/notifications",
+              "host": [
+                "{{notificationBaseUrl}}"
+              ],
+              "path": [
+                "notifications"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 403', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Admin Sends EMAIL (disabled channel)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipientUsername\": \"cust_{{runId}}\",\n  \"channel\": \"EMAIL\",\n  \"templateKey\": \"ORDER_CONFIRMED\",\n  \"variables\": {\n    \"orderId\": \"777\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{notificationBaseUrl}}/notifications",
+              "host": [
+                "{{notificationBaseUrl}}"
+              ],
+              "path": [
+                "notifications"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('skippedNotifId', pm.response.json().id);",
+                  "pm.test(\"SKIPPED because the customer disabled EMAIL\", function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.status).to.eql('SKIPPED');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Admin Sends IN_APP (enabled channel)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipientUsername\": \"cust_{{runId}}\",\n  \"channel\": \"IN_APP\",\n  \"templateKey\": \"ORDER_CONFIRMED\",\n  \"variables\": {\n    \"orderId\": \"777\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{notificationBaseUrl}}/notifications",
+              "host": [
+                "{{notificationBaseUrl}}"
+              ],
+              "path": [
+                "notifications"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('inAppNotifId', pm.response.json().id);",
+                  "pm.test(\"Rendered from template and queued\", function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.status).to.eql('PENDING');",
+                  "    pm.expect(b.message).to.eql('Your order #777 has been confirmed.');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "IN_APP Notification Delivered",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{notificationBaseUrl}}/notifications/{{inAppNotifId}}",
+              "host": [
+                "{{notificationBaseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "{{inAppNotifId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var body = pm.response.code === 200 ? pm.response.json() : null;",
+                  "var pollKey = 'poll_' + pm.info.requestId;",
+                  "var polls = Number(pm.collectionVariables.get(pollKey) || 0);",
+                  "var done = !!body && (body.status === 'SENT' && !!body.sentAt);",
+                  "if (done || polls >= 20) {",
+                  "    pm.collectionVariables.unset(pollKey);",
+                  "    pm.test(\"Delivery sweep marks it SENT\", function () {",
+                  "        pm.expect(done, 'still not reached after ' + polls + ' polls (currently: ' + (body ? body.status : pm.response.code) + ')').to.be.true;",
+                  "    });",
+                  "",
+                  "} else {",
+                  "    pm.collectionVariables.set(pollKey, polls + 1);",
+                  "    console.log(pm.info.requestName + ': waiting (' + (polls + 1) + '/20), currently ' + (body ? body.status : pm.response.code));",
+                  "    setTimeout(function () {}, 3000);",
+                  "    pm.execution.setNextRequest(pm.info.requestId);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Other Customer Reads It [expect 404]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{otherToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{notificationBaseUrl}}/notifications/{{inAppNotifId}}",
+              "host": [
+                "{{notificationBaseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "{{inAppNotifId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 403 or 404', function () { pm.expect(pm.response.code).to.be.oneOf([403, 404]); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete Preference",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{notificationBaseUrl}}/notification-preferences/{{prefId}}",
+              "host": [
+                "{{notificationBaseUrl}}"
+              ],
+              "path": [
+                "notification-preferences",
+                "{{prefId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 204', function () { pm.response.to.have.status(204); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete Again [expect 404]",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{notificationBaseUrl}}/notification-preferences/{{prefId}}",
+              "host": [
+                "{{notificationBaseUrl}}"
+              ],
+              "path": [
+                "notification-preferences",
+                "{{prefId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 404', function () { pm.response.to.have.status(404); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

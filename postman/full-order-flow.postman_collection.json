@@ -1,27 +1,106 @@
 {
   "info": {
     "name": "OrderSphere - Full Order Flow",
-    "description": "End-to-end manual test collection spanning auth-service, inventory-service, ordersphere-orders, payment-service, shipping-service, and notification-service. Requires the full stack running (docker-compose up). Routes through the API Gateway (http://localhost:8080) using Spring Cloud Gateway's discovery-locator convention (/{service-id}/...), rather than hitting each service directly on its own port. Run folders top to bottom. Several steps are async (payment settlement, shipment progression, notification delivery all happen on ~5s scheduled sweeps in their respective services) - where a request is marked 'poll', just re-send it every few seconds until the status you're expecting shows up.",
+    "description": "End-to-end test collection spanning auth-service, inventory-service, ordersphere-orders, payment-service, shipping-service, and notification-service. Requires the full stack running (docker-compose up). Routes through the API Gateway (http://localhost:8080) using Spring Cloud Gateway's discovery-locator convention (/{service-id}/...).\n\nRun the whole collection top to bottom with the Collection Runner or newman (`npx newman run postman/full-order-flow.postman_collection.json`). Every request has assertions. Steps marked [poll] or [expect ...] on async state (payment settlement, shipment progression, notification delivery - all ~5s sweeps) re-run themselves every 3s (up to 20 times) until the expected state shows up. When sending requests one by one by hand, just re-send those until their test passes.\n\nEach run creates a fresh product SKU, so stock checks are exact and re-runs don't interfere.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
-    { "key": "gatewayBaseUrl", "value": "http://localhost:8080" },
-    { "key": "authBaseUrl", "value": "{{gatewayBaseUrl}}/auth-service" },
-    { "key": "inventoryBaseUrl", "value": "{{gatewayBaseUrl}}/inventory-service" },
-    { "key": "ordersBaseUrl", "value": "{{gatewayBaseUrl}}/ordersphere-orders" },
-    { "key": "paymentBaseUrl", "value": "{{gatewayBaseUrl}}/payment-service" },
-    { "key": "shippingBaseUrl", "value": "{{gatewayBaseUrl}}/shipping-service" },
-    { "key": "notificationBaseUrl", "value": "{{gatewayBaseUrl}}/notification-service" },
-    { "key": "productSku", "value": "WIDGET-002" },
-    { "key": "customerToken", "value": "" },
-    { "key": "adminToken", "value": "" },
-    { "key": "paymentMethodId", "value": "" },
-    { "key": "declinePaymentMethodId", "value": "" },
-    { "key": "orderId", "value": "" },
-    { "key": "paymentId", "value": "" },
-    { "key": "shipmentId", "value": "" },
-    { "key": "declineOrderId", "value": "" },
-    { "key": "cancelOrderId", "value": "" }
+    {
+      "key": "gatewayBaseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "authBaseUrl",
+      "value": "{{gatewayBaseUrl}}/auth-service"
+    },
+    {
+      "key": "inventoryBaseUrl",
+      "value": "{{gatewayBaseUrl}}/inventory-service"
+    },
+    {
+      "key": "ordersBaseUrl",
+      "value": "{{gatewayBaseUrl}}/ordersphere-orders"
+    },
+    {
+      "key": "paymentBaseUrl",
+      "value": "{{gatewayBaseUrl}}/payment-service"
+    },
+    {
+      "key": "shippingBaseUrl",
+      "value": "{{gatewayBaseUrl}}/shipping-service"
+    },
+    {
+      "key": "notificationBaseUrl",
+      "value": "{{gatewayBaseUrl}}/notification-service"
+    },
+    {
+      "key": "productSku",
+      "value": ""
+    },
+    {
+      "key": "unitPrice",
+      "value": ""
+    },
+    {
+      "key": "customerToken",
+      "value": ""
+    },
+    {
+      "key": "otherCustomerToken",
+      "value": ""
+    },
+    {
+      "key": "adminToken",
+      "value": ""
+    },
+    {
+      "key": "paymentMethodId",
+      "value": ""
+    },
+    {
+      "key": "declinePaymentMethodId",
+      "value": ""
+    },
+    {
+      "key": "stockBeforeHappy",
+      "value": ""
+    },
+    {
+      "key": "stockBeforeDecline",
+      "value": ""
+    },
+    {
+      "key": "stockBeforeCancel",
+      "value": ""
+    },
+    {
+      "key": "orderId",
+      "value": ""
+    },
+    {
+      "key": "paymentId",
+      "value": ""
+    },
+    {
+      "key": "shipmentId",
+      "value": ""
+    },
+    {
+      "key": "declineOrderId",
+      "value": ""
+    },
+    {
+      "key": "declinePaymentId",
+      "value": ""
+    },
+    {
+      "key": "cancelOrderId",
+      "value": ""
+    },
+    {
+      "key": "cancelPaymentId",
+      "value": ""
+    }
   ],
   "item": [
     {
@@ -31,60 +110,193 @@
           "name": "Register Customer (alice)",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"username\": \"alice\",\n  \"password\": \"password123\",\n  \"role\": \"CUSTOMER\"\n}"
             },
-            "url": { "raw": "{{authBaseUrl}}/auth/register", "host": ["{{authBaseUrl}}"], "path": ["auth", "register"] },
-            "description": "Expect 201. If alice already exists from a previous run, expect 409 - just proceed to Login."
-          }
-        },
-        {
-          "name": "Login Customer (alice)",
-          "request": {
-            "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"username\": \"alice\",\n  \"password\": \"password123\"\n}"
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/register",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ]
             },
-            "url": { "raw": "{{authBaseUrl}}/auth/login", "host": ["{{authBaseUrl}}"], "path": ["auth", "login"] },
-            "description": "Saves the token into {{customerToken}} - used for every request made 'as the customer' below (payment methods, order creation, cancellation, reading own notifications)."
+            "description": "Expect 201, or 409 if alice already exists from a previous run."
           },
           "event": [
             {
               "listen": "test",
               "script": {
+                "type": "text/javascript",
                 "exec": [
-                  "if (pm.response.code === 200) {",
-                  "    pm.collectionVariables.set('customerToken', pm.response.json().token);",
-                  "}"
+                  "pm.test('Status is 201 or 409', function () { pm.expect(pm.response.code).to.be.oneOf([201, 409]); });"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Login Admin (bootstrap)",
+          "name": "Login alice (customer)",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"username\": \"admin\",\n  \"password\": \"admin123\"\n}"
+              "raw": "{\n  \"username\": \"alice\",\n  \"password\": \"password123\"\n}"
             },
-            "url": { "raw": "{{authBaseUrl}}/auth/login", "host": ["{{authBaseUrl}}"], "path": ["auth", "login"] },
-            "description": "Logs in as auth-service's auto-bootstrapped admin. Saves the token into {{adminToken}} - used to create the product below (inventory product creation is ADMIN/VENDOR only)."
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/login",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Saves {{customerToken}}, used for every request made 'as the customer' below."
           },
           "event": [
             {
               "listen": "test",
               "script": {
+                "type": "text/javascript",
                 "exec": [
-                  "if (pm.response.code === 200) {",
-                  "    pm.collectionVariables.set('adminToken', pm.response.json().token);",
-                  "}"
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Token returned', function () { pm.expect(pm.response.json().token).to.be.a('string').and.not.empty; });",
+                  "pm.collectionVariables.set('customerToken', pm.response.json().token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register Customer (bob)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"bob\",\n  \"password\": \"password123\",\n  \"role\": \"CUSTOMER\"\n}"
+            },
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/register",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ]
+            },
+            "description": "Expect 201, or 409 if bob already exists from a previous run."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201 or 409', function () { pm.expect(pm.response.code).to.be.oneOf([201, 409]); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login bob (other customer)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"bob\",\n  \"password\": \"password123\"\n}"
+            },
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/login",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Saves {{otherCustomerToken}}, used in folder 7 to check alice's orders are hidden from other customers."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Token returned', function () { pm.expect(pm.response.json().token).to.be.a('string').and.not.empty; });",
+                  "pm.collectionVariables.set('otherCustomerToken', pm.response.json().token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login admin (bootstrap)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"admin\",\n  \"password\": \"admin123\"\n}"
+            },
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/login",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Logs in as auth-service's auto-bootstrapped admin. Saves {{adminToken}} (product creation is ADMIN/VENDOR only)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Token returned', function () { pm.expect(pm.response.json().token).to.be.a('string').and.not.empty; });",
+                  "pm.collectionVariables.set('adminToken', pm.response.json().token);"
                 ]
               }
             }
@@ -100,29 +312,57 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"sku\": \"{{productSku}}\",\n  \"name\": \"Widget\",\n  \"quantityOnHand\": 50,\n  \"reorderThreshold\": 5\n}"
+              "raw": "{\n  \"sku\": \"{{productSku}}\",\n  \"name\": \"Widget\",\n  \"quantityOnHand\": 50,\n  \"reorderThreshold\": 5,\n  \"unitPrice\": 19.99\n}"
             },
-            "url": { "raw": "{{inventoryBaseUrl}}/inventory/products", "host": ["{{inventoryBaseUrl}}"], "path": ["inventory", "products"] },
-            "description": "Expect 201. If {{productSku}} already exists from a previous run, expect 409 (DuplicateSkuException) - either proceed (stock is already there) or change {{productSku}} first."
-          }
-        },
-        {
-          "name": "Get Product (check available stock)",
-          "request": {
-            "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
             "url": {
-              "raw": "{{inventoryBaseUrl}}/inventory/products/{{productSku}}",
-              "host": ["{{inventoryBaseUrl}}"],
-              "path": ["inventory", "products", "{{productSku}}"]
+              "raw": "{{inventoryBaseUrl}}/inventory/products",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "inventory",
+                "products"
+              ]
             },
-            "description": "Reusable check - run this any time to see quantityOnHand/quantityReserved/availableQuantity move as orders are placed, cancelled, or declined."
-          }
+            "description": "Generates a fresh {{productSku}} on every run, so each run starts with known stock (50) and a real unitPrice rather than inheriting a product left over (or created before the pricing migration) by a previous run. Expect 201."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('productSku', 'WIDGET-' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
+                  "var p = pm.response.json();",
+                  "pm.test('Product created with stock and price', function () {",
+                  "    pm.expect(p.availableQuantity).to.eql(50);",
+                  "    pm.expect(Number(p.unitPrice)).to.be.above(0);",
+                  "});",
+                  "pm.collectionVariables.set('unitPrice', p.unitPrice);"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -134,24 +374,38 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customerToken}}"
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"type\": \"CARD\",\n  \"token\": \"tok-visa-4242\"\n}"
             },
-            "url": { "raw": "{{paymentBaseUrl}}/payment-methods", "host": ["{{paymentBaseUrl}}"], "path": ["payment-methods"] },
-            "description": "Any token other than FAIL-DECLINE/FAIL-TRANSIENT settles successfully in the stub gateway. Saves the id into {{paymentMethodId}}, used by the happy-path and cancellation orders below."
+            "url": {
+              "raw": "{{paymentBaseUrl}}/payment-methods",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "payment-methods"
+              ]
+            },
+            "description": "Any token other than FAIL-DECLINE/FAIL-TRANSIENT settles successfully in the stub gateway. Saves {{paymentMethodId}}."
           },
           "event": [
             {
               "listen": "test",
               "script": {
+                "type": "text/javascript",
                 "exec": [
-                  "if (pm.response.code === 201) {",
-                  "    pm.collectionVariables.set('paymentMethodId', pm.response.json().id);",
-                  "}"
+                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('paymentMethodId', pm.response.json().id);"
                 ]
               }
             }
@@ -162,24 +416,38 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customerToken}}"
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"type\": \"CARD\",\n  \"token\": \"FAIL-DECLINE\"\n}"
             },
-            "url": { "raw": "{{paymentBaseUrl}}/payment-methods", "host": ["{{paymentBaseUrl}}"], "path": ["payment-methods"] },
-            "description": "StubPaymentGateway treats the literal token FAIL-DECLINE as a non-retryable decline - used in folder 5 to exercise the failure/compensation path. Saves the id into {{declinePaymentMethodId}}."
+            "url": {
+              "raw": "{{paymentBaseUrl}}/payment-methods",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "payment-methods"
+              ]
+            },
+            "description": "StubPaymentGateway treats the literal token FAIL-DECLINE as a non-retryable decline - used in folder 5. Saves {{declinePaymentMethodId}}."
           },
           "event": [
             {
               "listen": "test",
               "script": {
+                "type": "text/javascript",
                 "exec": [
-                  "if (pm.response.code === 201) {",
-                  "    pm.collectionVariables.set('declinePaymentMethodId', pm.response.json().id);",
-                  "}"
+                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('declinePaymentMethodId', pm.response.json().id);"
                 ]
               }
             }
@@ -191,30 +459,101 @@
       "name": "4. Happy Path - Order to Delivery",
       "item": [
         {
-          "name": "Create Order",
+          "name": "Snapshot Stock (happy path)",
           "request": {
-            "method": "POST",
+            "method": "GET",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customerToken}}"
+              }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"items\": [{ \"sku\": \"{{productSku}}\", \"quantity\": 2 }],\n  \"paymentMethodId\": {{paymentMethodId}},\n  \"amount\": 39.98,\n  \"currency\": \"USD\",\n  \"shippingDestination\": \"123 Main St, Springfield\"\n}"
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/products/{{productSku}}",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "inventory",
+                "products",
+                "{{productSku}}"
+              ]
             },
-            "url": { "raw": "{{ordersBaseUrl}}/orders", "host": ["{{ordersBaseUrl}}"], "path": ["orders"] },
-            "description": "Expect 201 with status AWAITING_PAYMENT - inventory has already been reserved synchronously and payment has been initiated (also synchronously) but not yet settled. Saves {{orderId}} and {{paymentId}}."
+            "description": "Records availableQuantity before the order, so the stock check at the end of this folder is relative."
           },
           "event": [
             {
               "listen": "test",
               "script": {
+                "type": "text/javascript",
                 "exec": [
-                  "if (pm.response.code === 201) {",
-                  "    var body = pm.response.json();",
-                  "    pm.collectionVariables.set('orderId', body.id);",
-                  "    pm.collectionVariables.set('paymentId', body.paymentId);",
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.collectionVariables.set('stockBeforeHappy', pm.response.json().availableQuantity);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customerToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"sku\": \"{{productSku}}\",\n      \"quantity\": 2\n    }\n  ],\n  \"paymentMethodId\": \"{{paymentMethodId}}\",\n  \"currency\": \"USD\",\n  \"shippingDestination\": \"123 Main St, Springfield\"\n}"
+            },
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders",
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            },
+            "description": "Expect 201 with status AWAITING_PAYMENT - inventory reserved and payment initiated synchronously, not yet settled. The total is priced by inventory-service. Saves {{orderId}} and {{paymentId}}."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('paymentMethodId')) {",
+                  "    throw new Error('{{paymentMethodId}} is empty - run \\'Create Payment Method (normal - will succeed)\\' first (and make sure no active environment defines paymentMethodId).');",
                   "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
+                  "var o = pm.response.json();",
+                  "pm.collectionVariables.set('orderId', o.id);",
+                  "pm.collectionVariables.set('paymentId', o.paymentId);",
+                  "pm.test('Order is AWAITING_PAYMENT with a payment', function () {",
+                  "    pm.expect(o.status).to.eql('AWAITING_PAYMENT');",
+                  "    pm.expect(o.paymentId).to.be.a('number');",
+                  "});",
+                  "pm.test('Priced from inventory: total = quantity x unitPrice', function () {",
+                  "    var unit = Number(pm.collectionVariables.get('unitPrice'));",
+                  "    pm.expect(Number(o.items[0].unitPrice)).to.eql(unit);",
+                  "    pm.expect(Number(o.totalAmount)).to.be.closeTo(2 * unit, 0.001);",
+                  "    pm.expect(o.currency).to.eql('USD');",
+                  "});"
                 ]
               }
             }
@@ -224,18 +563,45 @@
           "name": "Get Order Status [poll until CONFIRMED]",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
-            "url": { "raw": "{{ordersBaseUrl}}/orders/{{orderId}}", "host": ["{{ordersBaseUrl}}"], "path": ["orders", "{{orderId}}"] },
-            "description": "Re-send every few seconds. payment-service settles PENDING payments on a ~5s sweep, then ordersphere-orders' own saga job polls payment status on its own ~5s sweep and only then creates the shipment and moves the order to CONFIRMED - so allow up to ~10-15s total. Once CONFIRMED, shipmentId will be populated in the response."
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders/{{orderId}}",
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "{{orderId}}"
+              ]
+            },
+            "description": "Polls automatically in the Runner/newman (manually: re-send). payment-service settles on a ~5s sweep, then the orders saga job confirms and creates the shipment on its own ~5s sweep."
           },
           "event": [
             {
               "listen": "test",
               "script": {
+                "type": "text/javascript",
                 "exec": [
-                  "var body = pm.response.json();",
-                  "if (body.shipmentId) {",
-                  "    pm.collectionVariables.set('shipmentId', body.shipmentId);",
+                  "var body = pm.response.code === 200 ? pm.response.json() : null;",
+                  "var pollKey = 'poll_' + pm.info.requestId;",
+                  "var polls = Number(pm.collectionVariables.get(pollKey) || 0);",
+                  "var done = !!body && (body.status === 'CONFIRMED' && !!body.shipmentId);",
+                  "if (done || polls >= 20) {",
+                  "    pm.collectionVariables.unset(pollKey);",
+                  "    pm.test(\"Order is CONFIRMED with a shipment\", function () {",
+                  "        pm.expect(done, 'still not reached after ' + polls + ' polls (currently: ' + (body ? body.status : pm.response.code) + ')').to.be.true;",
+                  "    });",
+                  "    pm.collectionVariables.set('shipmentId', body && body.shipmentId);",
+                  "} else {",
+                  "    pm.collectionVariables.set(pollKey, polls + 1);",
+                  "    console.log(pm.info.requestName + ': waiting (' + (polls + 1) + '/20), currently ' + (body ? body.status : pm.response.code));",
+                  "    setTimeout(function () {}, 3000);",
+                  "    pm.execution.setNextRequest(pm.info.requestId);",
                   "}"
                 ]
               }
@@ -243,35 +609,259 @@
           ]
         },
         {
-          "name": "Get Shipment [poll to watch it progress]",
+          "name": "Get Payment [expect COMPLETED]",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
-            "url": { "raw": "{{shippingBaseUrl}}/shipments/{{shipmentId}}", "host": ["{{shippingBaseUrl}}"], "path": ["shipments", "{{shipmentId}}"] },
-            "description": "Run Get Order Status first so {{shipmentId}} is populated. shipping-service advances CREATED -> PICKED -> IN_TRANSIT -> DELIVERED one stage per ~5s sweep - re-send this a few times to watch it progress."
-          }
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentBaseUrl}}/payments/{{paymentId}}",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "{{paymentId}}"
+              ]
+            },
+            "description": "Payment for the happy-path order should have settled."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('paymentId')) {",
+                  "    throw new Error('{{paymentId}} is empty - run \\'the Create Order step in this folder\\' first (and make sure no active environment defines paymentId).');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var body = pm.response.code === 200 ? pm.response.json() : null;",
+                  "var pollKey = 'poll_' + pm.info.requestId;",
+                  "var polls = Number(pm.collectionVariables.get(pollKey) || 0);",
+                  "var done = !!body && (body.status === 'COMPLETED');",
+                  "if (done || polls >= 20) {",
+                  "    pm.collectionVariables.unset(pollKey);",
+                  "    pm.test(\"Payment is COMPLETED\", function () {",
+                  "        pm.expect(done, 'still not reached after ' + polls + ' polls (currently: ' + (body ? body.status : pm.response.code) + ')').to.be.true;",
+                  "    });",
+                  "    pm.test('Payment amount matches order total', function () {",
+                  "        pm.expect(Number(body.amount)).to.be.closeTo(2 * Number(pm.collectionVariables.get('unitPrice')), 0.001);",
+                  "    });",
+                  "} else {",
+                  "    pm.collectionVariables.set(pollKey, polls + 1);",
+                  "    console.log(pm.info.requestName + ': waiting (' + (polls + 1) + '/20), currently ' + (body ? body.status : pm.response.code));",
+                  "    setTimeout(function () {}, 3000);",
+                  "    pm.execution.setNextRequest(pm.info.requestId);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Shipment [poll until DELIVERED]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{shippingBaseUrl}}/shipments/{{shipmentId}}",
+              "host": [
+                "{{shippingBaseUrl}}"
+              ],
+              "path": [
+                "shipments",
+                "{{shipmentId}}"
+              ]
+            },
+            "description": "shipping-service advances CREATED -> PICKED -> IN_TRANSIT -> DELIVERED one stage per ~5s sweep."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('shipmentId')) {",
+                  "    throw new Error('{{shipmentId}} is empty - run \\'Get Order Status [poll until CONFIRMED]\\' first (and make sure no active environment defines shipmentId).');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var body = pm.response.code === 200 ? pm.response.json() : null;",
+                  "var pollKey = 'poll_' + pm.info.requestId;",
+                  "var polls = Number(pm.collectionVariables.get(pollKey) || 0);",
+                  "var done = !!body && (body.status === 'DELIVERED');",
+                  "if (done || polls >= 20) {",
+                  "    pm.collectionVariables.unset(pollKey);",
+                  "    pm.test(\"Shipment is DELIVERED\", function () {",
+                  "        pm.expect(done, 'still not reached after ' + polls + ' polls (currently: ' + (body ? body.status : pm.response.code) + ')').to.be.true;",
+                  "    });",
+                  "    pm.test('Shipment belongs to the order', function () {",
+                  "        pm.expect(body.orderId).to.eql(Number(pm.collectionVariables.get('orderId')));",
+                  "        pm.expect(body.trackingNumber).to.be.a('string').and.not.empty;",
+                  "        pm.expect(body.deliveredAt).to.be.a('string');",
+                  "    });",
+                  "} else {",
+                  "    pm.collectionVariables.set(pollKey, polls + 1);",
+                  "    console.log(pm.info.requestName + ': waiting (' + (polls + 1) + '/20), currently ' + (body ? body.status : pm.response.code));",
+                  "    setTimeout(function () {}, 3000);",
+                  "    pm.execution.setNextRequest(pm.info.requestId);",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Get Shipment Tracking History",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customerToken}}"
+              }
+            ],
             "url": {
               "raw": "{{shippingBaseUrl}}/shipments/{{shipmentId}}/tracking",
-              "host": ["{{shippingBaseUrl}}"],
-              "path": ["shipments", "{{shipmentId}}", "tracking"]
+              "host": [
+                "{{shippingBaseUrl}}"
+              ],
+              "path": [
+                "shipments",
+                "{{shipmentId}}",
+                "tracking"
+              ]
             },
-            "description": "Full ordered history of every stage transition recorded so far."
-          }
+            "description": "Full ordered history of every stage transition."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Tracking history is CREATED -> PICKED -> IN_TRANSIT -> DELIVERED', function () {",
+                  "    pm.expect(pm.response.json().map(function (e) { return e.status; }))",
+                  "        .to.eql(['CREATED', 'PICKED', 'IN_TRANSIT', 'DELIVERED']);",
+                  "});"
+                ]
+              }
+            }
+          ]
         },
         {
-          "name": "Get My Notifications",
+          "name": "Verify Stock Consumed",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
-            "url": { "raw": "{{notificationBaseUrl}}/notifications", "host": ["{{notificationBaseUrl}}"], "path": ["notifications"] },
-            "description": "A full happy-path run queues six notifications, in order: PAYMENT_COMPLETED, SHIPMENT_CREATED, ORDER_CONFIRMED, SHIPMENT_PICKED, SHIPMENT_IN_TRANSIT, DELIVERY_CONFIRMED - each queued by the owning service (payment-service, shipping-service, ordersphere-orders) using its own service-identity token, not your customer token; you just read them back here. Each starts PENDING and flips to SENT on notification-service's own ~5s delivery sweep, so re-send this a few times to see the full set land."
-          }
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/products/{{productSku}}",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "inventory",
+                "products",
+                "{{productSku}}"
+              ]
+            },
+            "description": "availableQuantity should be 2 lower than the snapshot - the delivered order keeps its stock."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('availableQuantity is back where expected', function () {",
+                  "    pm.expect(pm.response.json().availableQuantity).to.eql(Number(pm.collectionVariables.get('stockBeforeHappy')) - 2);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get My Notifications [poll until all SENT]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{notificationBaseUrl}}/notifications",
+              "host": [
+                "{{notificationBaseUrl}}"
+              ],
+              "path": [
+                "notifications"
+              ]
+            },
+            "description": "Filters alice's notifications to this order (by '#<orderId>' in the message). A full happy-path run queues: PAYMENT_COMPLETED, SHIPMENT_CREATED, ORDER_CONFIRMED, SHIPMENT_PICKED, SHIPMENT_IN_TRANSIT, DELIVERY_CONFIRMED. Each starts PENDING and flips to SENT on notification-service's ~5s delivery sweep."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function forOrder(list) {",
+                  "    var re = new RegExp('#' + pm.collectionVariables.get('orderId') + '\\\\b');",
+                  "    return (list || []).filter(function (n) { return re.test(n.message); });",
+                  "}",
+                  "var body = pm.response.code === 200 ? pm.response.json() : null;",
+                  "var pollKey = 'poll_' + pm.info.requestId;",
+                  "var polls = Number(pm.collectionVariables.get(pollKey) || 0);",
+                  "var done = !!body && ((function () { var mine = forOrder(body); return [\"PAYMENT_COMPLETED\", \"SHIPMENT_CREATED\", \"ORDER_CONFIRMED\", \"SHIPMENT_PICKED\", \"SHIPMENT_IN_TRANSIT\", \"DELIVERY_CONFIRMED\"].every(function (k) { return mine.some(function (n) { return n.templateKey === k && n.status === 'SENT'; }); }); })());",
+                  "if (done || polls >= 20) {",
+                  "    pm.collectionVariables.unset(pollKey);",
+                  "    pm.test(\"Notifications PAYMENT_COMPLETED, SHIPMENT_CREATED, ORDER_CONFIRMED, SHIPMENT_PICKED, SHIPMENT_IN_TRANSIT, DELIVERY_CONFIRMED are SENT for this order\", function () {",
+                  "        pm.expect(done, 'still not reached after ' + polls + ' polls (currently: ' + (body ? JSON.stringify(forOrder(body).map(function (n) { return n.templateKey + ':' + n.status; })) : pm.response.code) + ')').to.be.true;",
+                  "    });",
+                  "",
+                  "} else {",
+                  "    pm.collectionVariables.set(pollKey, polls + 1);",
+                  "    console.log(pm.info.requestName + ': waiting (' + (polls + 1) + '/20), currently ' + (body ? JSON.stringify(forOrder(body).map(function (n) { return n.templateKey + ':' + n.status; })) : pm.response.code));",
+                  "    setTimeout(function () {}, 3000);",
+                  "    pm.execution.setNextRequest(pm.info.requestId);",
+                  "}"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -279,27 +869,151 @@
       "name": "5. Failure Path - Payment Declined",
       "item": [
         {
-          "name": "Create Order (payment will be declined)",
+          "name": "Snapshot Stock (decline path)",
           "request": {
-            "method": "POST",
+            "method": "GET",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customerToken}}"
+              }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"items\": [{ \"sku\": \"{{productSku}}\", \"quantity\": 1 }],\n  \"paymentMethodId\": {{declinePaymentMethodId}},\n  \"amount\": 19.99,\n  \"currency\": \"USD\",\n  \"shippingDestination\": \"123 Main St, Springfield\"\n}"
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/products/{{productSku}}",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "inventory",
+                "products",
+                "{{productSku}}"
+              ]
             },
-            "url": { "raw": "{{ordersBaseUrl}}/orders", "host": ["{{ordersBaseUrl}}"], "path": ["orders"] },
-            "description": "Uses the FAIL-DECLINE payment method from folder 3. Expect 201 with status AWAITING_PAYMENT (inventory was reserved and payment was initiated - the decline only happens once payment-service's job attempts settlement). Saves {{declineOrderId}}."
+            "description": "Records availableQuantity before the order that will be declined."
           },
           "event": [
             {
               "listen": "test",
               "script": {
+                "type": "text/javascript",
                 "exec": [
-                  "if (pm.response.code === 201) {",
-                  "    pm.collectionVariables.set('declineOrderId', pm.response.json().id);",
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.collectionVariables.set('stockBeforeDecline', pm.response.json().availableQuantity);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Order (payment will be declined)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customerToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"sku\": \"{{productSku}}\",\n      \"quantity\": 1\n    }\n  ],\n  \"paymentMethodId\": \"{{declinePaymentMethodId}}\",\n  \"currency\": \"USD\",\n  \"shippingDestination\": \"123 Main St, Springfield\"\n}"
+            },
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders",
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            },
+            "description": "Uses the FAIL-DECLINE payment method. Expect 201 AWAITING_PAYMENT - the decline only happens when payment-service's job attempts settlement. Saves {{declineOrderId}} and {{declinePaymentId}}."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('declinePaymentMethodId')) {",
+                  "    throw new Error('{{declinePaymentMethodId}} is empty - run \\'Create Payment Method (token=FAIL-DECLINE - will be declined)\\' first (and make sure no active environment defines declinePaymentMethodId).');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
+                  "var o = pm.response.json();",
+                  "pm.collectionVariables.set('declineOrderId', o.id);",
+                  "pm.collectionVariables.set('declinePaymentId', o.paymentId);",
+                  "pm.test('Order is AWAITING_PAYMENT', function () { pm.expect(o.status).to.eql('AWAITING_PAYMENT'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Payment [expect FAILED]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentBaseUrl}}/payments/{{declinePaymentId}}",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "{{declinePaymentId}}"
+              ]
+            },
+            "description": "payment-service's sweep should mark the FAIL-DECLINE payment FAILED."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('declinePaymentId')) {",
+                  "    throw new Error('{{declinePaymentId}} is empty - run \\'the Create Order step in this folder\\' first (and make sure no active environment defines declinePaymentId).');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var body = pm.response.code === 200 ? pm.response.json() : null;",
+                  "var pollKey = 'poll_' + pm.info.requestId;",
+                  "var polls = Number(pm.collectionVariables.get(pollKey) || 0);",
+                  "var done = !!body && (body.status === 'FAILED');",
+                  "if (done || polls >= 20) {",
+                  "    pm.collectionVariables.unset(pollKey);",
+                  "    pm.test(\"Payment is FAILED\", function () {",
+                  "        pm.expect(done, 'still not reached after ' + polls + ' polls (currently: ' + (body ? body.status : pm.response.code) + ')').to.be.true;",
+                  "    });",
+                  "",
+                  "} else {",
+                  "    pm.collectionVariables.set(pollKey, polls + 1);",
+                  "    console.log(pm.info.requestName + ': waiting (' + (polls + 1) + '/20), currently ' + (body ? body.status : pm.response.code));",
+                  "    setTimeout(function () {}, 3000);",
+                  "    pm.execution.setNextRequest(pm.info.requestId);",
                   "}"
                 ]
               }
@@ -310,60 +1024,281 @@
           "name": "Get Order Status [poll until CANCELLED]",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
-            "url": { "raw": "{{ordersBaseUrl}}/orders/{{declineOrderId}}", "host": ["{{ordersBaseUrl}}"], "path": ["orders", "{{declineOrderId}}"] },
-            "description": "Re-send every few seconds. Once payment-service's sweep marks the payment FAILED, ordersphere-orders' saga job releases the inventory reservation and cancels the order - expect status to flip to CANCELLED within ~10-15s."
-          }
-        },
-        {
-          "name": "Verify Inventory Was Restored",
-          "request": {
-            "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
-            "url": {
-              "raw": "{{inventoryBaseUrl}}/inventory/products/{{productSku}}",
-              "host": ["{{inventoryBaseUrl}}"],
-              "path": ["inventory", "products", "{{productSku}}"]
-            },
-            "description": "availableQuantity should reflect the reservation from the declined order being released (compare against 'Get Product' from folder 2)."
-          }
-        },
-        {
-          "name": "Get My Notifications",
-          "request": {
-            "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
-            "url": { "raw": "{{notificationBaseUrl}}/notifications", "host": ["{{notificationBaseUrl}}"], "path": ["notifications"] },
-            "description": "Should now also include an ORDER_CANCELLED notification for the declined order."
-          }
-        }
-      ]
-    },
-    {
-      "name": "6. Customer-Initiated Cancellation",
-      "item": [
-        {
-          "name": "Create Order (to cancel)",
-          "request": {
-            "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{customerToken}}" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customerToken}}"
+              }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"items\": [{ \"sku\": \"{{productSku}}\", \"quantity\": 1 }],\n  \"paymentMethodId\": {{paymentMethodId}},\n  \"amount\": 19.99,\n  \"currency\": \"USD\",\n  \"shippingDestination\": \"123 Main St, Springfield\"\n}"
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders/{{declineOrderId}}",
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "{{declineOrderId}}"
+              ]
             },
-            "url": { "raw": "{{ordersBaseUrl}}/orders", "host": ["{{ordersBaseUrl}}"], "path": ["orders"] },
-            "description": "Uses the normal (succeeding) payment method. Saves {{cancelOrderId}}. You can run 'Cancel Order' below immediately (while still AWAITING_PAYMENT) or wait for it to reach CONFIRMED first - cancellation works, and compensates, from either state."
+            "description": "Once the payment is FAILED, the orders saga releases the reservation and cancels the order."
           },
           "event": [
             {
               "listen": "test",
               "script": {
+                "type": "text/javascript",
                 "exec": [
-                  "if (pm.response.code === 201) {",
-                  "    pm.collectionVariables.set('cancelOrderId', pm.response.json().id);",
+                  "var body = pm.response.code === 200 ? pm.response.json() : null;",
+                  "var pollKey = 'poll_' + pm.info.requestId;",
+                  "var polls = Number(pm.collectionVariables.get(pollKey) || 0);",
+                  "var done = !!body && (body.status === 'CANCELLED');",
+                  "if (done || polls >= 20) {",
+                  "    pm.collectionVariables.unset(pollKey);",
+                  "    pm.test(\"Declined order is CANCELLED\", function () {",
+                  "        pm.expect(done, 'still not reached after ' + polls + ' polls (currently: ' + (body ? body.status : pm.response.code) + ')').to.be.true;",
+                  "    });",
+                  "",
+                  "} else {",
+                  "    pm.collectionVariables.set(pollKey, polls + 1);",
+                  "    console.log(pm.info.requestName + ': waiting (' + (polls + 1) + '/20), currently ' + (body ? body.status : pm.response.code));",
+                  "    setTimeout(function () {}, 3000);",
+                  "    pm.execution.setNextRequest(pm.info.requestId);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Verify Stock Restored",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/products/{{productSku}}",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "inventory",
+                "products",
+                "{{productSku}}"
+              ]
+            },
+            "description": "The declined order's reservation should have been released."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('availableQuantity is back where expected', function () {",
+                  "    pm.expect(pm.response.json().availableQuantity).to.eql(Number(pm.collectionVariables.get('stockBeforeDecline')));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get My Notifications [poll until PAYMENT_FAILED + ORDER_CANCELLED]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{notificationBaseUrl}}/notifications",
+              "host": [
+                "{{notificationBaseUrl}}"
+              ],
+              "path": [
+                "notifications"
+              ]
+            },
+            "description": "PAYMENT_FAILED and ORDER_CANCELLED notifications should be sent for the declined order."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function forOrder(list) {",
+                  "    var re = new RegExp('#' + pm.collectionVariables.get('declineOrderId') + '\\\\b');",
+                  "    return (list || []).filter(function (n) { return re.test(n.message); });",
+                  "}",
+                  "var body = pm.response.code === 200 ? pm.response.json() : null;",
+                  "var pollKey = 'poll_' + pm.info.requestId;",
+                  "var polls = Number(pm.collectionVariables.get(pollKey) || 0);",
+                  "var done = !!body && ((function () { var mine = forOrder(body); return [\"PAYMENT_FAILED\", \"ORDER_CANCELLED\"].every(function (k) { return mine.some(function (n) { return n.templateKey === k && n.status === 'SENT'; }); }); })());",
+                  "if (done || polls >= 20) {",
+                  "    pm.collectionVariables.unset(pollKey);",
+                  "    pm.test(\"Notifications PAYMENT_FAILED, ORDER_CANCELLED are SENT for this order\", function () {",
+                  "        pm.expect(done, 'still not reached after ' + polls + ' polls (currently: ' + (body ? JSON.stringify(forOrder(body).map(function (n) { return n.templateKey + ':' + n.status; })) : pm.response.code) + ')').to.be.true;",
+                  "    });",
+                  "",
+                  "} else {",
+                  "    pm.collectionVariables.set(pollKey, polls + 1);",
+                  "    console.log(pm.info.requestName + ': waiting (' + (polls + 1) + '/20), currently ' + (body ? JSON.stringify(forOrder(body).map(function (n) { return n.templateKey + ':' + n.status; })) : pm.response.code));",
+                  "    setTimeout(function () {}, 3000);",
+                  "    pm.execution.setNextRequest(pm.info.requestId);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "6. Customer-Initiated Cancellation (with refund)",
+      "item": [
+        {
+          "name": "Snapshot Stock (cancellation)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/products/{{productSku}}",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "inventory",
+                "products",
+                "{{productSku}}"
+              ]
+            },
+            "description": "Records availableQuantity before the order that will be cancelled."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.collectionVariables.set('stockBeforeCancel', pm.response.json().availableQuantity);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Order (to cancel)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customerToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"sku\": \"{{productSku}}\",\n      \"quantity\": 1\n    }\n  ],\n  \"paymentMethodId\": \"{{paymentMethodId}}\",\n  \"currency\": \"USD\",\n  \"shippingDestination\": \"123 Main St, Springfield\"\n}"
+            },
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders",
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            },
+            "description": "Uses the normal (succeeding) payment method. Saves {{cancelOrderId}} and {{cancelPaymentId}}."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('paymentMethodId')) {",
+                  "    throw new Error('{{paymentMethodId}} is empty - run \\'Create Payment Method (normal - will succeed)\\' first (and make sure no active environment defines paymentMethodId).');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
+                  "var o = pm.response.json();",
+                  "pm.collectionVariables.set('cancelOrderId', o.id);",
+                  "pm.collectionVariables.set('cancelPaymentId', o.paymentId);",
+                  "pm.test('Order is AWAITING_PAYMENT', function () { pm.expect(o.status).to.eql('AWAITING_PAYMENT'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Order Status [poll until CONFIRMED]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders/{{cancelOrderId}}",
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "{{cancelOrderId}}"
+              ]
+            },
+            "description": "Waits for CONFIRMED so the cancellation below exercises the refund branch (cancelling while AWAITING_PAYMENT only releases stock)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var body = pm.response.code === 200 ? pm.response.json() : null;",
+                  "var pollKey = 'poll_' + pm.info.requestId;",
+                  "var polls = Number(pm.collectionVariables.get(pollKey) || 0);",
+                  "var done = !!body && (body.status === 'CONFIRMED');",
+                  "if (done || polls >= 20) {",
+                  "    pm.collectionVariables.unset(pollKey);",
+                  "    pm.test(\"Order is CONFIRMED before cancelling\", function () {",
+                  "        pm.expect(done, 'still not reached after ' + polls + ' polls (currently: ' + (body ? body.status : pm.response.code) + ')').to.be.true;",
+                  "    });",
+                  "",
+                  "} else {",
+                  "    pm.collectionVariables.set(pollKey, polls + 1);",
+                  "    console.log(pm.info.requestName + ': waiting (' + (polls + 1) + '/20), currently ' + (body ? body.status : pm.response.code));",
+                  "    setTimeout(function () {}, 3000);",
+                  "    pm.execution.setNextRequest(pm.info.requestId);",
                   "}"
                 ]
               }
@@ -374,27 +1309,372 @@
           "name": "Cancel Order",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customerToken}}"
+              }
+            ],
             "url": {
               "raw": "{{ordersBaseUrl}}/orders/{{cancelOrderId}}/cancel",
-              "host": ["{{ordersBaseUrl}}"],
-              "path": ["orders", "{{cancelOrderId}}", "cancel"]
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "{{cancelOrderId}}",
+                "cancel"
+              ]
             },
-            "description": "Expect 200 with status CANCELLED. Inventory is always released; a refund is additionally issued if the order had already reached CONFIRMED by the time you cancel it. Safe to re-send - cancellation is idempotent."
-          }
+            "description": "Expect 200 CANCELLED. Releases inventory and, because the order was CONFIRMED, refunds the payment."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Order is CANCELLED', function () { pm.expect(pm.response.json().status).to.eql('CANCELLED'); });"
+                ]
+              }
+            }
+          ]
         },
         {
-          "name": "Get Order Status",
+          "name": "Cancel Order Again (idempotent)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders/{{cancelOrderId}}/cancel",
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "{{cancelOrderId}}",
+                "cancel"
+              ]
+            },
+            "description": "Re-cancelling an already-cancelled order is a no-op 200."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Still CANCELLED', function () { pm.expect(pm.response.json().status).to.eql('CANCELLED'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Payment [expect REFUNDED]",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customerToken}}"
+              }
+            ],
             "url": {
-              "raw": "{{ordersBaseUrl}}/orders/{{cancelOrderId}}",
-              "host": ["{{ordersBaseUrl}}"],
-              "path": ["orders", "{{cancelOrderId}}"]
+              "raw": "{{paymentBaseUrl}}/payments/{{cancelPaymentId}}",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "{{cancelPaymentId}}"
+              ]
             },
-            "description": "Confirms CANCELLED."
-          }
+            "description": "Cancelling a CONFIRMED order refunds its payment."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('cancelPaymentId')) {",
+                  "    throw new Error('{{cancelPaymentId}} is empty - run \\'the Create Order step in this folder\\' first (and make sure no active environment defines cancelPaymentId).');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var body = pm.response.code === 200 ? pm.response.json() : null;",
+                  "var pollKey = 'poll_' + pm.info.requestId;",
+                  "var polls = Number(pm.collectionVariables.get(pollKey) || 0);",
+                  "var done = !!body && (body.status === 'REFUNDED');",
+                  "if (done || polls >= 20) {",
+                  "    pm.collectionVariables.unset(pollKey);",
+                  "    pm.test(\"Payment is REFUNDED\", function () {",
+                  "        pm.expect(done, 'still not reached after ' + polls + ' polls (currently: ' + (body ? body.status : pm.response.code) + ')').to.be.true;",
+                  "    });",
+                  "",
+                  "} else {",
+                  "    pm.collectionVariables.set(pollKey, polls + 1);",
+                  "    console.log(pm.info.requestName + ': waiting (' + (polls + 1) + '/20), currently ' + (body ? body.status : pm.response.code));",
+                  "    setTimeout(function () {}, 3000);",
+                  "    pm.execution.setNextRequest(pm.info.requestId);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Verify Stock Restored",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/products/{{productSku}}",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "inventory",
+                "products",
+                "{{productSku}}"
+              ]
+            },
+            "description": "The cancelled order's reservation should have been released."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('availableQuantity is back where expected', function () {",
+                  "    pm.expect(pm.response.json().availableQuantity).to.eql(Number(pm.collectionVariables.get('stockBeforeCancel')));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "7. Negative Checks",
+      "item": [
+        {
+          "name": "Cancel Delivered Order [expect 409]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders/{{orderId}}/cancel",
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "{{orderId}}",
+                "cancel"
+              ]
+            },
+            "description": "The happy-path order from folder 4 is DELIVERED and can no longer be cancelled."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 409', function () { pm.response.to.have.status(409); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Product as Customer [expect 403]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customerToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sku\": \"CUSTOMER-MADE\",\n  \"name\": \"Nope\",\n  \"quantityOnHand\": 1,\n  \"reorderThreshold\": 0,\n  \"unitPrice\": 1.00\n}"
+            },
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/products",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "inventory",
+                "products"
+              ]
+            },
+            "description": "Product creation is ADMIN/VENDOR only."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 403', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Order Unknown SKU [expect CANCELLED]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customerToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"sku\": \"NO-SUCH-SKU\",\n      \"quantity\": 1\n    }\n  ],\n  \"paymentMethodId\": \"{{paymentMethodId}}\",\n  \"currency\": \"USD\",\n  \"shippingDestination\": \"123 Main St, Springfield\"\n}"
+            },
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders",
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            },
+            "description": "The API accepts the order (201) but inventory can't reserve it, so it comes back already CANCELLED with no payment taken."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('paymentMethodId')) {",
+                  "    throw new Error('{{paymentMethodId}} is empty - run \\'Create Payment Method (normal - will succeed)\\' first (and make sure no active environment defines paymentMethodId).');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
+                  "var o = pm.response.json();",
+                  "pm.test('Order CANCELLED without charging', function () {",
+                  "    pm.expect(o.status).to.eql('CANCELLED');",
+                  "    pm.expect(o.paymentId).to.be.null;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Another Customer's Order [expect 404]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{otherCustomerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders/{{orderId}}",
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "{{orderId}}"
+              ]
+            },
+            "description": "bob must not see alice's order - it is reported as not found."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 404', function () { pm.response.to.have.status(404); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Orders without Token [expect 401]",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders",
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            },
+            "description": "Requests without a JWT are rejected."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 401', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ]
         }
       ]
     }
