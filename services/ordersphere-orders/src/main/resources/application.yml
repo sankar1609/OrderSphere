@@ -49,6 +49,8 @@ resilience4j:
         wait-duration-in-open-state: 15s
         permitted-number-of-calls-in-half-open-state: 5
         automatic-transition-from-open-to-half-open-enabled: true
+        # A downstream 4xx is a rejected request, not an outage - see DownstreamClientErrorPredicate.
+        ignore-exception-predicate: com.ordersphere.orders.config.DownstreamClientErrorPredicate
     instances:
       inventory-service:
         base-config: default
