@@ -25,7 +25,11 @@ public class PaymentClient {
 
   @CircuitBreaker(name = "payment-service", fallbackMethod = "initiateFallback")
   public InitiatedPayment initiate(
-      Long orderId, BigDecimal amount, String currency, String bearerToken) {
+      Long orderId,
+      String customerUsername,
+      BigDecimal amount,
+      String currency,
+      String bearerToken) {
     try {
       InitiatedPayment response =
           restClient
@@ -33,7 +37,7 @@ public class PaymentClient {
               .uri("/payments")
               .header(HttpHeaders.AUTHORIZATION, bearerToken)
               .contentType(MediaType.APPLICATION_JSON)
-              .body(new InitiatePaymentRequest(orderId, amount, currency))
+              .body(new InitiatePaymentRequest(orderId, customerUsername, amount, currency))
               .retrieve()
               .body(InitiatedPayment.class);
       return response;
@@ -48,7 +52,12 @@ public class PaymentClient {
   }
 
   InitiatedPayment initiateFallback(
-      Long orderId, BigDecimal amount, String currency, String bearerToken, Throwable ex) {
+      Long orderId,
+      String customerUsername,
+      BigDecimal amount,
+      String currency,
+      String bearerToken,
+      Throwable ex) {
     if (ex instanceof PaymentInitiationException pie) {
       throw pie;
     }
@@ -107,7 +116,8 @@ public class PaymentClient {
     REFUNDED
   }
 
-  public record InitiatePaymentRequest(Long orderId, BigDecimal amount, String currency) {}
+  public record InitiatePaymentRequest(
+      Long orderId, String customerUsername, BigDecimal amount, String currency) {}
 
   public record RefundPaymentRequest(String reason) {}
 

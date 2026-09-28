@@ -95,7 +95,7 @@ class OrderControllerIntegrationTest {
 
   @Test
   void createOrderAwaitsPaymentWhenReservationAndInitiationSucceed() throws Exception {
-    when(paymentClient.initiate(any(), any(), eq("USD"), anyString()))
+    when(paymentClient.initiate(any(), anyString(), any(), eq("USD"), anyString()))
         .thenReturn(new PaymentClient.InitiatedPayment(42L, "http://gw/checkout/cs_42"));
 
     mockMvc
@@ -132,7 +132,7 @@ class OrderControllerIntegrationTest {
   void createOrderCompensatesInventoryWhenPaymentInitiationFails() throws Exception {
     doThrow(new PaymentInitiationException("payment provider unavailable"))
         .when(paymentClient)
-        .initiate(any(), any(), any(), anyString());
+        .initiate(any(), anyString(), any(), any(), anyString());
 
     mockMvc
         .perform(
@@ -148,7 +148,7 @@ class OrderControllerIntegrationTest {
 
   @Test
   void fullSagaConfirmsOrderAndCreatesShipmentOncePaymentCompletes() throws Exception {
-    when(paymentClient.initiate(any(), any(), any(), anyString()))
+    when(paymentClient.initiate(any(), anyString(), any(), any(), anyString()))
         .thenReturn(new PaymentClient.InitiatedPayment(42L, "http://gw/checkout/cs_42"));
     when(paymentClient.getStatus(eq(42L), anyString()))
         .thenReturn(PaymentClient.PaymentStatus.COMPLETED);
@@ -179,7 +179,7 @@ class OrderControllerIntegrationTest {
 
   @Test
   void sagaCancelsOrderAndReleasesInventoryWhenPaymentFails() throws Exception {
-    when(paymentClient.initiate(any(), any(), any(), anyString()))
+    when(paymentClient.initiate(any(), anyString(), any(), any(), anyString()))
         .thenReturn(new PaymentClient.InitiatedPayment(99L, "http://gw/checkout/cs_99"));
     when(paymentClient.getStatus(eq(99L), anyString()))
         .thenReturn(PaymentClient.PaymentStatus.FAILED);
@@ -209,7 +209,7 @@ class OrderControllerIntegrationTest {
 
   @Test
   void cancelOrderIsIdempotentAndReleasesInventory() throws Exception {
-    when(paymentClient.initiate(any(), any(), any(), anyString()))
+    when(paymentClient.initiate(any(), anyString(), any(), any(), anyString()))
         .thenReturn(new PaymentClient.InitiatedPayment(11L, "http://gw/checkout/cs_11"));
 
     String createdBody =
@@ -243,7 +243,7 @@ class OrderControllerIntegrationTest {
 
   @Test
   void aUserCannotSeeOrCancelAnotherUsersOrder() throws Exception {
-    when(paymentClient.initiate(any(), any(), any(), anyString()))
+    when(paymentClient.initiate(any(), anyString(), any(), any(), anyString()))
         .thenReturn(new PaymentClient.InitiatedPayment(13L, "http://gw/checkout/cs_13"));
 
     String createdBody =

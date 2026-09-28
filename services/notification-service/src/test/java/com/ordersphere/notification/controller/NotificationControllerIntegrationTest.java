@@ -71,6 +71,23 @@ class NotificationControllerIntegrationTest {
   }
 
   @Test
+  void serviceIdentityCanCreateNotification() throws Exception {
+    mockMvc
+        .perform(
+            post("/notifications")
+                .header("Authorization", "Bearer " + tokenFor("orders-service", "SERVICE"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(
+                        new CreateNotificationRequest(
+                            "alice",
+                            NotificationChannel.EMAIL,
+                            TemplateKey.ORDER_CONFIRMED,
+                            Map.of("orderId", "1")))))
+        .andExpect(status().isCreated());
+  }
+
+  @Test
   void createNotificationIsDeliveredBySweep() throws Exception {
     String createdBody =
         mockMvc

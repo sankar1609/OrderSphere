@@ -101,10 +101,11 @@ class OrderServiceTest {
 
   @Test
   void createOrderAwaitsPaymentWhenReservationAndInitiationSucceed() {
-    when(paymentClient.initiate(any(), eq(new BigDecimal("30.00")), eq("USD"), eq("Bearer token")))
+    when(paymentClient.initiate(
+            any(), eq("alice"), eq(new BigDecimal("30.00")), eq("USD"), eq("Bearer service-token")))
         .thenReturn(new PaymentClient.InitiatedPayment(42L, "http://gw/checkout/cs_42"));
 
-    OrderResponse response = orderService.createOrder("alice", requestFor("SKU-1"), "Bearer token");
+    OrderResponse response = orderService.createOrder("alice", requestFor("SKU-1"));
 
     assertThat(response.status()).isEqualTo(OrderStatus.AWAITING_PAYMENT);
     assertThat(response.paymentId()).isEqualTo(42L);
@@ -112,7 +113,7 @@ class OrderServiceTest {
     assertThat(response.totalAmount()).isEqualByComparingTo("30.00");
     assertThat(response.currency()).isEqualTo("USD");
     assertThat(response.items().get(0).unitPrice()).isEqualByComparingTo("10.00");
-    verify(inventoryClient).reserve(any(), anyList(), eq("Bearer token"));
+    verify(inventoryClient).reserve(any(), anyList(), eq("Bearer service-token"));
     verify(eventPublisher).publishEvent(any(OrderCreatedEvent.class));
     verify(eventPublisher, never()).publishEvent(any(OrderConfirmedEvent.class));
     verify(eventPublisher, never()).publishEvent(any(OrderCancelledEvent.class));
@@ -125,7 +126,7 @@ class OrderServiceTest {
             new InventoryClient.ReserveResponse(
                 List.of(priced("SKU-A", 2, "4.50"), priced("SKU-B", 1, "12.25")),
                 List.of(priced("SKU-B", 2, "12.25"))));
-    when(paymentClient.initiate(any(), any(), any(), anyString()))
+    when(paymentClient.initiate(any(), eq("alice"), any(), any(), anyString()))
         .thenReturn(new PaymentClient.InitiatedPayment(42L, "http://gw/checkout/cs_42"));
     CreateOrderRequest request =
         new CreateOrderRequest(
@@ -134,11 +135,12 @@ class OrderServiceTest {
             "USD",
             "1 Test Way");
 
-    OrderResponse response = orderService.createOrder("alice", request, "Bearer token");
+    OrderResponse response = orderService.createOrder("alice", request);
 
     // 2 x 4.50 + 3 x 12.25 (1 reserved + 2 backordered) = 45.75
     verify(paymentClient)
-        .initiate(any(), eq(new BigDecimal("45.75")), eq("USD"), eq("Bearer token"));
+        .initiate(
+            any(), eq("alice"), eq(new BigDecimal("45.75")), eq("USD"), eq("Bearer service-token"));
     assertThat(response.totalAmount()).isEqualByComparingTo("45.75");
   }
 
@@ -148,11 +150,11 @@ class OrderServiceTest {
         .thenReturn(
             new InventoryClient.ReserveResponse(List.of(priced("SKU-1", 3, null)), List.of()));
 
-    OrderResponse response = orderService.createOrder("alice", requestFor("SKU-1"), "Bearer token");
+    OrderResponse response = orderService.createOrder("alice", requestFor("SKU-1"));
 
     assertThat(response.status()).isEqualTo(OrderStatus.CANCELLED);
-    verify(inventoryClient).release(any(), eq("Bearer token"));
-    verify(paymentClient, never()).initiate(any(), any(), any(), any());
+    verify(inventoryClient).release(any(), eq("Bearer service-token"));
+    verify(paymentClient, never()).initiate(any(), any(), any(), any(), any());
   }
 
   @Test
@@ -161,25 +163,24 @@ class OrderServiceTest {
         .when(inventoryClient)
         .reserve(any(), anyList(), anyString());
 
-    OrderResponse response =
-        orderService.createOrder("alice", requestFor("SKU-UNKNOWN"), "Bearer token");
+    OrderResponse response = orderService.createOrder("alice", requestFor("SKU-UNKNOWN"));
 
     assertThat(response.status()).isEqualTo(OrderStatus.CANCELLED);
     verify(eventPublisher).publishEvent(any(OrderCreatedEvent.class));
     verify(eventPublisher).publishEvent(any(OrderCancelledEvent.class));
-    verify(paymentClient, never()).initiate(any(), any(), any(), any());
+    verify(paymentClient, never()).initiate(any(), any(), any(), any(), any());
   }
 
   @Test
   void createOrderCompensatesInventoryWhenPaymentInitiationFails() {
     doThrow(new PaymentInitiationException("payment provider unavailable"))
         .when(paymentClient)
-        .initiate(any(), any(), any(), anyString());
+        .initiate(any(), eq("alice"), any(), any(), anyString());
 
-    OrderResponse response = orderService.createOrder("alice", requestFor("SKU-1"), "Bearer token");
+    OrderResponse response = orderService.createOrder("alice", requestFor("SKU-1"));
 
     assertThat(response.status()).isEqualTo(OrderStatus.CANCELLED);
-    verify(inventoryClient).release(any(), eq("Bearer token"));
+    verify(inventoryClient).release(any(), eq("Bearer service-token"));
     verify(eventPublisher).publishEvent(any(OrderCancelledEvent.class));
   }
 
@@ -413,10 +414,10 @@ class OrderServiceTest {
     order.markStatus(OrderStatus.AWAITING_PAYMENT);
     when(orderRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(order));
 
-    OrderResponse response = orderService.cancelOrder("alice", false, 10L, "Bearer token");
+    OrderResponse response = orderService.cancelOrder("alice", false, 10L);
 
     assertThat(response.status()).isEqualTo(OrderStatus.CANCELLED);
-    verify(inventoryClient).release(10L, "Bearer token");
+    verify(inventoryClient).release(10L, "Bearer service-token");
     verify(paymentClient, never()).refund(any(), any(), any());
   }
 
@@ -428,15 +429,15 @@ class OrderServiceTest {
     order.markStatus(OrderStatus.CONFIRMED);
     when(orderRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(order));
 
-    OrderResponse response = orderService.cancelOrder("alice", false, 10L, "Bearer token");
+    OrderResponse response = orderService.cancelOrder("alice", false, 10L);
 
     assertThat(response.status()).isEqualTo(OrderStatus.CANCELLED);
-    verify(inventoryClient).release(10L, "Bearer token");
-    verify(paymentClient).refund(42L, "Order cancelled by customer", "Bearer token");
+    verify(inventoryClient).release(10L, "Bearer service-token");
+    verify(paymentClient).refund(42L, "Order cancelled by customer", "Bearer service-token");
 
-    OrderResponse second = orderService.cancelOrder("alice", false, 10L, "Bearer token");
+    OrderResponse second = orderService.cancelOrder("alice", false, 10L);
     assertThat(second.status()).isEqualTo(OrderStatus.CANCELLED);
-    verify(inventoryClient).release(10L, "Bearer token");
+    verify(inventoryClient).release(10L, "Bearer service-token");
   }
 
   @Test
@@ -447,10 +448,10 @@ class OrderServiceTest {
     order.setShipmentId(7L);
     order.markStatus(OrderStatus.CONFIRMED);
     when(orderRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(order));
-    when(shippingClient.getStatus(7L, "Bearer token"))
+    when(shippingClient.getStatus(7L, "Bearer service-token"))
         .thenReturn(ShippingClient.ShipmentStatus.DELIVERED);
 
-    assertThatThrownBy(() -> orderService.cancelOrder("alice", false, 10L, "Bearer token"))
+    assertThatThrownBy(() -> orderService.cancelOrder("alice", false, 10L))
         .isInstanceOf(OrderCancellationNotAllowedException.class);
 
     verify(inventoryClient, never()).release(any(), any());
@@ -465,14 +466,14 @@ class OrderServiceTest {
     order.setShipmentId(7L);
     order.markStatus(OrderStatus.CONFIRMED);
     when(orderRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(order));
-    when(shippingClient.getStatus(7L, "Bearer token"))
+    when(shippingClient.getStatus(7L, "Bearer service-token"))
         .thenReturn(ShippingClient.ShipmentStatus.IN_TRANSIT);
 
-    OrderResponse response = orderService.cancelOrder("alice", false, 10L, "Bearer token");
+    OrderResponse response = orderService.cancelOrder("alice", false, 10L);
 
     assertThat(response.status()).isEqualTo(OrderStatus.CANCELLED);
-    verify(inventoryClient).release(10L, "Bearer token");
-    verify(paymentClient).refund(42L, "Order cancelled by customer", "Bearer token");
+    verify(inventoryClient).release(10L, "Bearer service-token");
+    verify(paymentClient).refund(42L, "Order cancelled by customer", "Bearer service-token");
   }
 
   @Test
@@ -483,10 +484,10 @@ class OrderServiceTest {
     order.setShipmentId(7L);
     order.markStatus(OrderStatus.CONFIRMED);
     when(orderRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(order));
-    when(shippingClient.getStatus(7L, "Bearer token"))
+    when(shippingClient.getStatus(7L, "Bearer service-token"))
         .thenThrow(new ShipmentLookupException("unreachable", new RuntimeException()));
 
-    OrderResponse response = orderService.cancelOrder("alice", false, 10L, "Bearer token");
+    OrderResponse response = orderService.cancelOrder("alice", false, 10L);
 
     assertThat(response.status()).isEqualTo(OrderStatus.CANCELLED);
   }

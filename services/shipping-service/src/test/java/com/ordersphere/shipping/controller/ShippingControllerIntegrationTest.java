@@ -161,5 +161,24 @@ class ShippingControllerIntegrationTest {
             get("/shipments/" + shipmentId)
                 .header("Authorization", "Bearer " + tokenFor("admin", "ADMIN")))
         .andExpect(status().isOk());
+    // The orders saga's service identity reads any shipment (e.g. the delivered-check on cancel).
+    mockMvc
+        .perform(
+            get("/shipments/" + shipmentId)
+                .header("Authorization", "Bearer " + tokenFor("orders-service", "SERVICE")))
+        .andExpect(status().isOk());
+  }
+
+  @Test
+  void serviceIdentityCanCreateShipments() throws Exception {
+    mockMvc
+        .perform(
+            post("/shipments")
+                .header("Authorization", "Bearer " + tokenFor("orders-service", "SERVICE"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(
+                        new CreateShipmentRequest(901L, "alice", "1 Test Way"))))
+        .andExpect(status().isCreated());
   }
 }

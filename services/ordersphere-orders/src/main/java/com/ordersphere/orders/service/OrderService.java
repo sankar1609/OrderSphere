@@ -62,8 +62,10 @@ public class OrderService {
   }
 
   @Transactional
-  public OrderResponse createOrder(
-      String username, CreateOrderRequest request, String bearerToken) {
+  public OrderResponse createOrder(String username, CreateOrderRequest request) {
+    // Downstream calls use orders' own service identity, never the customer's token: the
+    // reservation and payment endpoints are service-only, so a customer can't call them directly.
+    String bearerToken = serviceTokenProvider.bearerToken();
     Order order = new Order(username);
     order.setShippingDestination(request.shippingDestination());
     for (CreateOrderRequest.Item item : request.items()) {
@@ -99,7 +101,7 @@ public class OrderService {
     try {
       PaymentClient.InitiatedPayment payment =
           paymentClient.initiate(
-              order.getId(), order.getTotalAmount(), order.getCurrency(), bearerToken);
+              order.getId(), username, order.getTotalAmount(), order.getCurrency(), bearerToken);
       order.setPaymentId(payment.id());
       order.setCheckoutUrl(payment.checkoutUrl());
       order.markStatus(OrderStatus.AWAITING_PAYMENT);
@@ -130,9 +132,9 @@ public class OrderService {
    * first wins, and the loser re-reads the post-lock status instead of acting on a stale one.
    */
   @Transactional
-  public OrderResponse cancelOrder(
-      String username, boolean isAdmin, Long orderId, String bearerToken) {
+  public OrderResponse cancelOrder(String username, boolean isAdmin, Long orderId) {
     Order order = findOrderForUpdateOrThrow(username, isAdmin, orderId);
+    String bearerToken = serviceTokenProvider.bearerToken();
 
     if (order.getStatus() == OrderStatus.CANCELLED) {
       return OrderResponse.from(order);

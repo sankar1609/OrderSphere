@@ -62,16 +62,26 @@ public class PaymentService {
   }
 
   /**
-   * Idempotent per orderId. Throws {@link PaymentGatewayException} (rolling the payment back) if
-   * the provider can't open a checkout session.
+   * Idempotent per orderId: a retry with the same customer, amount and currency gets the existing
+   * payment back; anything else is rejected, so a payment can't be pre-created for someone else's
+   * (or a not-yet-placed) order at a different price. Throws {@link PaymentGatewayException}
+   * (rolling the payment back) if the provider can't open a checkout session.
    */
   @Transactional
-  public PaymentResponse initiatePayment(String username, CreatePaymentRequest request) {
+  public PaymentResponse initiatePayment(CreatePaymentRequest request) {
     Optional<Payment> existing = paymentRepository.findByOrderId(request.orderId());
     if (existing.isPresent()) {
-      return PaymentResponse.from(existing.get());
+      Payment payment = existing.get();
+      if (!payment.getCustomerUsername().equals(request.customerUsername())
+          || payment.getAmount().compareTo(request.amount()) != 0
+          || !payment.getCurrency().equals(request.currency())) {
+        throw new InvalidPaymentStateException(
+            "A different payment already exists for orderId " + request.orderId());
+      }
+      return PaymentResponse.from(payment);
     }
 
+    String username = request.customerUsername();
     Payment payment =
         new Payment(request.orderId(), username, request.amount(), request.currency());
     paymentRepository.save(payment);
@@ -103,10 +113,13 @@ public class PaymentService {
     return PaymentResponse.from(findPaymentOrThrow(username, isAdmin, paymentId));
   }
 
+  /** Only reachable by SERVICE/ADMIN callers (see PaymentController). */
   @Transactional
-  public RefundResponse refundPayment(
-      String username, boolean isAdmin, Long paymentId, RefundRequest request) {
-    Payment payment = findPaymentOrThrow(username, isAdmin, paymentId);
+  public RefundResponse refundPayment(Long paymentId, RefundRequest request) {
+    Payment payment =
+        paymentRepository
+            .findById(paymentId)
+            .orElseThrow(() -> new PaymentNotFoundException(paymentId));
 
     Optional<Refund> existing = refundRepository.findByPaymentId(paymentId);
     if (existing.isPresent()) {

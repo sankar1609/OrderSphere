@@ -87,7 +87,7 @@ class PaymentServiceTest {
 
     PaymentResponse response =
         paymentService.initiatePayment(
-            "alice", new CreatePaymentRequest(100L, new BigDecimal("20.00"), "USD"));
+            new CreatePaymentRequest(100L, "alice", new BigDecimal("20.00"), "USD"));
 
     assertThat(response.status()).isEqualTo(PaymentStatus.PENDING);
     assertThat(response.checkoutUrl()).isEqualTo("http://gw/checkout/cs_1");
@@ -109,7 +109,7 @@ class PaymentServiceTest {
 
     PaymentResponse response =
         paymentService.initiatePayment(
-            "alice", new CreatePaymentRequest(100L, new BigDecimal("20.00"), "USD"));
+            new CreatePaymentRequest(100L, "alice", new BigDecimal("20.00"), "USD"));
 
     assertThat(response.id()).isEqualTo(5L);
     assertThat(response.checkoutUrl()).isEqualTo("http://gw/checkout/cs_1");
@@ -125,7 +125,7 @@ class PaymentServiceTest {
     assertThatThrownBy(
             () ->
                 paymentService.initiatePayment(
-                    "alice", new CreatePaymentRequest(100L, new BigDecimal("20.00"), "USD")))
+                    new CreatePaymentRequest(100L, "alice", new BigDecimal("20.00"), "USD")))
         .isInstanceOf(PaymentGatewayException.class);
     verify(eventPublisher, never()).publishEvent(any());
   }
@@ -228,13 +228,26 @@ class PaymentServiceTest {
 
   @Test
   void refundRequiresCompletedPayment() {
-    when(paymentRepository.findByIdAndCustomerUsername(5L, "alice"))
-        .thenReturn(Optional.of(pendingPayment()));
+    when(paymentRepository.findById(5L)).thenReturn(Optional.of(pendingPayment()));
     when(refundRepository.findByPaymentId(5L)).thenReturn(Optional.empty());
 
-    assertThatThrownBy(
-            () -> paymentService.refundPayment("alice", false, 5L, new RefundRequest("x")))
+    assertThatThrownBy(() -> paymentService.refundPayment(5L, new RefundRequest("x")))
         .isInstanceOf(InvalidPaymentStateException.class);
+  }
+
+  @Test
+  void initiatePaymentRejectsAnExistingPaymentThatDoesNotMatch() {
+    when(paymentRepository.findByOrderId(100L)).thenReturn(Optional.of(pendingPayment()));
+
+    for (CreatePaymentRequest mismatch :
+        java.util.List.of(
+            new CreatePaymentRequest(100L, "alice", new BigDecimal("0.01"), "USD"),
+            new CreatePaymentRequest(100L, "mallory", new BigDecimal("20.00"), "USD"),
+            new CreatePaymentRequest(100L, "alice", new BigDecimal("20.00"), "EUR"))) {
+      assertThatThrownBy(() -> paymentService.initiatePayment(mismatch))
+          .isInstanceOf(InvalidPaymentStateException.class);
+    }
+    verify(gatewayClient, never()).createCheckoutSession(any());
   }
 
   @Test

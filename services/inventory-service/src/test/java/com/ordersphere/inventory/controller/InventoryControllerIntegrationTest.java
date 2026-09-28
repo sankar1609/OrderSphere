@@ -51,6 +51,29 @@ class InventoryControllerIntegrationTest {
     return jwtTokenProvider.generateToken("test-customer", Map.of("role", "CUSTOMER"));
   }
 
+  /** The identity ordersphere-orders drives reservations with. */
+  private String serviceToken() {
+    return jwtTokenProvider.generateToken("orders-service", Map.of("role", "SERVICE"));
+  }
+
+  @Test
+  void customersCannotReserveConfirmOrReleaseStock() throws Exception {
+    mockMvc
+        .perform(
+            post("/inventory/reservations")
+                .header("Authorization", "Bearer " + customerToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"orderId\": 999, \"items\": [{\"sku\": \"ANY\", \"quantity\": 1}]}"))
+        .andExpect(status().isForbidden());
+    for (String action : new String[] {"confirm", "release"}) {
+      mockMvc
+          .perform(
+              post("/inventory/reservations/999/" + action)
+                  .header("Authorization", "Bearer " + customerToken()))
+          .andExpect(status().isForbidden());
+    }
+  }
+
   @Test
   void catalogEndpointsRequireAuthentication() throws Exception {
     mockMvc.perform(get("/inventory/products")).andExpect(status().isUnauthorized());
@@ -94,7 +117,7 @@ class InventoryControllerIntegrationTest {
     mockMvc
         .perform(
             post("/inventory/reservations")
-                .header("Authorization", "Bearer " + customerToken())
+                .header("Authorization", "Bearer " + serviceToken())
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(firstReserve)))
         .andExpect(status().isCreated())
@@ -107,7 +130,7 @@ class InventoryControllerIntegrationTest {
     mockMvc
         .perform(
             post("/inventory/reservations")
-                .header("Authorization", "Bearer " + customerToken())
+                .header("Authorization", "Bearer " + serviceToken())
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(firstReserve)))
         .andExpect(status().isCreated())
@@ -126,7 +149,7 @@ class InventoryControllerIntegrationTest {
     mockMvc
         .perform(
             post("/inventory/reservations/100/release")
-                .header("Authorization", "Bearer " + customerToken()))
+                .header("Authorization", "Bearer " + serviceToken()))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status", is("RELEASED")));
 
@@ -143,7 +166,7 @@ class InventoryControllerIntegrationTest {
     mockMvc
         .perform(
             post("/inventory/reservations")
-                .header("Authorization", "Bearer " + customerToken())
+                .header("Authorization", "Bearer " + serviceToken())
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(overReserve)))
         .andExpect(status().isCreated())
@@ -166,7 +189,7 @@ class InventoryControllerIntegrationTest {
     mockMvc
         .perform(
             post("/inventory/reservations/200/confirm")
-                .header("Authorization", "Bearer " + customerToken()))
+                .header("Authorization", "Bearer " + serviceToken()))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status", is("CONFIRMED")))
         .andExpect(jsonPath("$.expiresAt").value(org.hamcrest.Matchers.nullValue()));

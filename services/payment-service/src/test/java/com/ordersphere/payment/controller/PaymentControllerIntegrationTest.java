@@ -63,6 +63,11 @@ class PaymentControllerIntegrationTest {
     return "Bearer " + jwtTokenProvider.generateToken(username, Map.of("role", "CUSTOMER"));
   }
 
+  /** The identity ordersphere-orders calls payment-service with. */
+  private String serviceToken() {
+    return "Bearer " + jwtTokenProvider.generateToken("orders-service", Map.of("role", "SERVICE"));
+  }
+
   /** Initiates a payment whose checkout session is {@code sessionId}; returns the payment id. */
   private Long initiate(String username, long orderId, String sessionId) throws Exception {
     // doReturn, not when(): the mock may currently be stubbed to throw.
@@ -75,11 +80,12 @@ class PaymentControllerIntegrationTest {
         mockMvc
             .perform(
                 post("/payments")
-                    .header("Authorization", tokenFor(username))
+                    .header("Authorization", serviceToken())
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(
                         objectMapper.writeValueAsString(
-                            new CreatePaymentRequest(orderId, new BigDecimal("30.00"), "USD"))))
+                            new CreatePaymentRequest(
+                                orderId, username, new BigDecimal("30.00"), "USD"))))
             .andExpect(status().isAccepted())
             .andExpect(jsonPath("$.status", is("PENDING")))
             .andExpect(jsonPath("$.checkoutUrl", is("http://gw/checkout/" + sessionId)))
@@ -125,11 +131,11 @@ class PaymentControllerIntegrationTest {
     mockMvc
         .perform(
             post("/payments")
-                .header("Authorization", tokenFor("alice"))
+                .header("Authorization", serviceToken())
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(
                     objectMapper.writeValueAsString(
-                        new CreatePaymentRequest(500L, new BigDecimal("30.00"), "USD"))))
+                        new CreatePaymentRequest(500L, "alice", new BigDecimal("30.00"), "USD"))))
         .andExpect(status().isAccepted())
         .andExpect(jsonPath("$.id", is(paymentId.intValue())))
         .andExpect(jsonPath("$.checkoutUrl", is("http://gw/checkout/cs_alice")));
@@ -156,7 +162,7 @@ class PaymentControllerIntegrationTest {
     mockMvc
         .perform(
             post("/payments/" + paymentId + "/refund")
-                .header("Authorization", tokenFor("alice"))
+                .header("Authorization", serviceToken())
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(new RefundRequest("changed my mind"))))
         .andExpect(status().isAccepted())
@@ -201,15 +207,57 @@ class PaymentControllerIntegrationTest {
     mockMvc
         .perform(
             post("/payments")
-                .header("Authorization", tokenFor("erin"))
+                .header("Authorization", serviceToken())
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(
                     objectMapper.writeValueAsString(
-                        new CreatePaymentRequest(800L, new BigDecimal("5.00"), "USD"))))
+                        new CreatePaymentRequest(800L, "erin", new BigDecimal("5.00"), "USD"))))
         .andExpect(status().isBadGateway());
 
     // Rolled back: a retry for the same order opens a fresh checkout instead of a dead payment.
     initiate("erin", 800L, "cs_erin");
+  }
+
+  @Test
+  void customersCannotInitiateOrRefundPaymentsDirectly() throws Exception {
+    Long paymentId = initiate("frank", 900L, "cs_frank");
+
+    mockMvc
+        .perform(
+            post("/payments")
+                .header("Authorization", tokenFor("frank"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(
+                        new CreatePaymentRequest(901L, "frank", new BigDecimal("0.01"), "USD"))))
+        .andExpect(status().isForbidden());
+    mockMvc
+        .perform(
+            post("/payments/" + paymentId + "/refund")
+                .header("Authorization", tokenFor("frank"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(new RefundRequest("keep the goods"))))
+        .andExpect(status().isForbidden());
+  }
+
+  @Test
+  void aDifferentPaymentForAnExistingOrderIdIsRejected() throws Exception {
+    initiate("grace", 950L, "cs_grace");
+
+    // Same order id, different price or customer: e.g. a payment pre-created at 0.01 for an
+    // order that is later placed at full price must not be reused.
+    for (CreatePaymentRequest mismatch :
+        java.util.List.of(
+            new CreatePaymentRequest(950L, "grace", new BigDecimal("0.01"), "USD"),
+            new CreatePaymentRequest(950L, "mallory", new BigDecimal("30.00"), "USD"))) {
+      mockMvc
+          .perform(
+              post("/payments")
+                  .header("Authorization", serviceToken())
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(objectMapper.writeValueAsString(mismatch)))
+          .andExpect(status().isConflict());
+    }
   }
 
   @Test

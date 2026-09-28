@@ -6,14 +6,21 @@ import com.ordersphere.inventory.service.ReservationService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+/**
+ * Internal: stock reservations are driven by the ordersphere-orders saga, never by customers
+ * directly - otherwise anyone could hold stock under fake order ids or release a paid order's
+ * reservation.
+ */
 @RestController
 @RequestMapping("/inventory/reservations")
+@PreAuthorize("hasAnyRole('SERVICE', 'ADMIN')")
 public class ReservationController {
 
   private final ReservationService reservationService;

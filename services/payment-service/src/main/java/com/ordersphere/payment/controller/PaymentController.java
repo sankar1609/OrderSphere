@@ -8,8 +8,9 @@ import com.ordersphere.payment.service.PaymentService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.GrantedAuthority;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -27,30 +28,36 @@ public class PaymentController {
     this.paymentService = paymentService;
   }
 
+  /** Internal: called by ordersphere-orders for an order it created. */
   @PostMapping
+  @PreAuthorize("hasAnyRole('SERVICE', 'ADMIN')")
   public ResponseEntity<PaymentResponse> initiatePayment(
-      @Valid @RequestBody CreatePaymentRequest request, Authentication authentication) {
-    return ResponseEntity.status(HttpStatus.ACCEPTED)
-        .body(paymentService.initiatePayment(authentication.getName(), request));
+      @Valid @RequestBody CreatePaymentRequest request) {
+    return ResponseEntity.status(HttpStatus.ACCEPTED).body(paymentService.initiatePayment(request));
   }
 
   @GetMapping("/{paymentId}")
   public PaymentResponse getPayment(@PathVariable Long paymentId, Authentication authentication) {
-    return paymentService.getPayment(authentication.getName(), isAdmin(authentication), paymentId);
+    return paymentService.getPayment(
+        authentication.getName(), isPrivileged(authentication), paymentId);
   }
 
+  /**
+   * Internal: refunds follow an order cancellation (ordersphere-orders) or an admin decision.
+   * Customers can't refund directly - they would keep the goods and get their money back.
+   */
   @PostMapping("/{paymentId}/refund")
+  @PreAuthorize("hasAnyRole('SERVICE', 'ADMIN')")
   public ResponseEntity<RefundResponse> refundPayment(
-      @PathVariable Long paymentId,
-      @Valid @RequestBody RefundRequest request,
-      Authentication authentication) {
+      @PathVariable Long paymentId, @Valid @RequestBody RefundRequest request) {
     return ResponseEntity.status(HttpStatus.ACCEPTED)
-        .body(
-            paymentService.refundPayment(
-                authentication.getName(), isAdmin(authentication), paymentId, request));
+        .body(paymentService.refundPayment(paymentId, request));
   }
 
-  private boolean isAdmin(Authentication authentication) {
-    return authentication.getAuthorities().contains(new SimpleGrantedAuthority("ROLE_ADMIN"));
+  /** ADMIN and the SERVICE identity can read any payment; customers only their own. */
+  private boolean isPrivileged(Authentication authentication) {
+    return authentication.getAuthorities().stream()
+        .map(GrantedAuthority::getAuthority)
+        .anyMatch(role -> role.equals("ROLE_ADMIN") || role.equals("ROLE_SERVICE"));
   }
 }

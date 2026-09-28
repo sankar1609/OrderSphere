@@ -81,7 +81,7 @@
 - **Responsibilities:**
   - Product catalog management with unit prices (create is ADMIN/VENDOR only)
   - Stock level tracking
-  - Inventory reservation, confirmation and release for orders (called by the orders saga over REST)
+  - Inventory reservation, confirmation and release for orders (internal: SERVICE/ADMIN only - called by the orders saga over REST)
   - Restocking (`POST /inventory/products/{sku}/restock`, ADMIN/VENDOR)
   - Backorder management (a shortfall is backordered; the order still proceeds and is charged in full)
 - **Database:** PostgreSQL (inventory_db)
@@ -98,10 +98,11 @@
 - **Port:** 8084
 - **Purpose:** Collects payments through a hosted-checkout payment provider
 - **Responsibilities:**
-  - Payment initiation (`POST /payments`, 202): opens a checkout session with the provider and returns its `checkoutUrl`; the payment stays PENDING until the customer pays there
+  - Payment initiation (`POST /payments`, 202, internal: SERVICE/ADMIN only, customer named in the body): opens a checkout session with the provider and returns its `checkoutUrl`; the payment stays PENDING until the customer pays there
+  - An existing payment for an orderId is reused only if customer, amount and currency match (409 otherwise)
   - Receiving the provider's outcome via a signed webhook (`POST /payments/webhooks/gateway`, HMAC-SHA256, no JWT)
   - Transaction status tracking (with `failureReason` for FAILED payments)
-  - Refund processing (COMPLETED payments only), executed through the provider
+  - Refund processing (COMPLETED payments only, SERVICE/ADMIN only - customers get refunds by cancelling the order), executed through the provider
 - **Database:** PostgreSQL (payment_db)
 - **Key Features:**
   - Card details never reach OrderSphere - customers pay on the provider's page
@@ -130,7 +131,7 @@
 - **Port:** 8085
 - **Purpose:** Shipment creation, tracking, and logistics management
 - **Responsibilities:**
-  - Shipment creation for confirmed orders (ADMIN only - called by the orders saga with its service token)
+  - Shipment creation for confirmed orders (SERVICE/ADMIN only - called by the orders saga with its service token)
   - Tracking: `ShipmentProgressJob` advances CREATED → PICKED → IN_TRANSIT → DELIVERED one stage per ~5s sweep
   - Delivery confirmation
   - Return shipments for delivered OUTBOUND shipments (`POST /shipments/{id}/return`)
@@ -150,7 +151,7 @@
 - **Responsibilities:**
   - Order, payment and shipment notifications, triggered by domain events
   - Notification preference management per channel (EMAIL, SMS, IN_APP, PUSH); a disabled channel marks notifications SKIPPED
-  - Admin-sent notifications (`POST /notifications`, ADMIN only)
+  - Notifications sent directly (`POST /notifications`, SERVICE/ADMIN only)
 - **Database:** PostgreSQL (notification_db)
 - **Key Features:**
   - Template-based message composition (`NotificationTemplateRenderer`)
@@ -248,11 +249,12 @@ Order Placement Flow:
 
 - **JWT Authentication:** Token-based stateless auth, one shared signing secret validated by `common-security` in every service
 - **Role-Based Access Control (RBAC):** `@PreAuthorize` role checks per endpoint
-- **Resource ownership:** customers only see their own orders, payments, shipments and notifications (404 otherwise); ADMIN sees all
+- **Resource ownership:** customers only see their own orders, payments, shipments and notifications (404 otherwise); ADMIN (and the SERVICE identity for payments/shipments) sees all
+- **Internal endpoints:** stock reservations, payment initiation/refund, shipment creation and direct notifications require the `SERVICE` or `ADMIN` role - customers get 403
 - **Payments:** card details are entered only on the payment provider's hosted page; the provider's webhook is authenticated by HMAC signature and its merchant API by secret key
 - **Password Security:** Bcrypt hashing with salt
 - **Token Expiration:** 1-hour JWT expiration (no refresh or revocation yet)
-- **Service-to-Service Auth:** the orders saga mints its own ADMIN-role JWT with the shared secret (`ServiceTokenProvider`) and forwards the customer's token where acting on their behalf - a proper service identity is still TBD
+- **Service-to-Service Auth:** the orders saga calls every downstream service with its own `SERVICE`-role JWT (`ServiceTokenProvider`), never the customer's token. It is still minted with the shared HMAC secret, so any service holding the secret could forge tokens - moving signing into auth-service (RS256 + client credentials) is next
 - **Audit Trail (Planned):** Blockchain-based immutable audit logs via Hyperledger Fabric
 
 ---
@@ -265,7 +267,7 @@ Order Placement Flow:
 ### Key Service Endpoints
 - **Auth Service:** `/auth/register`, `/auth/login`, `/auth/me`, `/auth/admin/users/{id}/role`
 - **Orders Service:** `/orders` (create, list), `/orders/{id}`, `/orders/{id}/cancel`
-- **Inventory Service:** `/inventory/products` (create, list, get, restock), `/inventory/reservations` (reserve, confirm, release - used by the saga)
+- **Inventory Service:** `/inventory/products` (create, list, get, restock), `/inventory/reservations` (reserve, confirm, release - internal, SERVICE/ADMIN)
 - **Payment Service:** `/payments` (initiate, status, refund), `/payments/webhooks/gateway` (provider webhook)
 - **Dummy Payment Gateway (:8087, direct):** `/checkout/{sessionId}` (hosted page), `/api/checkout-sessions`, `/api/refunds`
 - **Shipping Service:** `/shipments` (create - ADMIN), `/shipments/{id}`, `/shipments/{id}/tracking`, `/shipments/order/{orderId}`, `/shipments/{id}/return`

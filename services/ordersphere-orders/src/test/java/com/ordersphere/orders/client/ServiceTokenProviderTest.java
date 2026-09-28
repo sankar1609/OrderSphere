@@ -8,7 +8,7 @@ import org.junit.jupiter.api.Test;
 class ServiceTokenProviderTest {
 
   @Test
-  void mintsAdminTokenForOrdersServiceSubject() {
+  void mintsServiceTokenForOrdersServiceSubject() {
     JwtTokenProvider jwtTokenProvider =
         new JwtTokenProvider("test-secret-key-at-least-32-bytes-long", 3600000);
     ServiceTokenProvider serviceTokenProvider = new ServiceTokenProvider(jwtTokenProvider);
@@ -18,6 +18,6 @@ class ServiceTokenProviderTest {
     assertThat(bearerToken).startsWith("Bearer ");
     String token = bearerToken.substring("Bearer ".length());
     assertThat(jwtTokenProvider.getSubject(token)).isEqualTo("orders-service");
-    assertThat(jwtTokenProvider.getClaims(token).get("role", String.class)).isEqualTo("ADMIN");
+    assertThat(jwtTokenProvider.getClaims(token).get("role", String.class)).isEqualTo("SERVICE");
   }
 }

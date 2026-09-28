@@ -16,6 +16,6 @@ public class ServiceTokenProvider {
   }
 
   public String bearerToken() {
-    return "Bearer " + jwtTokenProvider.generateToken(SERVICE_SUBJECT, Map.of("role", "ADMIN"));
+    return "Bearer " + jwtTokenProvider.generateToken(SERVICE_SUBJECT, Map.of("role", "SERVICE"));
   }
 }

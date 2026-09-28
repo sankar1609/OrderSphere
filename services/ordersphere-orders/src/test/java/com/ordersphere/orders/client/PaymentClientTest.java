@@ -30,14 +30,14 @@ class PaymentClientTest {
         .andExpect(method(HttpMethod.POST))
         .andExpect(header("Authorization", "Bearer token"))
         .andExpect(jsonPath("$.orderId").value(1))
-        .andExpect(jsonPath("$.paymentMethodId").doesNotExist())
+        .andExpect(jsonPath("$.customerUsername").value("alice"))
         .andRespond(
             withSuccess(
                 "{\"id\": 42, \"status\": \"PENDING\", \"checkoutUrl\": \"http://gw/checkout/cs_1\"}",
                 MediaType.APPLICATION_JSON));
 
     PaymentClient.InitiatedPayment payment =
-        client.initiate(1L, new BigDecimal("20.00"), "USD", "Bearer token");
+        client.initiate(1L, "alice", new BigDecimal("20.00"), "USD", "Bearer token");
 
     assertThat(payment.id()).isEqualTo(42L);
     assertThat(payment.checkoutUrl()).isEqualTo("http://gw/checkout/cs_1");
@@ -52,7 +52,8 @@ class PaymentClientTest {
 
     server.expect(requestTo("http://payment-service/payments")).andRespond(withServerError());
 
-    assertThatThrownBy(() -> client.initiate(1L, new BigDecimal("20.00"), "USD", "Bearer token"))
+    assertThatThrownBy(
+            () -> client.initiate(1L, "alice", new BigDecimal("20.00"), "USD", "Bearer token"))
         .isInstanceOf(PaymentInitiationException.class);
   }
 
@@ -100,7 +101,7 @@ class PaymentClientTest {
     assertThatThrownBy(
             () ->
                 client.initiateFallback(
-                    1L, new BigDecimal("20.00"), "USD", "Bearer token", original))
+                    1L, "alice", new BigDecimal("20.00"), "USD", "Bearer token", original))
         .isSameAs(original);
   }
 
@@ -112,6 +113,7 @@ class PaymentClientTest {
             () ->
                 client.initiateFallback(
                     1L,
+                    "alice",
                     new BigDecimal("20.00"),
                     "USD",
                     "Bearer token",

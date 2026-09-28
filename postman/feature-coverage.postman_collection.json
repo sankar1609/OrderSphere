@@ -1157,6 +1157,84 @@
           ]
         },
         {
+          "name": "Customer Reserves Stock [expect 403]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderId\": 999999999,\n  \"items\": [\n    {\n      \"sku\": \"{{sku}}\",\n      \"quantity\": 1\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/reservations",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "inventory",
+                "reservations"
+              ]
+            },
+            "description": "Reservations are internal to the orders saga; customers can't hold stock under fake order ids."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 403', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Customer Releases a Reservation [expect 403]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/reservations/1/release",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "inventory",
+                "reservations",
+                "1",
+                "release"
+              ]
+            },
+            "description": "...or release a paid order's reservation."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 403', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Vendor Restocks +5",
           "request": {
             "method": "POST",
@@ -1230,7 +1308,7 @@
           ]
         },
         {
-          "name": "Initiate Payment Directly",
+          "name": "Customer Initiates Payment [expect 403]",
           "request": {
             "method": "POST",
             "header": [
@@ -1245,7 +1323,48 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"orderId\": \"{{directOrderId}}\",\n  \"amount\": 1.00,\n  \"currency\": \"USD\"\n}"
+              "raw": "{\n  \"orderId\": \"999999999\",\n  \"customerUsername\": \"cust_{{runId}}\",\n  \"amount\": 0.01,\n  \"currency\": \"USD\"\n}"
+            },
+            "url": {
+              "raw": "{{paymentBaseUrl}}/payments",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "payments"
+              ]
+            },
+            "description": "Payment initiation is internal (ordersphere-orders' service identity, or an admin). Otherwise a customer could pre-create a cheap payment for their own next order id."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 403', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Initiate Payment Directly (admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderId\": \"{{directOrderId}}\",\n  \"customerUsername\": \"cust_{{runId}}\",\n  \"amount\": 1.00,\n  \"currency\": \"USD\"\n}"
             },
             "url": {
               "raw": "{{paymentBaseUrl}}/payments",
@@ -1297,12 +1416,12 @@
               },
               {
                 "key": "Authorization",
-                "value": "Bearer {{custToken}}"
+                "value": "Bearer {{adminToken}}"
               }
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"orderId\": \"{{directOrderId}}\",\n  \"amount\": 1.00,\n  \"currency\": \"USD\"\n}"
+              "raw": "{\n  \"orderId\": \"{{directOrderId}}\",\n  \"customerUsername\": \"cust_{{runId}}\",\n  \"amount\": 1.00,\n  \"currency\": \"USD\"\n}"
             },
             "url": {
               "raw": "{{paymentBaseUrl}}/payments",
@@ -1326,6 +1445,47 @@
                   "    pm.expect(b.id).to.eql(Number(pm.collectionVariables.get('directPaymentId')));",
                   "    pm.expect(b.checkoutUrl).to.eql(pm.collectionVariables.get('directCheckoutUrl'));",
                   "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Different Payment for Same Order [expect 409]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderId\": \"{{directOrderId}}\",\n  \"customerUsername\": \"cust_{{runId}}\",\n  \"amount\": 0.01,\n  \"currency\": \"USD\"\n}"
+            },
+            "url": {
+              "raw": "{{paymentBaseUrl}}/payments",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "payments"
+              ]
+            },
+            "description": "An existing payment is only reused when customer, amount and currency match - a planted cheap payment can't be picked up by a real order."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 409', function () { pm.response.to.have.status(409); });"
                 ]
               }
             }
@@ -1365,7 +1525,7 @@
           ]
         },
         {
-          "name": "Refund an Unpaid Payment [expect 409]",
+          "name": "Customer Refunds Directly [expect 403]",
           "request": {
             "method": "POST",
             "header": [
@@ -1376,6 +1536,49 @@
               {
                 "key": "Authorization",
                 "value": "Bearer {{custToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"keep the goods\"\n}"
+            },
+            "url": {
+              "raw": "{{paymentBaseUrl}}/payments/{{directPaymentId}}/refund",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "{{directPaymentId}}",
+                "refund"
+              ]
+            },
+            "description": "Refunds follow an order cancellation (via the saga) or an admin decision - never a direct customer call."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 403', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refund an Unpaid Payment [expect 409]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
               }
             ],
             "body": {
