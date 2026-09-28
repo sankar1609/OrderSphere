@@ -47,20 +47,12 @@ export function listMyOrders(token) {
   return request("/ordersphere-orders/orders", { token });
 }
 
+export function getOrder(token, id) {
+  return request(`/ordersphere-orders/orders/${id}`, { token });
+}
+
 export function listProducts(token) {
   return request("/inventory-service/inventory/products", { token });
-}
-
-export function listPaymentMethods(token) {
-  return request("/payment-service/payment-methods", { token });
-}
-
-export function createPaymentMethod(token, body) {
-  return request("/payment-service/payment-methods", { method: "POST", token, body });
-}
-
-export function deletePaymentMethod(token, id) {
-  return request(`/payment-service/payment-methods/${id}`, { method: "DELETE", token });
 }
 
 export function createOrder(token, body) {

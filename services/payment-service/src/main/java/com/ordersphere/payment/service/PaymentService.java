@@ -5,7 +5,6 @@ import com.ordersphere.events.PaymentFailedEvent;
 import com.ordersphere.events.PaymentInitiatedEvent;
 import com.ordersphere.events.RefundIssuedEvent;
 import com.ordersphere.payment.domain.Payment;
-import com.ordersphere.payment.domain.PaymentMethod;
 import com.ordersphere.payment.domain.PaymentStatus;
 import com.ordersphere.payment.domain.Refund;
 import com.ordersphere.payment.domain.RefundStatus;
@@ -14,44 +13,58 @@ import com.ordersphere.payment.dto.PaymentResponse;
 import com.ordersphere.payment.dto.RefundRequest;
 import com.ordersphere.payment.dto.RefundResponse;
 import com.ordersphere.payment.exception.InvalidPaymentStateException;
-import com.ordersphere.payment.exception.PaymentMethodNotFoundException;
 import com.ordersphere.payment.exception.PaymentNotFoundException;
-import com.ordersphere.payment.gateway.GatewayResult;
 import com.ordersphere.payment.gateway.PaymentGatewayClient;
-import com.ordersphere.payment.repository.PaymentMethodRepository;
+import com.ordersphere.payment.gateway.PaymentGatewayClient.CheckoutSession;
+import com.ordersphere.payment.gateway.PaymentGatewayClient.SessionStatus;
+import com.ordersphere.payment.gateway.PaymentGatewayException;
 import com.ordersphere.payment.repository.PaymentRepository;
 import com.ordersphere.payment.repository.RefundRepository;
 import java.util.Optional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+/**
+ * Payments are collected on the provider's hosted checkout page. Initiating a payment opens a
+ * checkout session; the payment stays PENDING until the provider reports the session's outcome - by
+ * webhook ({@link #applySessionOutcome}) or, if that is lost, by the sweep's session lookup ({@link
+ * #reconcile}).
+ */
 @Service
 public class PaymentService {
 
+  private static final Logger log = LoggerFactory.getLogger(PaymentService.class);
+
   private final PaymentRepository paymentRepository;
-  private final PaymentMethodRepository paymentMethodRepository;
   private final RefundRepository refundRepository;
   private final PaymentGatewayClient gatewayClient;
   private final ApplicationEventPublisher eventPublisher;
-  private final int maxRetries;
+  private final String returnUrl;
+  private final String webhookUrl;
 
   public PaymentService(
       PaymentRepository paymentRepository,
-      PaymentMethodRepository paymentMethodRepository,
       RefundRepository refundRepository,
       PaymentGatewayClient gatewayClient,
       ApplicationEventPublisher eventPublisher,
-      @Value("${payment.processing.max-retries}") int maxRetries) {
+      @Value("${payment.checkout.return-url}") String returnUrl,
+      @Value("${payment.checkout.webhook-url}") String webhookUrl) {
     this.paymentRepository = paymentRepository;
-    this.paymentMethodRepository = paymentMethodRepository;
     this.refundRepository = refundRepository;
     this.gatewayClient = gatewayClient;
     this.eventPublisher = eventPublisher;
-    this.maxRetries = maxRetries;
+    this.returnUrl = returnUrl;
+    this.webhookUrl = webhookUrl;
   }
 
+  /**
+   * Idempotent per orderId. Throws {@link PaymentGatewayException} (rolling the payment back) if
+   * the provider can't open a checkout session.
+   */
   @Transactional
   public PaymentResponse initiatePayment(String username, CreatePaymentRequest request) {
     Optional<Payment> existing = paymentRepository.findByOrderId(request.orderId());
@@ -59,14 +72,23 @@ public class PaymentService {
       return PaymentResponse.from(existing.get());
     }
 
-    PaymentMethod paymentMethod =
-        paymentMethodRepository
-            .findByIdAndCustomerUsername(request.paymentMethodId(), username)
-            .orElseThrow(() -> new PaymentMethodNotFoundException(request.paymentMethodId()));
-
     Payment payment =
-        new Payment(
-            request.orderId(), username, paymentMethod, request.amount(), request.currency());
+        new Payment(request.orderId(), username, request.amount(), request.currency());
+    paymentRepository.save(payment);
+
+    String orderQuery = (returnUrl.contains("?") ? "&" : "?") + "orderId=" + request.orderId();
+    CheckoutSession session =
+        gatewayClient.createCheckoutSession(
+            new PaymentGatewayClient.CheckoutRequest(
+                String.valueOf(payment.getId()),
+                payment.getAmount(),
+                payment.getCurrency(),
+                "OrderSphere order #" + request.orderId(),
+                returnUrl + orderQuery + "&payment=success",
+                returnUrl + orderQuery + "&payment=cancelled",
+                webhookUrl));
+    payment.setCheckoutSessionId(session.id());
+    payment.setCheckoutUrl(session.url());
     paymentRepository.save(payment);
 
     eventPublisher.publishEvent(
@@ -102,45 +124,59 @@ public class PaymentService {
     return RefundResponse.from(refund);
   }
 
+  /**
+   * Applies an outcome the provider pushed by webhook. Unknown sessions are ignored, and so is any
+   * outcome for a payment that is no longer PENDING (webhook and sweep may both report it).
+   */
   @Transactional
-  public void settlePayment(Payment payment) {
-    GatewayResult result =
-        gatewayClient.authorize(
-            payment.getPaymentMethod().getToken(), payment.getAmount(), payment.getCurrency());
+  public void applySessionOutcome(String sessionId, SessionStatus status, String chargeReference) {
+    paymentRepository
+        .findByCheckoutSessionIdForUpdate(sessionId)
+        .ifPresentOrElse(
+            payment -> apply(payment, status, chargeReference),
+            () -> log.warn("Ignoring gateway outcome for unknown checkout session {}", sessionId));
+  }
 
-    switch (result.outcome()) {
-      case SUCCESS -> {
-        payment.setGatewayReference(result.reference());
-        payment.markStatus(PaymentStatus.COMPLETED);
-        paymentRepository.save(payment);
-        eventPublisher.publishEvent(
-            new PaymentCompletedEvent(
-                payment.getId(),
-                payment.getOrderId(),
-                payment.getCustomerUsername(),
-                payment.getAmount(),
-                payment.getCurrency()));
-      }
-      case DECLINED -> failPayment(payment, "Payment declined by gateway");
-      case TRANSIENT_FAILURE -> {
-        payment.setRetryCount(payment.getRetryCount() + 1);
-        if (payment.getRetryCount() >= maxRetries) {
-          failPayment(payment, "Payment failed after " + maxRetries + " retries");
-        } else {
-          paymentRepository.save(payment);
-        }
-      }
+  /** Polls the provider for a still-PENDING payment, in case its webhook never arrived. */
+  @Transactional
+  public void reconcile(Long paymentId) {
+    Payment payment = paymentRepository.findByIdForUpdate(paymentId).orElse(null);
+    if (payment == null || payment.getStatus() != PaymentStatus.PENDING) {
+      return;
     }
+    if (payment.getCheckoutSessionId() == null) {
+      failPayment(payment, "No checkout session");
+      return;
+    }
+
+    Optional<CheckoutSession> session;
+    try {
+      session = gatewayClient.getCheckoutSession(payment.getCheckoutSessionId());
+    } catch (PaymentGatewayException ex) {
+      log.warn("Could not reconcile paymentId {}: {}", paymentId, ex.getMessage());
+      return;
+    }
+    if (session.isEmpty()) {
+      failPayment(payment, "Checkout session not found at payment provider");
+      return;
+    }
+    apply(payment, session.get().status(), session.get().chargeReference());
   }
 
   @Transactional
   public void settleRefund(Refund refund) {
     Payment payment = refund.getPayment();
-    GatewayResult result =
-        gatewayClient.refund(payment.getPaymentMethod().getToken(), refund.getAmount());
+    Optional<String> refundReference;
+    try {
+      refundReference = gatewayClient.refund(payment.getGatewayReference());
+    } catch (PaymentGatewayException ex) {
+      // Provider unavailable: leave the refund PENDING for the next sweep.
+      log.warn("Refund {} not settled yet: {}", refund.getId(), ex.getMessage());
+      return;
+    }
 
-    if (result.outcome() == GatewayResult.GatewayOutcome.SUCCESS) {
-      refund.setGatewayReference(result.reference());
+    if (refundReference.isPresent()) {
+      refund.setGatewayReference(refundReference.get());
       refund.setStatus(RefundStatus.COMPLETED);
       refundRepository.save(refund);
       payment.markStatus(PaymentStatus.REFUNDED);
@@ -154,7 +190,33 @@ public class PaymentService {
     }
   }
 
+  private void apply(Payment payment, SessionStatus status, String chargeReference) {
+    if (payment.getStatus() != PaymentStatus.PENDING) {
+      return;
+    }
+    switch (status) {
+      case OPEN -> {}
+      case SUCCEEDED -> completePayment(payment, chargeReference);
+      case CANCELLED -> failPayment(payment, "Payment cancelled by customer");
+      case EXPIRED -> failPayment(payment, "Payment window expired");
+    }
+  }
+
+  private void completePayment(Payment payment, String chargeReference) {
+    payment.setGatewayReference(chargeReference);
+    payment.markStatus(PaymentStatus.COMPLETED);
+    paymentRepository.save(payment);
+    eventPublisher.publishEvent(
+        new PaymentCompletedEvent(
+            payment.getId(),
+            payment.getOrderId(),
+            payment.getCustomerUsername(),
+            payment.getAmount(),
+            payment.getCurrency()));
+  }
+
   private void failPayment(Payment payment, String reason) {
+    payment.setFailureReason(reason);
     payment.markStatus(PaymentStatus.FAILED);
     paymentRepository.save(payment);
     eventPublisher.publishEvent(

@@ -96,19 +96,19 @@ class OrderServiceTest {
 
   private CreateOrderRequest requestFor(String sku) {
     return new CreateOrderRequest(
-        List.of(new CreateOrderRequest.Item(sku, 3)), 5L, "USD", "1 Test Way");
+        List.of(new CreateOrderRequest.Item(sku, 3)), "USD", "1 Test Way");
   }
 
   @Test
   void createOrderAwaitsPaymentWhenReservationAndInitiationSucceed() {
-    when(paymentClient.initiate(
-            any(), eq(5L), eq(new BigDecimal("30.00")), eq("USD"), eq("Bearer token")))
-        .thenReturn(42L);
+    when(paymentClient.initiate(any(), eq(new BigDecimal("30.00")), eq("USD"), eq("Bearer token")))
+        .thenReturn(new PaymentClient.InitiatedPayment(42L, "http://gw/checkout/cs_42"));
 
     OrderResponse response = orderService.createOrder("alice", requestFor("SKU-1"), "Bearer token");
 
     assertThat(response.status()).isEqualTo(OrderStatus.AWAITING_PAYMENT);
     assertThat(response.paymentId()).isEqualTo(42L);
+    assertThat(response.checkoutUrl()).isEqualTo("http://gw/checkout/cs_42");
     assertThat(response.totalAmount()).isEqualByComparingTo("30.00");
     assertThat(response.currency()).isEqualTo("USD");
     assertThat(response.items().get(0).unitPrice()).isEqualByComparingTo("10.00");
@@ -125,12 +125,12 @@ class OrderServiceTest {
             new InventoryClient.ReserveResponse(
                 List.of(priced("SKU-A", 2, "4.50"), priced("SKU-B", 1, "12.25")),
                 List.of(priced("SKU-B", 2, "12.25"))));
-    when(paymentClient.initiate(any(), any(), any(), any(), anyString())).thenReturn(42L);
+    when(paymentClient.initiate(any(), any(), any(), anyString()))
+        .thenReturn(new PaymentClient.InitiatedPayment(42L, "http://gw/checkout/cs_42"));
     CreateOrderRequest request =
         new CreateOrderRequest(
             List.of(
                 new CreateOrderRequest.Item("SKU-A", 2), new CreateOrderRequest.Item("SKU-B", 3)),
-            5L,
             "USD",
             "1 Test Way");
 
@@ -138,7 +138,7 @@ class OrderServiceTest {
 
     // 2 x 4.50 + 3 x 12.25 (1 reserved + 2 backordered) = 45.75
     verify(paymentClient)
-        .initiate(any(), eq(5L), eq(new BigDecimal("45.75")), eq("USD"), eq("Bearer token"));
+        .initiate(any(), eq(new BigDecimal("45.75")), eq("USD"), eq("Bearer token"));
     assertThat(response.totalAmount()).isEqualByComparingTo("45.75");
   }
 
@@ -152,7 +152,7 @@ class OrderServiceTest {
 
     assertThat(response.status()).isEqualTo(OrderStatus.CANCELLED);
     verify(inventoryClient).release(any(), eq("Bearer token"));
-    verify(paymentClient, never()).initiate(any(), any(), any(), any(), any());
+    verify(paymentClient, never()).initiate(any(), any(), any(), any());
   }
 
   @Test
@@ -167,14 +167,14 @@ class OrderServiceTest {
     assertThat(response.status()).isEqualTo(OrderStatus.CANCELLED);
     verify(eventPublisher).publishEvent(any(OrderCreatedEvent.class));
     verify(eventPublisher).publishEvent(any(OrderCancelledEvent.class));
-    verify(paymentClient, never()).initiate(any(), any(), any(), any(), any());
+    verify(paymentClient, never()).initiate(any(), any(), any(), any());
   }
 
   @Test
   void createOrderCompensatesInventoryWhenPaymentInitiationFails() {
-    doThrow(new PaymentInitiationException("no such payment method"))
+    doThrow(new PaymentInitiationException("payment provider unavailable"))
         .when(paymentClient)
-        .initiate(any(), any(), any(), any(), anyString());
+        .initiate(any(), any(), any(), anyString());
 
     OrderResponse response = orderService.createOrder("alice", requestFor("SKU-1"), "Bearer token");
 
@@ -347,6 +347,34 @@ class OrderServiceTest {
     verify(inventoryClient).confirm(10L, "Bearer service-token");
     verify(eventPublisher).publishEvent(any(OrderConfirmedEvent.class));
     verify(paymentClient, never()).getStatus(any(), any());
+  }
+
+  @Test
+  void onPaymentEventRefundsPaymentThatCompletesAfterOrderWasCancelled() {
+    Order order = new Order("alice");
+    order.setId(10L);
+    order.setPaymentId(42L);
+    order.markStatus(OrderStatus.CANCELLED);
+    when(orderRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(order));
+
+    orderService.onPaymentEvent(10L, true);
+
+    assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCELLED);
+    verify(paymentClient).refund(eq(42L), anyString(), eq("Bearer service-token"));
+    verify(inventoryClient, never()).confirm(any(), any());
+    verify(eventPublisher, never()).publishEvent(any(OrderConfirmedEvent.class));
+  }
+
+  @Test
+  void checkoutUrlIsOnlyExposedWhileAwaitingPayment() {
+    Order order = new Order("alice");
+    order.setId(10L);
+    order.setCheckoutUrl("http://gw/checkout/cs_1");
+    order.markStatus(OrderStatus.AWAITING_PAYMENT);
+    assertThat(OrderResponse.from(order).checkoutUrl()).isEqualTo("http://gw/checkout/cs_1");
+
+    order.markStatus(OrderStatus.CONFIRMED);
+    assertThat(OrderResponse.from(order).checkoutUrl()).isNull();
   }
 
   @Test

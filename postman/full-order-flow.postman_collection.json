@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "OrderSphere - Full Order Flow",
-    "description": "End-to-end test collection spanning auth-service, inventory-service, ordersphere-orders, payment-service, shipping-service, and notification-service. Requires the full stack running (docker-compose up). Routes through the API Gateway (http://localhost:8080) using Spring Cloud Gateway's discovery-locator convention (/{service-id}/...).\n\nRun the whole collection top to bottom with the Collection Runner or newman (`npx newman run postman/full-order-flow.postman_collection.json`). Every request has assertions. Steps marked [poll] or [expect ...] on async state (payment settlement, shipment progression, notification delivery - all ~5s sweeps) re-run themselves every 3s (up to 20 times) until the expected state shows up. When sending requests one by one by hand, just re-send those until their test passes.\n\nEach run creates a fresh product SKU, so stock checks are exact and re-runs don't interfere.",
+    "description": "End-to-end test collection spanning auth-service, inventory-service, ordersphere-orders, payment-service, shipping-service, and notification-service. Requires the full stack running (docker-compose up). Routes through the API Gateway (http://localhost:8080) using Spring Cloud Gateway's discovery-locator convention (/{service-id}/...).\n\nPayment works like a real hosted checkout: placing an order returns a checkoutUrl on the dummy payment gateway (http://localhost:8087), and the 'Pay ...' / 'Cancel on Checkout Page' requests submit that page's form exactly as a browser would (test card 4242 4242 4242 4242 succeeds, 4000 0000 0000 0002 is declined). Redirects are not followed, so the Web UI doesn't need to be running.\n\nRun the whole collection top to bottom with the Collection Runner or newman (`npx newman run postman/full-order-flow.postman_collection.json`). Every request has assertions. Steps marked [poll] or [expect ...] on async state (payment settlement, shipment progression, notification delivery - all ~5s sweeps) re-run themselves every 3s (up to 20 times) until the expected state shows up. When sending requests one by one by hand, just re-send those until their test passes.\n\nEach run creates a fresh product SKU, so stock checks are exact and re-runs don't interfere.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -34,6 +34,14 @@
       "value": "{{gatewayBaseUrl}}/notification-service"
     },
     {
+      "key": "successCard",
+      "value": "4242 4242 4242 4242"
+    },
+    {
+      "key": "declineCard",
+      "value": "4000 0000 0000 0002"
+    },
+    {
       "key": "productSku",
       "value": ""
     },
@@ -54,19 +62,11 @@
       "value": ""
     },
     {
-      "key": "paymentMethodId",
-      "value": ""
-    },
-    {
-      "key": "declinePaymentMethodId",
-      "value": ""
-    },
-    {
       "key": "stockBeforeHappy",
       "value": ""
     },
     {
-      "key": "stockBeforeDecline",
+      "key": "stockBeforeAbandon",
       "value": ""
     },
     {
@@ -82,15 +82,23 @@
       "value": ""
     },
     {
+      "key": "checkoutUrl",
+      "value": ""
+    },
+    {
       "key": "shipmentId",
       "value": ""
     },
     {
-      "key": "declineOrderId",
+      "key": "abandonOrderId",
       "value": ""
     },
     {
-      "key": "declinePaymentId",
+      "key": "abandonPaymentId",
+      "value": ""
+    },
+    {
+      "key": "abandonCheckoutUrl",
       "value": ""
     },
     {
@@ -99,6 +107,22 @@
     },
     {
       "key": "cancelPaymentId",
+      "value": ""
+    },
+    {
+      "key": "cancelCheckoutUrl",
+      "value": ""
+    },
+    {
+      "key": "lateOrderId",
+      "value": ""
+    },
+    {
+      "key": "latePaymentId",
+      "value": ""
+    },
+    {
+      "key": "lateCheckoutUrl",
       "value": ""
     }
   ],
@@ -246,7 +270,7 @@
                 "login"
               ]
             },
-            "description": "Saves {{otherCustomerToken}}, used in folder 7 to check alice's orders are hidden from other customers."
+            "description": "Saves {{otherCustomerToken}}, used in folder 6 to check alice's orders are hidden from other customers."
           },
           "event": [
             {
@@ -335,7 +359,7 @@
                 "products"
               ]
             },
-            "description": "Generates a fresh {{productSku}} on every run, so each run starts with known stock (50) and a real unitPrice rather than inheriting a product left over (or created before the pricing migration) by a previous run. Expect 201."
+            "description": "Generates a fresh {{productSku}} on every run, so each run starts with known stock (50) and a real unitPrice. Expect 201."
           },
           "event": [
             {
@@ -367,96 +391,7 @@
       ]
     },
     {
-      "name": "3. Setup - Payment Methods (Customer)",
-      "item": [
-        {
-          "name": "Create Payment Method (normal - will succeed)",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              },
-              {
-                "key": "Authorization",
-                "value": "Bearer {{customerToken}}"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"type\": \"CARD\",\n  \"token\": \"tok-visa-4242\"\n}"
-            },
-            "url": {
-              "raw": "{{paymentBaseUrl}}/payment-methods",
-              "host": [
-                "{{paymentBaseUrl}}"
-              ],
-              "path": [
-                "payment-methods"
-              ]
-            },
-            "description": "Any token other than FAIL-DECLINE/FAIL-TRANSIENT settles successfully in the stub gateway. Saves {{paymentMethodId}}."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
-                  "pm.collectionVariables.set('paymentMethodId', pm.response.json().id);"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Create Payment Method (token=FAIL-DECLINE - will be declined)",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              },
-              {
-                "key": "Authorization",
-                "value": "Bearer {{customerToken}}"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"type\": \"CARD\",\n  \"token\": \"FAIL-DECLINE\"\n}"
-            },
-            "url": {
-              "raw": "{{paymentBaseUrl}}/payment-methods",
-              "host": [
-                "{{paymentBaseUrl}}"
-              ],
-              "path": [
-                "payment-methods"
-              ]
-            },
-            "description": "StubPaymentGateway treats the literal token FAIL-DECLINE as a non-retryable decline - used in folder 5. Saves {{declinePaymentMethodId}}."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
-                  "pm.collectionVariables.set('declinePaymentMethodId', pm.response.json().id);"
-                ]
-              }
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "name": "4. Happy Path - Order to Delivery",
+      "name": "3. Happy Path - Pay on Checkout Page, Deliver",
       "item": [
         {
           "name": "Snapshot Stock (happy path)",
@@ -510,7 +445,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"items\": [\n    {\n      \"sku\": \"{{productSku}}\",\n      \"quantity\": 2\n    }\n  ],\n  \"paymentMethodId\": \"{{paymentMethodId}}\",\n  \"currency\": \"USD\",\n  \"shippingDestination\": \"123 Main St, Springfield\"\n}"
+              "raw": "{\n  \"items\": [\n    {\n      \"sku\": \"{{productSku}}\",\n      \"quantity\": 2\n    }\n  ],\n  \"currency\": \"USD\",\n  \"shippingDestination\": \"123 Main St, Springfield\"\n}"
             },
             "url": {
               "raw": "{{ordersBaseUrl}}/orders",
@@ -521,20 +456,9 @@
                 "orders"
               ]
             },
-            "description": "Expect 201 with status AWAITING_PAYMENT - inventory reserved and payment initiated synchronously, not yet settled. The total is priced by inventory-service. Saves {{orderId}} and {{paymentId}}."
+            "description": "Expect 201 AWAITING_PAYMENT: stock is reserved and a checkout session is opened with the payment provider. Nothing is charged until the customer pays on {{checkoutUrl}} (the Web UI redirects the browser there). Saves {{orderId}}, {{paymentId}} and {{checkoutUrl}}."
           },
           "event": [
-            {
-              "listen": "prerequest",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "if (!pm.variables.get('paymentMethodId')) {",
-                  "    throw new Error('{{paymentMethodId}} is empty - run \\'Create Payment Method (normal - will succeed)\\' first (and make sure no active environment defines paymentMethodId).');",
-                  "}"
-                ]
-              }
-            },
             {
               "listen": "test",
               "script": {
@@ -544,15 +468,207 @@
                   "var o = pm.response.json();",
                   "pm.collectionVariables.set('orderId', o.id);",
                   "pm.collectionVariables.set('paymentId', o.paymentId);",
-                  "pm.test('Order is AWAITING_PAYMENT with a payment', function () {",
+                  "pm.collectionVariables.set('checkoutUrl', o.checkoutUrl);",
+                  "pm.test('Order is AWAITING_PAYMENT with a checkout page to pay on', function () {",
                   "    pm.expect(o.status).to.eql('AWAITING_PAYMENT');",
                   "    pm.expect(o.paymentId).to.be.a('number');",
+                  "    pm.expect(o.checkoutUrl).to.be.a('string').and.include('/checkout/cs_');",
                   "});",
+                  "",
                   "pm.test('Priced from inventory: total = quantity x unitPrice', function () {",
                   "    var unit = Number(pm.collectionVariables.get('unitPrice'));",
                   "    pm.expect(Number(o.items[0].unitPrice)).to.eql(unit);",
                   "    pm.expect(Number(o.totalAmount)).to.be.closeTo(2 * unit, 0.001);",
                   "    pm.expect(o.currency).to.eql('USD');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Open Checkout Page",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{checkoutUrl}}",
+            "description": "The hosted payment page the customer is redirected to (open {{checkoutUrl}} in a browser to see it)."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('checkoutUrl')) {",
+                  "    throw new Error('{{checkoutUrl}} is empty - run \\'Create Order\\' first (and make sure no active environment defines checkoutUrl).');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Page shows the order total', function () {",
+                  "    var total = (2 * Number(pm.collectionVariables.get('unitPrice'))).toFixed(2);",
+                  "    pm.expect(pm.response.text()).to.include(total + ' USD');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Pay with Declined Card [expect 402]",
+          "protocolProfileBehavior": {
+            "followRedirects": false
+          },
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{checkoutUrl}}/pay",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "name",
+                  "value": "Alice Example"
+                },
+                {
+                  "key": "cardNumber",
+                  "value": "{{declineCard}}"
+                },
+                {
+                  "key": "expiry",
+                  "value": "12/30"
+                },
+                {
+                  "key": "cvc",
+                  "value": "123"
+                }
+              ]
+            },
+            "description": "A decline doesn't fail the order - the page lets the customer try another card."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('checkoutUrl')) {",
+                  "    throw new Error('{{checkoutUrl}} is empty - run \\'the Create Order step in this folder\\' first (and make sure no active environment defines checkoutUrl).');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 402', function () { pm.response.to.have.status(402); });",
+                  "pm.test('Decline is shown on the page and the customer can retry', function () {",
+                  "    pm.expect(pm.response.text()).to.include('declined');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Order Still Awaiting Payment",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders/{{orderId}}",
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "{{orderId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Still AWAITING_PAYMENT after a declined card', function () {",
+                  "    pm.expect(pm.response.json().status).to.eql('AWAITING_PAYMENT');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Pay with Test Card",
+          "protocolProfileBehavior": {
+            "followRedirects": false
+          },
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{checkoutUrl}}/pay",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "name",
+                  "value": "Alice Example"
+                },
+                {
+                  "key": "cardNumber",
+                  "value": "{{successCard}}"
+                },
+                {
+                  "key": "expiry",
+                  "value": "12/30"
+                },
+                {
+                  "key": "cvc",
+                  "value": "123"
+                }
+              ]
+            },
+            "description": "Test card 4242 4242 4242 4242 succeeds. The provider notifies payment-service by signed webhook and redirects the browser back to the Web UI."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('checkoutUrl')) {",
+                  "    throw new Error('{{checkoutUrl}} is empty - run \\'the Create Order step in this folder\\' first (and make sure no active environment defines checkoutUrl).');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 303', function () { pm.response.to.have.status(303); });",
+                  "pm.test('Redirected back to the store with payment=success', function () {",
+                  "    var location = pm.response.headers.get('Location');",
+                  "    pm.expect(location).to.include('payment=success');",
+                  "    pm.expect(location).to.include('orderId=');",
                   "});"
                 ]
               }
@@ -579,7 +695,7 @@
                 "{{orderId}}"
               ]
             },
-            "description": "Polls automatically in the Runner/newman (manually: re-send). payment-service settles on a ~5s sweep, then the orders saga job confirms and creates the shipment on its own ~5s sweep."
+            "description": "The webhook completes the payment, the orders saga confirms the stock reservation and creates the shipment."
           },
           "event": [
             {
@@ -597,6 +713,7 @@
                   "        pm.expect(done, 'still not reached after ' + polls + ' polls (currently: ' + (body ? body.status : pm.response.code) + ')').to.be.true;",
                   "    });",
                   "    pm.collectionVariables.set('shipmentId', body && body.shipmentId);",
+                  "    pm.test('Checkout link no longer offered', function () { pm.expect(body.checkoutUrl).to.be.null; });",
                   "} else {",
                   "    pm.collectionVariables.set(pollKey, polls + 1);",
                   "    console.log(pm.info.requestName + ': waiting (' + (polls + 1) + '/20), currently ' + (body ? body.status : pm.response.code));",
@@ -628,7 +745,7 @@
                 "{{paymentId}}"
               ]
             },
-            "description": "Payment for the happy-path order should have settled."
+            "description": "Payment for the happy-path order should be completed."
           },
           "event": [
             {
@@ -830,7 +947,7 @@
                 "notifications"
               ]
             },
-            "description": "Filters alice's notifications to this order (by '#<orderId>' in the message). A full happy-path run queues: PAYMENT_COMPLETED, SHIPMENT_CREATED, ORDER_CONFIRMED, SHIPMENT_PICKED, SHIPMENT_IN_TRANSIT, DELIVERY_CONFIRMED. Each starts PENDING and flips to SENT on notification-service's ~5s delivery sweep."
+            "description": "Filters alice's notifications to this order (by '#<orderId>' in the message). A full happy-path run queues: PAYMENT_COMPLETED, SHIPMENT_CREATED, ORDER_CONFIRMED, SHIPMENT_PICKED, SHIPMENT_IN_TRANSIT, DELIVERY_CONFIRMED."
           },
           "event": [
             {
@@ -866,10 +983,10 @@
       ]
     },
     {
-      "name": "5. Failure Path - Payment Declined",
+      "name": "4. Customer Abandons Payment",
       "item": [
         {
-          "name": "Snapshot Stock (decline path)",
+          "name": "Snapshot Stock (abandoned checkout)",
           "request": {
             "method": "GET",
             "header": [
@@ -889,7 +1006,7 @@
                 "{{productSku}}"
               ]
             },
-            "description": "Records availableQuantity before the order that will be declined."
+            "description": "Records availableQuantity before the order whose payment the customer abandons."
           },
           "event": [
             {
@@ -898,14 +1015,14 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
-                  "pm.collectionVariables.set('stockBeforeDecline', pm.response.json().availableQuantity);"
+                  "pm.collectionVariables.set('stockBeforeAbandon', pm.response.json().availableQuantity);"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Create Order (payment will be declined)",
+          "name": "Create Order (customer will cancel payment)",
           "request": {
             "method": "POST",
             "header": [
@@ -920,7 +1037,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"items\": [\n    {\n      \"sku\": \"{{productSku}}\",\n      \"quantity\": 1\n    }\n  ],\n  \"paymentMethodId\": \"{{declinePaymentMethodId}}\",\n  \"currency\": \"USD\",\n  \"shippingDestination\": \"123 Main St, Springfield\"\n}"
+              "raw": "{\n  \"items\": [\n    {\n      \"sku\": \"{{productSku}}\",\n      \"quantity\": 1\n    }\n  ],\n  \"currency\": \"USD\",\n  \"shippingDestination\": \"123 Main St, Springfield\"\n}"
             },
             "url": {
               "raw": "{{ordersBaseUrl}}/orders",
@@ -931,7 +1048,39 @@
                 "orders"
               ]
             },
-            "description": "Uses the FAIL-DECLINE payment method. Expect 201 AWAITING_PAYMENT - the decline only happens when payment-service's job attempts settlement. Saves {{declineOrderId}} and {{declinePaymentId}}."
+            "description": "Saves {{abandonOrderId}}, {{abandonPaymentId}} and {{abandonCheckoutUrl}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
+                  "var o = pm.response.json();",
+                  "pm.collectionVariables.set('abandonOrderId', o.id);",
+                  "pm.collectionVariables.set('abandonPaymentId', o.paymentId);",
+                  "pm.collectionVariables.set('abandonCheckoutUrl', o.checkoutUrl);",
+                  "pm.test('Order is AWAITING_PAYMENT with a checkout page to pay on', function () {",
+                  "    pm.expect(o.status).to.eql('AWAITING_PAYMENT');",
+                  "    pm.expect(o.paymentId).to.be.a('number');",
+                  "    pm.expect(o.checkoutUrl).to.be.a('string').and.include('/checkout/cs_');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancel on Checkout Page",
+          "protocolProfileBehavior": {
+            "followRedirects": false
+          },
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{abandonCheckoutUrl}}/cancel",
+            "description": "The customer clicks 'Cancel and return to store' on the payment page."
           },
           "event": [
             {
@@ -939,8 +1088,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "if (!pm.variables.get('declinePaymentMethodId')) {",
-                  "    throw new Error('{{declinePaymentMethodId}} is empty - run \\'Create Payment Method (token=FAIL-DECLINE - will be declined)\\' first (and make sure no active environment defines declinePaymentMethodId).');",
+                  "if (!pm.variables.get('abandonCheckoutUrl')) {",
+                  "    throw new Error('{{abandonCheckoutUrl}} is empty - run \\'the Create Order step in this folder\\' first (and make sure no active environment defines abandonCheckoutUrl).');",
                   "}"
                 ]
               }
@@ -950,11 +1099,12 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
-                  "var o = pm.response.json();",
-                  "pm.collectionVariables.set('declineOrderId', o.id);",
-                  "pm.collectionVariables.set('declinePaymentId', o.paymentId);",
-                  "pm.test('Order is AWAITING_PAYMENT', function () { pm.expect(o.status).to.eql('AWAITING_PAYMENT'); });"
+                  "pm.test('Status is 303', function () { pm.response.to.have.status(303); });",
+                  "pm.test('Redirected back to the store with payment=cancelled', function () {",
+                  "    var location = pm.response.headers.get('Location');",
+                  "    pm.expect(location).to.include('payment=cancelled');",
+                  "    pm.expect(location).to.include('orderId=');",
+                  "});"
                 ]
               }
             }
@@ -971,16 +1121,16 @@
               }
             ],
             "url": {
-              "raw": "{{paymentBaseUrl}}/payments/{{declinePaymentId}}",
+              "raw": "{{paymentBaseUrl}}/payments/{{abandonPaymentId}}",
               "host": [
                 "{{paymentBaseUrl}}"
               ],
               "path": [
                 "payments",
-                "{{declinePaymentId}}"
+                "{{abandonPaymentId}}"
               ]
             },
-            "description": "payment-service's sweep should mark the FAIL-DECLINE payment FAILED."
+            "description": "The provider's cancellation webhook fails the payment."
           },
           "event": [
             {
@@ -988,8 +1138,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "if (!pm.variables.get('declinePaymentId')) {",
-                  "    throw new Error('{{declinePaymentId}} is empty - run \\'the Create Order step in this folder\\' first (and make sure no active environment defines declinePaymentId).');",
+                  "if (!pm.variables.get('abandonPaymentId')) {",
+                  "    throw new Error('{{abandonPaymentId}} is empty - run \\'the Create Order step in this folder\\' first (and make sure no active environment defines abandonPaymentId).');",
                   "}"
                 ]
               }
@@ -1008,7 +1158,9 @@
                   "    pm.test(\"Payment is FAILED\", function () {",
                   "        pm.expect(done, 'still not reached after ' + polls + ' polls (currently: ' + (body ? body.status : pm.response.code) + ')').to.be.true;",
                   "    });",
-                  "",
+                  "    pm.test('Failure reason explains the cancellation', function () {",
+                  "        pm.expect(body.failureReason).to.eql('Payment cancelled by customer');",
+                  "    });",
                   "} else {",
                   "    pm.collectionVariables.set(pollKey, polls + 1);",
                   "    console.log(pm.info.requestName + ': waiting (' + (polls + 1) + '/20), currently ' + (body ? body.status : pm.response.code));",
@@ -1031,13 +1183,13 @@
               }
             ],
             "url": {
-              "raw": "{{ordersBaseUrl}}/orders/{{declineOrderId}}",
+              "raw": "{{ordersBaseUrl}}/orders/{{abandonOrderId}}",
               "host": [
                 "{{ordersBaseUrl}}"
               ],
               "path": [
                 "orders",
-                "{{declineOrderId}}"
+                "{{abandonOrderId}}"
               ]
             },
             "description": "Once the payment is FAILED, the orders saga releases the reservation and cancels the order."
@@ -1054,7 +1206,7 @@
                   "var done = !!body && (body.status === 'CANCELLED');",
                   "if (done || polls >= 20) {",
                   "    pm.collectionVariables.unset(pollKey);",
-                  "    pm.test(\"Declined order is CANCELLED\", function () {",
+                  "    pm.test(\"Abandoned order is CANCELLED\", function () {",
                   "        pm.expect(done, 'still not reached after ' + polls + ' polls (currently: ' + (body ? body.status : pm.response.code) + ')').to.be.true;",
                   "    });",
                   "",
@@ -1090,7 +1242,7 @@
                 "{{productSku}}"
               ]
             },
-            "description": "The declined order's reservation should have been released."
+            "description": "The abandoned order's reservation should have been released."
           },
           "event": [
             {
@@ -1100,7 +1252,7 @@
                 "exec": [
                   "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
                   "pm.test('availableQuantity is back where expected', function () {",
-                  "    pm.expect(pm.response.json().availableQuantity).to.eql(Number(pm.collectionVariables.get('stockBeforeDecline')));",
+                  "    pm.expect(pm.response.json().availableQuantity).to.eql(Number(pm.collectionVariables.get('stockBeforeAbandon')));",
                   "});"
                 ]
               }
@@ -1126,7 +1278,7 @@
                 "notifications"
               ]
             },
-            "description": "PAYMENT_FAILED and ORDER_CANCELLED notifications should be sent for the declined order."
+            "description": "PAYMENT_FAILED and ORDER_CANCELLED notifications should be sent for the abandoned order."
           },
           "event": [
             {
@@ -1135,7 +1287,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "function forOrder(list) {",
-                  "    var re = new RegExp('#' + pm.collectionVariables.get('declineOrderId') + '\\\\b');",
+                  "    var re = new RegExp('#' + pm.collectionVariables.get('abandonOrderId') + '\\\\b');",
                   "    return (list || []).filter(function (n) { return re.test(n.message); });",
                   "}",
                   "var body = pm.response.code === 200 ? pm.response.json() : null;",
@@ -1162,7 +1314,7 @@
       ]
     },
     {
-      "name": "6. Customer-Initiated Cancellation (with refund)",
+      "name": "5. Cancellation After Payment (refund)",
       "item": [
         {
           "name": "Snapshot Stock (cancellation)",
@@ -1216,7 +1368,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"items\": [\n    {\n      \"sku\": \"{{productSku}}\",\n      \"quantity\": 1\n    }\n  ],\n  \"paymentMethodId\": \"{{paymentMethodId}}\",\n  \"currency\": \"USD\",\n  \"shippingDestination\": \"123 Main St, Springfield\"\n}"
+              "raw": "{\n  \"items\": [\n    {\n      \"sku\": \"{{productSku}}\",\n      \"quantity\": 1\n    }\n  ],\n  \"currency\": \"USD\",\n  \"shippingDestination\": \"123 Main St, Springfield\"\n}"
             },
             "url": {
               "raw": "{{ordersBaseUrl}}/orders",
@@ -1227,20 +1379,9 @@
                 "orders"
               ]
             },
-            "description": "Uses the normal (succeeding) payment method. Saves {{cancelOrderId}} and {{cancelPaymentId}}."
+            "description": "Saves {{cancelOrderId}}, {{cancelPaymentId}} and {{cancelCheckoutUrl}}."
           },
           "event": [
-            {
-              "listen": "prerequest",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "if (!pm.variables.get('paymentMethodId')) {",
-                  "    throw new Error('{{paymentMethodId}} is empty - run \\'Create Payment Method (normal - will succeed)\\' first (and make sure no active environment defines paymentMethodId).');",
-                  "}"
-                ]
-              }
-            },
             {
               "listen": "test",
               "script": {
@@ -1250,7 +1391,71 @@
                   "var o = pm.response.json();",
                   "pm.collectionVariables.set('cancelOrderId', o.id);",
                   "pm.collectionVariables.set('cancelPaymentId', o.paymentId);",
-                  "pm.test('Order is AWAITING_PAYMENT', function () { pm.expect(o.status).to.eql('AWAITING_PAYMENT'); });"
+                  "pm.collectionVariables.set('cancelCheckoutUrl', o.checkoutUrl);",
+                  "pm.test('Order is AWAITING_PAYMENT with a checkout page to pay on', function () {",
+                  "    pm.expect(o.status).to.eql('AWAITING_PAYMENT');",
+                  "    pm.expect(o.paymentId).to.be.a('number');",
+                  "    pm.expect(o.checkoutUrl).to.be.a('string').and.include('/checkout/cs_');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Pay with Test Card",
+          "protocolProfileBehavior": {
+            "followRedirects": false
+          },
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{cancelCheckoutUrl}}/pay",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "name",
+                  "value": "Alice Example"
+                },
+                {
+                  "key": "cardNumber",
+                  "value": "{{successCard}}"
+                },
+                {
+                  "key": "expiry",
+                  "value": "12/30"
+                },
+                {
+                  "key": "cvc",
+                  "value": "123"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('cancelCheckoutUrl')) {",
+                  "    throw new Error('{{cancelCheckoutUrl}} is empty - run \\'the Create Order step in this folder\\' first (and make sure no active environment defines cancelCheckoutUrl).');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 303', function () { pm.response.to.have.status(303); });",
+                  "pm.test('Redirected back to the store with payment=success', function () {",
+                  "    var location = pm.response.headers.get('Location');",
+                  "    pm.expect(location).to.include('payment=success');",
+                  "    pm.expect(location).to.include('orderId=');",
+                  "});"
                 ]
               }
             }
@@ -1276,7 +1481,7 @@
                 "{{cancelOrderId}}"
               ]
             },
-            "description": "Waits for CONFIRMED so the cancellation below exercises the refund branch (cancelling while AWAITING_PAYMENT only releases stock)."
+            "description": "Waits for CONFIRMED so the cancellation below exercises the refund branch."
           },
           "event": [
             {
@@ -1326,7 +1531,7 @@
                 "cancel"
               ]
             },
-            "description": "Expect 200 CANCELLED. Releases inventory and, because the order was CONFIRMED, refunds the payment."
+            "description": "Expect 200 CANCELLED. Releases inventory and, because the order was paid, refunds the payment through the provider."
           },
           "event": [
             {
@@ -1397,7 +1602,7 @@
                 "{{cancelPaymentId}}"
               ]
             },
-            "description": "Cancelling a CONFIRMED order refunds its payment."
+            "description": "Cancelling a paid order refunds its payment."
           },
           "event": [
             {
@@ -1478,7 +1683,7 @@
       ]
     },
     {
-      "name": "7. Negative Checks",
+      "name": "6. Negative Checks",
       "item": [
         {
           "name": "Cancel Delivered Order [expect 409]",
@@ -1501,7 +1706,7 @@
                 "cancel"
               ]
             },
-            "description": "The happy-path order from folder 4 is DELIVERED and can no longer be cancelled."
+            "description": "The happy-path order from folder 3 is DELIVERED and can no longer be cancelled."
           },
           "event": [
             {
@@ -1510,6 +1715,260 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 409', function () { pm.response.to.have.status(409); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Pay Completed Checkout Again [expect 409]",
+          "protocolProfileBehavior": {
+            "followRedirects": false
+          },
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{checkoutUrl}}/pay",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "name",
+                  "value": "Alice Example"
+                },
+                {
+                  "key": "cardNumber",
+                  "value": "{{successCard}}"
+                },
+                {
+                  "key": "expiry",
+                  "value": "12/30"
+                },
+                {
+                  "key": "cvc",
+                  "value": "123"
+                }
+              ]
+            },
+            "description": "A checkout can only be paid once."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('checkoutUrl')) {",
+                  "    throw new Error('{{checkoutUrl}} is empty - run \\'the Create Order step in this folder\\' first (and make sure no active environment defines checkoutUrl).');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 409', function () { pm.response.to.have.status(409); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Order (cancelled before paying)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customerToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"sku\": \"{{productSku}}\",\n      \"quantity\": 1\n    }\n  ],\n  \"currency\": \"USD\",\n  \"shippingDestination\": \"123 Main St, Springfield\"\n}"
+            },
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders",
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            },
+            "description": "Used to check that paying after the order was cancelled gets refunded."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
+                  "var o = pm.response.json();",
+                  "pm.collectionVariables.set('lateOrderId', o.id);",
+                  "pm.collectionVariables.set('latePaymentId', o.paymentId);",
+                  "pm.collectionVariables.set('lateCheckoutUrl', o.checkoutUrl);",
+                  "pm.test('Order is AWAITING_PAYMENT with a checkout page to pay on', function () {",
+                  "    pm.expect(o.status).to.eql('AWAITING_PAYMENT');",
+                  "    pm.expect(o.paymentId).to.be.a('number');",
+                  "    pm.expect(o.checkoutUrl).to.be.a('string').and.include('/checkout/cs_');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancel Order Before Paying",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders/{{lateOrderId}}/cancel",
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "{{lateOrderId}}",
+                "cancel"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Pay on the Still-Open Checkout Page",
+          "protocolProfileBehavior": {
+            "followRedirects": false
+          },
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{lateCheckoutUrl}}/pay",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "name",
+                  "value": "Alice Example"
+                },
+                {
+                  "key": "cardNumber",
+                  "value": "{{successCard}}"
+                },
+                {
+                  "key": "expiry",
+                  "value": "12/30"
+                },
+                {
+                  "key": "cvc",
+                  "value": "123"
+                }
+              ]
+            },
+            "description": "E.g. the customer cancelled in one tab and paid in another. The provider still takes the payment..."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('lateCheckoutUrl')) {",
+                  "    throw new Error('{{lateCheckoutUrl}} is empty - run \\'the Create Order step in this folder\\' first (and make sure no active environment defines lateCheckoutUrl).');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 303', function () { pm.response.to.have.status(303); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Late Payment Is Refunded",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentBaseUrl}}/payments/{{latePaymentId}}",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "{{latePaymentId}}"
+              ]
+            },
+            "description": "...so OrderSphere refunds it automatically instead of keeping money for a cancelled order."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('latePaymentId')) {",
+                  "    throw new Error('{{latePaymentId}} is empty - run \\'the Create Order step in this folder\\' first (and make sure no active environment defines latePaymentId).');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var body = pm.response.code === 200 ? pm.response.json() : null;",
+                  "var pollKey = 'poll_' + pm.info.requestId;",
+                  "var polls = Number(pm.collectionVariables.get(pollKey) || 0);",
+                  "var done = !!body && (body.status === 'REFUNDED');",
+                  "if (done || polls >= 20) {",
+                  "    pm.collectionVariables.unset(pollKey);",
+                  "    pm.test(\"Payment is REFUNDED\", function () {",
+                  "        pm.expect(done, 'still not reached after ' + polls + ' polls (currently: ' + (body ? body.status : pm.response.code) + ')').to.be.true;",
+                  "    });",
+                  "",
+                  "} else {",
+                  "    pm.collectionVariables.set(pollKey, polls + 1);",
+                  "    console.log(pm.info.requestName + ': waiting (' + (polls + 1) + '/20), currently ' + (body ? body.status : pm.response.code));",
+                  "    setTimeout(function () {}, 3000);",
+                  "    pm.execution.setNextRequest(pm.info.requestId);",
+                  "}"
                 ]
               }
             }
@@ -1573,7 +2032,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"items\": [\n    {\n      \"sku\": \"NO-SUCH-SKU\",\n      \"quantity\": 1\n    }\n  ],\n  \"paymentMethodId\": \"{{paymentMethodId}}\",\n  \"currency\": \"USD\",\n  \"shippingDestination\": \"123 Main St, Springfield\"\n}"
+              "raw": "{\n  \"items\": [\n    {\n      \"sku\": \"NO-SUCH-SKU\",\n      \"quantity\": 1\n    }\n  ],\n  \"currency\": \"USD\",\n  \"shippingDestination\": \"123 Main St, Springfield\"\n}"
             },
             "url": {
               "raw": "{{ordersBaseUrl}}/orders",
@@ -1584,20 +2043,9 @@
                 "orders"
               ]
             },
-            "description": "The API accepts the order (201) but inventory can't reserve it, so it comes back already CANCELLED with no payment taken."
+            "description": "The API accepts the order (201) but inventory can't reserve it, so it comes back already CANCELLED with no checkout opened."
           },
           "event": [
-            {
-              "listen": "prerequest",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "if (!pm.variables.get('paymentMethodId')) {",
-                  "    throw new Error('{{paymentMethodId}} is empty - run \\'Create Payment Method (normal - will succeed)\\' first (and make sure no active environment defines paymentMethodId).');",
-                  "}"
-                ]
-              }
-            },
             {
               "listen": "test",
               "script": {
@@ -1605,9 +2053,10 @@
                 "exec": [
                   "pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
                   "var o = pm.response.json();",
-                  "pm.test('Order CANCELLED without charging', function () {",
+                  "pm.test('Order CANCELLED without a payment or checkout page', function () {",
                   "    pm.expect(o.status).to.eql('CANCELLED');",
                   "    pm.expect(o.paymentId).to.be.null;",
+                  "    pm.expect(o.checkoutUrl).to.be.null;",
                   "});"
                 ]
               }

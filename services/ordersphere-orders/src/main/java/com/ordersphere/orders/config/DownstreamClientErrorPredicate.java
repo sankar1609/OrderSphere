@@ -6,7 +6,7 @@ import org.springframework.web.client.RestClientResponseException;
 
 /**
  * Circuit-breaker ignore predicate: a downstream that answered with a 4xx is healthy - it rejected
- * this particular request (unknown SKU, someone else's payment method, ...). Counting those as
+ * this particular request (unknown SKU, an order that doesn't exist, ...). Counting those as
  * failures would let a burst of bad customer requests open the breaker and fail every valid order
  * too. 408 and 429 are the exception: they mean the downstream is struggling, so they still count.
  *

@@ -20,7 +20,7 @@ import org.springframework.web.client.RestClient;
 class PaymentClientTest {
 
   @Test
-  void initiateSendsExpectedRequestAndReturnsPaymentId() {
+  void initiateSendsExpectedRequestAndReturnsPaymentAndCheckoutUrl() {
     RestClient.Builder builder = RestClient.builder();
     MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
     PaymentClient client = new PaymentClient(builder);
@@ -30,13 +30,17 @@ class PaymentClientTest {
         .andExpect(method(HttpMethod.POST))
         .andExpect(header("Authorization", "Bearer token"))
         .andExpect(jsonPath("$.orderId").value(1))
-        .andExpect(jsonPath("$.paymentMethodId").value(5))
+        .andExpect(jsonPath("$.paymentMethodId").doesNotExist())
         .andRespond(
-            withSuccess("{\"id\": 42, \"status\": \"PENDING\"}", MediaType.APPLICATION_JSON));
+            withSuccess(
+                "{\"id\": 42, \"status\": \"PENDING\", \"checkoutUrl\": \"http://gw/checkout/cs_1\"}",
+                MediaType.APPLICATION_JSON));
 
-    Long paymentId = client.initiate(1L, 5L, new BigDecimal("20.00"), "USD", "Bearer token");
+    PaymentClient.InitiatedPayment payment =
+        client.initiate(1L, new BigDecimal("20.00"), "USD", "Bearer token");
 
-    assertThat(paymentId).isEqualTo(42L);
+    assertThat(payment.id()).isEqualTo(42L);
+    assertThat(payment.checkoutUrl()).isEqualTo("http://gw/checkout/cs_1");
     server.verify();
   }
 
@@ -48,8 +52,7 @@ class PaymentClientTest {
 
     server.expect(requestTo("http://payment-service/payments")).andRespond(withServerError());
 
-    assertThatThrownBy(
-            () -> client.initiate(1L, 5L, new BigDecimal("20.00"), "USD", "Bearer token"))
+    assertThatThrownBy(() -> client.initiate(1L, new BigDecimal("20.00"), "USD", "Bearer token"))
         .isInstanceOf(PaymentInitiationException.class);
   }
 
@@ -97,7 +100,7 @@ class PaymentClientTest {
     assertThatThrownBy(
             () ->
                 client.initiateFallback(
-                    1L, 5L, new BigDecimal("20.00"), "USD", "Bearer token", original))
+                    1L, new BigDecimal("20.00"), "USD", "Bearer token", original))
         .isSameAs(original);
   }
 
@@ -109,7 +112,6 @@ class PaymentClientTest {
             () ->
                 client.initiateFallback(
                     1L,
-                    5L,
                     new BigDecimal("20.00"),
                     "USD",
                     "Bearer token",

@@ -131,11 +131,32 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USERNAME: ordersphere
       RABBITMQ_PASSWORD: ordersphere
+      PAYMENT_GATEWAY_URL: http://dummy-payment-gateway:8087
+      PAYMENT_GATEWAY_API_KEY: ${PAYMENT_GATEWAY_API_KEY:-dpg_test_secret_key}
+      PAYMENT_GATEWAY_WEBHOOK_SECRET: ${PAYMENT_GATEWAY_WEBHOOK_SECRET:-dpg_test_webhook_secret}
+      PAYMENT_WEBHOOK_URL: http://payment-service:8084/payments/webhooks/gateway
+      PAYMENT_RETURN_URL: ${WEB_UI_URL:-http://localhost:5173/}
       JAVA_TOOL_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5008"
     depends_on:
       - postgres
       - service-registry
       - rabbitmq
+      - dummy-payment-gateway
+
+  # Stand-in for an external card payment provider: hosted checkout page + merchant API.
+  # Not registered in Eureka and not behind the API gateway - browsers and payment-service
+  # reach it directly, as they would a real provider.
+  dummy-payment-gateway:
+    build:
+      context: .
+      dockerfile: services/dummy-payment-gateway/Dockerfile
+    container_name: ordersphere-dummy-payment-gateway
+    ports:
+      - "8087:8087"
+    environment:
+      GATEWAY_PUBLIC_URL: http://localhost:8087
+      GATEWAY_API_KEY: ${PAYMENT_GATEWAY_API_KEY:-dpg_test_secret_key}
+      GATEWAY_WEBHOOK_SECRET: ${PAYMENT_GATEWAY_WEBHOOK_SECRET:-dpg_test_webhook_secret}
 
   shipping-service:
     build:

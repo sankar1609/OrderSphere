@@ -7,6 +7,5 @@ import java.math.BigDecimal;
 
 public record CreatePaymentRequest(
     @NotNull Long orderId,
-    @NotNull Long paymentMethodId,
     @NotNull @DecimalMin(value = "0.01") BigDecimal amount,
     @NotBlank String currency) {}

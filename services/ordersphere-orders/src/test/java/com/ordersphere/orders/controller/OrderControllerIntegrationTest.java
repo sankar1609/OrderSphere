@@ -85,7 +85,7 @@ class OrderControllerIntegrationTest {
 
   private CreateOrderRequest requestFor(String sku) {
     return new CreateOrderRequest(
-        List.of(new CreateOrderRequest.Item(sku, 2)), 5L, "USD", "1 Test Way");
+        List.of(new CreateOrderRequest.Item(sku, 2)), "USD", "1 Test Way");
   }
 
   @Test
@@ -95,7 +95,8 @@ class OrderControllerIntegrationTest {
 
   @Test
   void createOrderAwaitsPaymentWhenReservationAndInitiationSucceed() throws Exception {
-    when(paymentClient.initiate(any(), eq(5L), any(), eq("USD"), anyString())).thenReturn(42L);
+    when(paymentClient.initiate(any(), any(), eq("USD"), anyString()))
+        .thenReturn(new PaymentClient.InitiatedPayment(42L, "http://gw/checkout/cs_42"));
 
     mockMvc
         .perform(
@@ -129,9 +130,9 @@ class OrderControllerIntegrationTest {
 
   @Test
   void createOrderCompensatesInventoryWhenPaymentInitiationFails() throws Exception {
-    doThrow(new PaymentInitiationException("no such payment method"))
+    doThrow(new PaymentInitiationException("payment provider unavailable"))
         .when(paymentClient)
-        .initiate(any(), any(), any(), any(), anyString());
+        .initiate(any(), any(), any(), anyString());
 
     mockMvc
         .perform(
@@ -147,7 +148,8 @@ class OrderControllerIntegrationTest {
 
   @Test
   void fullSagaConfirmsOrderAndCreatesShipmentOncePaymentCompletes() throws Exception {
-    when(paymentClient.initiate(any(), any(), any(), any(), anyString())).thenReturn(42L);
+    when(paymentClient.initiate(any(), any(), any(), anyString()))
+        .thenReturn(new PaymentClient.InitiatedPayment(42L, "http://gw/checkout/cs_42"));
     when(paymentClient.getStatus(eq(42L), anyString()))
         .thenReturn(PaymentClient.PaymentStatus.COMPLETED);
     when(shippingClient.createShipment(any(), any(), any(), anyString())).thenReturn(7L);
@@ -177,7 +179,8 @@ class OrderControllerIntegrationTest {
 
   @Test
   void sagaCancelsOrderAndReleasesInventoryWhenPaymentFails() throws Exception {
-    when(paymentClient.initiate(any(), any(), any(), any(), anyString())).thenReturn(99L);
+    when(paymentClient.initiate(any(), any(), any(), anyString()))
+        .thenReturn(new PaymentClient.InitiatedPayment(99L, "http://gw/checkout/cs_99"));
     when(paymentClient.getStatus(eq(99L), anyString()))
         .thenReturn(PaymentClient.PaymentStatus.FAILED);
 
@@ -206,7 +209,8 @@ class OrderControllerIntegrationTest {
 
   @Test
   void cancelOrderIsIdempotentAndReleasesInventory() throws Exception {
-    when(paymentClient.initiate(any(), any(), any(), any(), anyString())).thenReturn(11L);
+    when(paymentClient.initiate(any(), any(), any(), anyString()))
+        .thenReturn(new PaymentClient.InitiatedPayment(11L, "http://gw/checkout/cs_11"));
 
     String createdBody =
         mockMvc
@@ -239,7 +243,8 @@ class OrderControllerIntegrationTest {
 
   @Test
   void aUserCannotSeeOrCancelAnotherUsersOrder() throws Exception {
-    when(paymentClient.initiate(any(), any(), any(), any(), anyString())).thenReturn(13L);
+    when(paymentClient.initiate(any(), any(), any(), anyString()))
+        .thenReturn(new PaymentClient.InitiatedPayment(13L, "http://gw/checkout/cs_13"));
 
     String createdBody =
         mockMvc

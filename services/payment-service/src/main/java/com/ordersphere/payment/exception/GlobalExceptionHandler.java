@@ -1,5 +1,6 @@
 package com.ordersphere.payment.exception;
 
+import com.ordersphere.payment.gateway.PaymentGatewayException;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -12,9 +13,9 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
-  @ExceptionHandler(PaymentMethodNotFoundException.class)
-  public ResponseEntity<Object> handlePaymentMethodNotFound(PaymentMethodNotFoundException ex) {
-    return errorResponse(HttpStatus.NOT_FOUND, ex.getMessage());
+  @ExceptionHandler(PaymentGatewayException.class)
+  public ResponseEntity<Object> handlePaymentGatewayFailure(PaymentGatewayException ex) {
+    return errorResponse(HttpStatus.BAD_GATEWAY, ex.getMessage());
   }
 
   @ExceptionHandler(PaymentNotFoundException.class)

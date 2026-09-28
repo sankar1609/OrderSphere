@@ -45,6 +45,10 @@ public class Order {
   @Column(name = "payment_id")
   private Long paymentId;
 
+  /** Payment provider's hosted page where the customer pays; relevant while AWAITING_PAYMENT. */
+  @Column(name = "checkout_url", length = 1024)
+  private String checkoutUrl;
+
   @Column(name = "shipment_id")
   private Long shipmentId;
 

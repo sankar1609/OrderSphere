@@ -24,19 +24,19 @@ public class PaymentClient {
   }
 
   @CircuitBreaker(name = "payment-service", fallbackMethod = "initiateFallback")
-  public Long initiate(
-      Long orderId, Long paymentMethodId, BigDecimal amount, String currency, String bearerToken) {
+  public InitiatedPayment initiate(
+      Long orderId, BigDecimal amount, String currency, String bearerToken) {
     try {
-      PaymentIdResponse response =
+      InitiatedPayment response =
           restClient
               .post()
               .uri("/payments")
               .header(HttpHeaders.AUTHORIZATION, bearerToken)
               .contentType(MediaType.APPLICATION_JSON)
-              .body(new InitiatePaymentRequest(orderId, paymentMethodId, amount, currency))
+              .body(new InitiatePaymentRequest(orderId, amount, currency))
               .retrieve()
-              .body(PaymentIdResponse.class);
-      return response.id();
+              .body(InitiatedPayment.class);
+      return response;
     } catch (RestClientResponseException ex) {
       throw new PaymentInitiationException(
           "Payment initiation failed for orderId " + orderId + " with status " + ex.getStatusCode(),
@@ -47,13 +47,8 @@ public class PaymentClient {
     }
   }
 
-  Long initiateFallback(
-      Long orderId,
-      Long paymentMethodId,
-      BigDecimal amount,
-      String currency,
-      String bearerToken,
-      Throwable ex) {
+  InitiatedPayment initiateFallback(
+      Long orderId, BigDecimal amount, String currency, String bearerToken, Throwable ex) {
     if (ex instanceof PaymentInitiationException pie) {
       throw pie;
     }
@@ -112,12 +107,12 @@ public class PaymentClient {
     REFUNDED
   }
 
-  public record InitiatePaymentRequest(
-      Long orderId, Long paymentMethodId, BigDecimal amount, String currency) {}
+  public record InitiatePaymentRequest(Long orderId, BigDecimal amount, String currency) {}
 
   public record RefundPaymentRequest(String reason) {}
 
-  public record PaymentIdResponse(Long id) {}
+  /** A pending payment and the provider's hosted page where the customer pays it. */
+  public record InitiatedPayment(Long id, String checkoutUrl) {}
 
   public record PaymentStatusResponse(Long id, PaymentStatus status) {}
 }

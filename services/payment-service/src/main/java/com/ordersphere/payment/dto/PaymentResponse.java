@@ -5,14 +5,19 @@ import com.ordersphere.payment.domain.PaymentStatus;
 import java.math.BigDecimal;
 import java.time.Instant;
 
+/**
+ * {@code checkoutUrl} is where the customer pays; it is only meaningful while the payment is
+ * PENDING. {@code failureReason} explains a FAILED payment.
+ */
 public record PaymentResponse(
     Long id,
     Long orderId,
     String customerUsername,
-    Long paymentMethodId,
     BigDecimal amount,
     String currency,
     PaymentStatus status,
+    String checkoutUrl,
+    String failureReason,
     Instant createdAt,
     Instant updatedAt) {
 
@@ -21,10 +26,11 @@ public record PaymentResponse(
         payment.getId(),
         payment.getOrderId(),
         payment.getCustomerUsername(),
-        payment.getPaymentMethod().getId(),
         payment.getAmount(),
         payment.getCurrency(),
         payment.getStatus(),
+        payment.getStatus() == PaymentStatus.PENDING ? payment.getCheckoutUrl() : null,
+        payment.getFailureReason(),
         payment.getCreatedAt(),
         payment.getUpdatedAt());
   }

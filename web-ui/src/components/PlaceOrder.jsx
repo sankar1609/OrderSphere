@@ -1,26 +1,9 @@
 import { useEffect, useState } from "react";
-import {
-  listProducts,
-  listPaymentMethods,
-  createPaymentMethod,
-  createOrder,
-} from "../api";
+import { listProducts, createOrder } from "../api";
 import { cellStyle, linkButtonStyle } from "../styles";
 import { formatMoney } from "../format";
 
-async function resolvePaymentMethodId(token) {
-  const existing = await listPaymentMethods(token);
-  if (existing.length > 0) {
-    return existing[0].id;
-  }
-  const created = await createPaymentMethod(token, {
-    type: "CARD",
-    token: `web-ui-${Date.now()}`,
-  });
-  return created.id;
-}
-
-export default function PlaceOrder({ token, onOrderPlaced, onUnauthorized }) {
+export default function PlaceOrder({ token, onUnauthorized }) {
   const [products, setProducts] = useState(null);
   const [productsError, setProductsError] = useState(null);
   const [selectedSku, setSelectedSku] = useState("");
@@ -29,7 +12,6 @@ export default function PlaceOrder({ token, onOrderPlaced, onUnauthorized }) {
   const [currency, setCurrency] = useState("USD");
   const [shippingDestination, setShippingDestination] = useState("");
   const [error, setError] = useState(null);
-  const [success, setSuccess] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -74,7 +56,6 @@ export default function PlaceOrder({ token, onOrderPlaced, onUnauthorized }) {
   async function handleSubmit(event) {
     event.preventDefault();
     setError(null);
-    setSuccess(null);
 
     if (items.length === 0) {
       setError("Add at least one item before placing the order.");
@@ -83,29 +64,24 @@ export default function PlaceOrder({ token, onOrderPlaced, onUnauthorized }) {
 
     setSubmitting(true);
     try {
-      const paymentMethodId = await resolvePaymentMethodId(token);
-      const order = await createOrder(token, {
-        items,
-        paymentMethodId,
-        currency,
-        shippingDestination,
-      });
-      setSuccess(
-        `Order #${order.id} placed (status: ${order.status}, total: ${formatMoney(
-          order.totalAmount,
-          order.currency
-        )}).`
+      const order = await createOrder(token, { items, currency, shippingDestination });
+      if (order.status === "AWAITING_PAYMENT" && order.checkoutUrl) {
+        // Hand over to the payment provider's hosted checkout page. It sends the browser back to
+        // this app (?payment=success|cancelled&orderId=...) when the customer is done.
+        window.location.assign(order.checkoutUrl);
+        return;
+      }
+      setError(
+        `Order #${order.id} couldn't be placed (status: ${order.status}). ` +
+          "Some items may be unavailable - check the catalog and try again."
       );
-      setItems([]);
-      setShippingDestination("");
-      onOrderPlaced?.(order);
+      setSubmitting(false);
     } catch (err) {
       if (err.status === 401) {
         onUnauthorized();
       } else {
         setError(err.message);
       }
-    } finally {
       setSubmitting(false);
     }
   }
@@ -213,12 +189,11 @@ export default function PlaceOrder({ token, onOrderPlaced, onUnauthorized }) {
           </label>
         </div>
         <button type="submit" disabled={submitting}>
-          {submitting ? "Placing order..." : "Place order"}
+          {submitting ? "Redirecting to payment..." : "Place order and pay"}
         </button>
       </form>
 
       {error && <p style={{ color: "crimson" }}>{error}</p>}
-      {success && <p style={{ color: "green" }}>{success}</p>}
     </div>
   );
 }

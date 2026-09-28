@@ -97,14 +97,11 @@ public class OrderService {
     orderRepository.save(order);
 
     try {
-      Long paymentId =
+      PaymentClient.InitiatedPayment payment =
           paymentClient.initiate(
-              order.getId(),
-              request.paymentMethodId(),
-              order.getTotalAmount(),
-              order.getCurrency(),
-              bearerToken);
-      order.setPaymentId(paymentId);
+              order.getId(), order.getTotalAmount(), order.getCurrency(), bearerToken);
+      order.setPaymentId(payment.id());
+      order.setCheckoutUrl(payment.checkoutUrl());
       order.markStatus(OrderStatus.AWAITING_PAYMENT);
       orderRepository.save(order);
     } catch (PaymentInitiationException ex) {
@@ -209,19 +206,28 @@ public class OrderService {
    */
   @Transactional
   public void onPaymentEvent(Long orderId, boolean succeeded) {
-    orderRepository
-        .findByIdForUpdate(orderId)
-        .filter(order -> order.getStatus() == OrderStatus.AWAITING_PAYMENT)
-        .ifPresentOrElse(
-            order -> {
-              if (succeeded) {
-                handlePaymentCompleted(order);
-              } else {
-                handlePaymentFailed(order);
-              }
-            },
-            () ->
-                log.debug("Ignoring payment event for orderId {}: not AWAITING_PAYMENT", orderId));
+    Order order = orderRepository.findByIdForUpdate(orderId).orElse(null);
+    if (order == null) {
+      log.debug("Ignoring payment event for unknown orderId {}", orderId);
+      return;
+    }
+    if (order.getStatus() == OrderStatus.AWAITING_PAYMENT) {
+      if (succeeded) {
+        handlePaymentCompleted(order);
+      } else {
+        handlePaymentFailed(order);
+      }
+    } else if (succeeded && order.getStatus() == OrderStatus.CANCELLED) {
+      // The customer paid on the still-open checkout page after the order was cancelled (e.g.
+      // they cancelled in another tab). Don't keep money for an order we won't fulfil.
+      log.warn("Payment completed for already-cancelled orderId {}; refunding", orderId);
+      paymentClient.refund(
+          order.getPaymentId(),
+          "Order was cancelled before payment completed",
+          serviceTokenProvider.bearerToken());
+    } else {
+      log.debug("Ignoring payment event for orderId {} in status {}", orderId, order.getStatus());
+    }
   }
 
   private void handlePaymentCompleted(Order order) {

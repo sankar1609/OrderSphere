@@ -32,6 +32,18 @@ Orders confirms a payment two independent ways — a `PaymentEventListener` reac
 
 A row lock only works once a row exists, so it can't protect Shipping's own create-shipment endpoint — the first call for a given order has nothing to lock yet. There, the `shipments` table's `uq_shipments_order_id_type` unique constraint is the actual serialization point: two concurrent creates can both pass the check-then-insert, but the loser's insert fails the constraint, and `ShipmentService` catches that and falls back to fetching the winner's row instead of surfacing a 500.
 
+### Payments: hosted checkout with an external provider
+
+Payment is collected the way a real card provider (e.g. Stripe Checkout) does it, with `dummy-payment-gateway` standing in for the provider. `payment-service` never sees card details:
+
+1. When Orders initiates a payment, `payment-service` opens a checkout session through `PaymentGatewayClient` (merchant API, secret-key auth) and returns its `checkoutUrl`. The order stays `AWAITING_PAYMENT` and the Web UI redirects the browser to that URL.
+2. The customer pays (or cancels) on the provider's page. A declined card is shown on the page and can be retried; only success, cancellation or expiry ends the session.
+3. The provider notifies `POST /payments/webhooks/gateway`. The endpoint has no JWT; instead the raw body must carry a valid HMAC-SHA256 signature (`X-Dummy-Gateway-Signature`) made with the shared webhook secret. The provider then redirects the browser back to the Web UI (`?payment=success|cancelled&orderId=N`), which polls the order until it settles.
+4. Webhooks are best-effort, so `PaymentProcessingJob` also polls the provider for every PENDING payment. That catches lost webhooks and expired sessions (10 minutes, deliberately shorter than Inventory's 15-minute reservation hold). The webhook and the sweep take the same row lock, and only a PENDING payment is updated, so an outcome is applied once.
+5. From there the saga is unchanged: `PaymentCompletedEvent` confirms the reservation and creates the shipment; `PaymentFailedEvent` releases stock and cancels. One new case: a successful payment for an order that was already cancelled (the customer paid on a page that was still open) is refunded automatically.
+
+Swapping in a real provider means replacing `DummyPaymentGatewayClient` and the webhook's signature check; the rest of the flow stays the same.
+
 ### Events as the async layer
 
 Every state change Orders, Payment, or Shipping makes is also published locally as a Spring `ApplicationEvent` and relayed onto a RabbitMQ topic exchange by a shared `DomainEventRelay`. Three things consume off that bus today: Notification service, which reacts to order, payment, and shipment events to trigger customer messages; Orders itself, listening for `PaymentCompletedEvent`/`PaymentFailedEvent` as a low-latency shortcut around its own polling sweep job; and Shipping, which halts an in-flight shipment when it hears `OrderCancelledEvent`. Inventory and Payment are not yet wired as message consumers — every service publishes into the same exchange (see §4), but only 6 of the 19 event types anyone publishes actually have a bound queue reading them.
@@ -80,10 +92,11 @@ Eight runtime services plus two shared libraries. Ports match the Docker Compose
 | `auth-service` | 8081 | Registration, login, JWT issuance, role assignment (admin-only) | `auth_db` |
 | `ordersphere-orders` | 8082 | Order lifecycle and saga orchestration — calls inventory, payment, shipping | `orders_db` |
 | `inventory-service` | 8083 | Product catalog, stock levels, reservation and release | `inventory_db` |
-| `payment-service` | 8084 | Payment methods, async payment processing, refunds | `payment_db` |
+| `payment-service` | 8084 | Hosted-checkout payments (checkout sessions, signed provider webhooks, reconciliation), refunds | `payment_db` |
 | `shipping-service` | 8085 | Shipment creation, tracking-stage progression, returns | `shipping_db` |
 | `notification-service` | 8086 | Multi-channel notification delivery, per-channel preferences, retry | `notification_db` |
 | `service-registry` | 8761 | Eureka server — service discovery for every service above | — |
+| `dummy-payment-gateway` | 8087 | Stand-in external payment provider: hosted checkout page, merchant API, HMAC-signed webhooks. Not in Eureka, not behind the gateway | — (in memory) |
 | `common-events` | — | Shared library: event POJOs, topic-exchange auto-configuration, routing-key derivation, dead-letter relay | — |
 | `common-security` | — | Shared library: JWT issuance/validation, Spring Security filter, role model | — |
 

@@ -4,7 +4,6 @@ import Register from "./components/Register";
 import OrdersList from "./components/OrdersList";
 import ProductsList from "./components/ProductsList";
 import PlaceOrder from "./components/PlaceOrder";
-import PaymentMethods from "./components/PaymentMethods";
 
 function readStoredToken() {
   try {
@@ -14,11 +13,31 @@ function readStoredToken() {
   }
 }
 
+/**
+ * The payment provider redirects back here with ?payment=success|cancelled&orderId=N. Pure read:
+ * React may call a state initializer twice (StrictMode), so stripping the query happens in an
+ * effect instead.
+ */
+function readPaymentReturn() {
+  const params = new URLSearchParams(window.location.search);
+  const outcome = params.get("payment");
+  const orderId = params.get("orderId");
+  return outcome && orderId ? { outcome, orderId } : null;
+}
+
 export default function App() {
   const [token, setToken] = useState(readStoredToken);
   const [view, setView] = useState("login"); // "login" | "register"
-  const [page, setPage] = useState("orders"); // "orders" | "products" | "placeOrder" | "paymentMethods"
+  const [page, setPage] = useState("orders"); // "orders" | "products" | "placeOrder"
+  const [paymentReturn] = useState(readPaymentReturn);
   const [sessionMessage, setSessionMessage] = useState(null);
+
+  // Drop the payment-return query from the address bar so a refresh doesn't replay it.
+  useEffect(() => {
+    if (paymentReturn) {
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+  }, [paymentReturn]);
 
   function handleUnauthorized() {
     setToken(null);
@@ -72,29 +91,20 @@ export default function App() {
             type="button"
             onClick={() => setPage("placeOrder")}
             disabled={page === "placeOrder"}
-            style={{ marginRight: 8 }}
           >
             Place Order
           </button>
-          <button
-            type="button"
-            onClick={() => setPage("paymentMethods")}
-            disabled={page === "paymentMethods"}
-          >
-            Payment Methods
-          </button>
         </nav>
-        {page === "orders" && <OrdersList token={token} onUnauthorized={handleUnauthorized} />}
-        {page === "products" && <ProductsList token={token} onUnauthorized={handleUnauthorized} />}
-        {page === "placeOrder" && (
-          <PlaceOrder
+        {page === "orders" && (
+          <OrdersList
             token={token}
-            onOrderPlaced={() => setPage("orders")}
             onUnauthorized={handleUnauthorized}
+            paymentReturn={paymentReturn}
           />
         )}
-        {page === "paymentMethods" && (
-          <PaymentMethods token={token} onUnauthorized={handleUnauthorized} />
+        {page === "products" && <ProductsList token={token} onUnauthorized={handleUnauthorized} />}
+        {page === "placeOrder" && (
+          <PlaceOrder token={token} onUnauthorized={handleUnauthorized} />
         )}
       </div>
     );

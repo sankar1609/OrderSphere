@@ -96,21 +96,33 @@
 
 ### 5. **Payment Service** (`payment-service`)
 - **Port:** 8084
-- **Purpose:** Asynchronous payment processing
+- **Purpose:** Collects payments through a hosted-checkout payment provider
 - **Responsibilities:**
-  - Payment initiation (`POST /payments` answers 202 Accepted; settles asynchronously)
-  - Transaction status tracking
-  - Payment method management (customers see only their own)
-  - Refund processing (COMPLETED payments only)
+  - Payment initiation (`POST /payments`, 202): opens a checkout session with the provider and returns its `checkoutUrl`; the payment stays PENDING until the customer pays there
+  - Receiving the provider's outcome via a signed webhook (`POST /payments/webhooks/gateway`, HMAC-SHA256, no JWT)
+  - Transaction status tracking (with `failureReason` for FAILED payments)
+  - Refund processing (COMPLETED payments only), executed through the provider
 - **Database:** PostgreSQL (payment_db)
 - **Key Features:**
-  - Async settlement via `PaymentProcessingJob` (~5s sweep)
-  - Stub gateway: token `FAIL-DECLINE` is declined, `FAIL-TRANSIENT` fails retryably; any other token succeeds
-  - Idempotent initiation per orderId
-  - Transient failures retried up to `PAYMENT_MAX_RETRIES` (3), then FAILED
-- **Not implemented yet:** payment reconciliation, real gateway / PCI handling
+  - Card details never reach OrderSphere - customers pay on the provider's page
+  - `PaymentGatewayClient` abstraction; `DummyPaymentGatewayClient` talks to the dummy gateway (swap for a real provider)
+  - `PaymentProcessingJob` (~5s sweep) reconciles PENDING payments with the provider (covers lost webhooks and expired checkouts) and settles refunds
+  - Idempotent initiation per orderId; webhook and sweep serialized by a row lock
+- **Not implemented yet:** real payment provider / PCI handling, saved cards
 - **Events Produced:** PaymentInitiatedEvent, PaymentCompletedEvent, PaymentFailedEvent, RefundIssuedEvent
 - **Events Consumed:** None (driven by REST calls from Orders)
+
+---
+
+### 5a. **Dummy Payment Gateway** (`dummy-payment-gateway`)
+- **Port:** 8087 (not registered in Eureka, not behind the API gateway - it stands in for an external provider)
+- **Purpose:** Development stand-in for a hosted-checkout card provider (Stripe Checkout-style)
+- **Provides:**
+  - Merchant API (`/api/checkout-sessions`, `/api/refunds`), authenticated with `Authorization: Bearer <GATEWAY_API_KEY>`
+  - Hosted checkout page (`/checkout/{sessionId}`) with Pay and Cancel; redirects back to the Web UI (`?payment=success|cancelled&orderId=N`)
+  - Signed webhooks (`X-Dummy-Gateway-Signature: sha256=<HMAC>`) to payment-service
+- **Test cards:** `4242 4242 4242 4242` succeeds; `4000 0000 0000 0002` is declined (the customer can retry on the same page); any name, a future `MM/YY` expiry, any 3-4 digit CVC
+- **Sessions:** kept in memory (lost on restart → payment-service fails those payments); expire after `GATEWAY_SESSION_TTL` (10 min, below inventory's 15-min hold)
 
 ---
 
@@ -193,9 +205,11 @@ The order saga is **orchestrated** by the Orders service over synchronous, load-
 Order Placement Flow:
 1. Client → API Gateway → Orders Service (create order, status PENDING)
 2. Orders → Inventory (REST): reserve stock; response prices each line → order total computed
-3. Orders → Payment (REST): initiate payment → order AWAITING_PAYMENT; payment is PENDING
-4. Payment job (~5s) settles with the gateway → PaymentCompletedEvent / PaymentFailedEvent
-5. Orders consumes the payment event (or its ~5s saga job polls payment status) → creates shipment via Shipping (REST) → CONFIRMED
+3. Orders → Payment (REST): initiate payment → checkout session opened → order AWAITING_PAYMENT with `checkoutUrl`; payment is PENDING
+4. Web UI redirects the browser to the payment provider's hosted checkout page; the customer pays (or cancels)
+   → provider webhook → payment-service → PaymentCompletedEvent / PaymentFailedEvent
+   (payment-service's ~5s sweep also polls the provider, so a lost webhook or an expired checkout is still picked up)
+5. Orders consumes the payment event (or its ~5s saga job polls payment status) → confirms the reservation with Inventory → creates shipment via Shipping (REST) → CONFIRMED
    (on FAILED → releases inventory → CANCELLED)
 6. Shipping job (~5s per stage) → PICKED → IN_TRANSIT → DELIVERED, emitting an event per stage
 7. Notification Service consumes order/payment/shipment events → queues notifications → delivery job sends them
@@ -221,7 +235,7 @@ Order Placement Flow:
 ## 🚀 Deployment Architecture
 
 ### Docker Compose (Development - the only deployment in the repo today)
-- `docker-compose.yml` - PostgreSQL, RabbitMQ (management UI on `:15672`, `ordersphere`/`ordersphere`), Eureka, the gateway and all six services
+- `docker-compose.yml` - PostgreSQL, RabbitMQ (management UI on `:15672`, `ordersphere`/`ordersphere`), Eureka, the gateway, all six services and the dummy payment gateway (`:8087`)
 - Each service has its own `Dockerfile` under `services/<name>/`; rebuild one with `docker compose up -d --build <service>`
 
 ### Kubernetes (Planned)
@@ -234,7 +248,8 @@ Order Placement Flow:
 
 - **JWT Authentication:** Token-based stateless auth, one shared signing secret validated by `common-security` in every service
 - **Role-Based Access Control (RBAC):** `@PreAuthorize` role checks per endpoint
-- **Resource ownership:** customers only see their own orders, payments, payment methods, shipments and notifications (404 otherwise); ADMIN sees all
+- **Resource ownership:** customers only see their own orders, payments, shipments and notifications (404 otherwise); ADMIN sees all
+- **Payments:** card details are entered only on the payment provider's hosted page; the provider's webhook is authenticated by HMAC signature and its merchant API by secret key
 - **Password Security:** Bcrypt hashing with salt
 - **Token Expiration:** 1-hour JWT expiration (no refresh or revocation yet)
 - **Service-to-Service Auth:** the orders saga mints its own ADMIN-role JWT with the shared secret (`ServiceTokenProvider`) and forwards the customer's token where acting on their behalf - a proper service identity is still TBD
@@ -251,7 +266,8 @@ Order Placement Flow:
 - **Auth Service:** `/auth/register`, `/auth/login`, `/auth/me`, `/auth/admin/users/{id}/role`
 - **Orders Service:** `/orders` (create, list), `/orders/{id}`, `/orders/{id}/cancel`
 - **Inventory Service:** `/inventory/products` (create, list, get, restock), `/inventory/reservations` (reserve, confirm, release - used by the saga)
-- **Payment Service:** `/payment-methods` (create, list, delete), `/payments` (initiate, status, refund)
+- **Payment Service:** `/payments` (initiate, status, refund), `/payments/webhooks/gateway` (provider webhook)
+- **Dummy Payment Gateway (:8087, direct):** `/checkout/{sessionId}` (hosted page), `/api/checkout-sessions`, `/api/refunds`
 - **Shipping Service:** `/shipments` (create - ADMIN), `/shipments/{id}`, `/shipments/{id}/tracking`, `/shipments/order/{orderId}`, `/shipments/{id}/return`
 - **Notifications:** `/notifications` (list, get; create - ADMIN), `/notification-preferences` (set, list, delete)
 
@@ -280,14 +296,17 @@ The system uses the Saga pattern to maintain consistency across distributed serv
 
 **Happy Path:**
 1. Order Service creates order → PENDING
-2. Inventory reserves stock and prices the lines → Payment initiated → Order AWAITING_PAYMENT
-3. Payment settles (async) → shipment created → Order CONFIRMED
+2. Inventory reserves stock and prices the lines → checkout session opened → Order AWAITING_PAYMENT (customer is sent to the payment page)
+3. Customer pays on the hosted page → inventory reservation confirmed (so it can't expire) → shipment created → Order CONFIRMED
 4. Shipment progresses to DELIVERED (the order stays CONFIRMED; delivery is tracked on the shipment)
 
 **Failure & Compensation:**
 - Inventory can't reserve (e.g. unknown SKU) or returns no price → order CANCELLED immediately, nothing charged
 - Payment initiation fails → inventory released → CANCELLED
-- Payment declined / retries exhausted → inventory released → CANCELLED
+- Card declined → shown on the payment page; the customer can retry, the order keeps waiting
+- Customer cancels on the payment page, or the checkout expires (10 min) → payment FAILED → inventory released → CANCELLED
+- Customer cancels the order but then pays on the still-open page → the late payment is refunded automatically
+- Reservation confirm fails: Inventory unavailable → order stays AWAITING_PAYMENT and the next saga sweep retries; Inventory rejects it (reservation already expired/released) → payment refunded → CANCELLED
 - Customer cancels → inventory released; payment refunded if already CONFIRMED; undelivered shipment cancelled; 409 once delivered
 - Shipment creation failure → logged; the order is still marked CONFIRMED with no shipment and is **not** retried (known gap)
 
@@ -297,7 +316,7 @@ The system uses the Saga pattern to maintain consistency across distributed serv
 
 ### Web UI (`web-ui/` - in progress, customer screens done)
 - **Technology Stack:** React 18 + Vite (no router, no server of its own); see `web-ui/README.md`
-- **Done:** login/register (JWT kept in `localStorage`, 401 → back to login), order list with totals, product catalog with prices and stock, order placement, payment-method management
+- **Done:** login/register (JWT kept in `localStorage`, 401 → back to login), order list with totals, product catalog with prices and stock, order placement with redirect to the hosted payment page and back (with a "Pay now" link for unpaid orders)
 - **Not yet:** shipment tracking, notifications and preferences, order cancellation, admin/vendor screens (products, restock, roles)
 - **Integration:** REST calls to the API Gateway (`VITE_GATEWAY_URL`, default `http://localhost:8080`); dev server on `http://localhost:5173`
 - **Deployment:** not decided (static hosting behind a CDN is the likely fit)
@@ -342,6 +361,7 @@ docker compose up -d
 # API Gateway: http://localhost:8080
 # Service Registry: http://localhost:8761
 # RabbitMQ management: http://localhost:15672 (ordersphere / ordersphere)
+# Dummy payment gateway (hosted checkout): http://localhost:8087
 # PostgreSQL: localhost:5432
 
 # Rebuild one service after a change
@@ -374,6 +394,7 @@ ordersphere/
 │   ├── payment-service/              # Payment processing
 │   ├── shipping-service/             # Shipment & logistics
 │   ├── notification-service/         # Event-driven notifications
+│   ├── dummy-payment-gateway/        # Stand-in hosted-checkout payment provider (dev/test)
 │   ├── ordersphere-gateway/          # API Gateway
 │   ├── service-registry/             # Eureka Service Registry
 │   ├── common-events/                # Shared event definitions
@@ -414,10 +435,10 @@ ordersphere/
 ## 📞 Service Communication Map
 
 ```
-External Clients
-       ↓
-  API Gateway (8080)
-   ↙ ↓ ↙ ↓ ↙ ↓ ↙ ↓
+External Clients (browser / Web UI)
+       ↓                                        ↘ redirect to pay
+  API Gateway (8080)                      Dummy Payment Gateway (8087)
+   ↙ ↓ ↙ ↓ ↙ ↓ ↙ ↓                         ↑ merchant API   ↓ signed webhook
 Auth  Orders  Inventory  Payment  Shipping  Notification
 (8081) (8082)  (8083)    (8084)   (8085)    (8086)
    ↓    ↓       ↓        ↓        ↓          ↓

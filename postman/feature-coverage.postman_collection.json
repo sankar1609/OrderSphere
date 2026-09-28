@@ -1,13 +1,21 @@
 {
   "info": {
     "name": "OrderSphere - Feature Coverage",
-    "description": "Assertion-based coverage of every implemented feature listed in CLAUDE.md that the Full Order Flow collection doesn't already exercise: auth & RBAC, inventory catalog/restock/backorders, payment methods, payment idempotency and transient-failure retries, shipment returns, notification preferences and delivery, service discovery, the RabbitMQ topology, and circuit breaker registration.\n\nRun top to bottom (`npx newman run postman/feature-coverage.postman_collection.json`) against the docker-compose stack. Every run uses fresh users/SKU suffixed with {{runId}}, so it is re-runnable. Async steps poll themselves (3s, up to 20 tries).\n\nThe RabbitMQ requests use the docker-compose default management credentials (ordersphere/ordersphere).",
+    "description": "Assertion-based coverage of every implemented feature listed in CLAUDE.md that the Full Order Flow collection doesn't already exercise: auth & RBAC, inventory catalog/restock/backorders, hosted checkout (payment idempotency, card validation, cancellation, webhook signature checks), shipment returns, notification preferences and delivery, service discovery, the RabbitMQ topology, and circuit breaker registration.\n\nRun top to bottom (`npx newman run postman/feature-coverage.postman_collection.json`) against the docker-compose stack. Every run uses fresh users/SKU suffixed with {{runId}}, so it is re-runnable. Async steps poll themselves (3s, up to 20 tries).\n\nThe RabbitMQ requests use the docker-compose default management credentials (ordersphere/ordersphere).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
     {
       "key": "gatewayBaseUrl",
       "value": "http://localhost:8080"
+    },
+    {
+      "key": "paymentGatewayUrl",
+      "value": "http://localhost:8087"
+    },
+    {
+      "key": "successCard",
+      "value": "4242 4242 4242 4242"
     },
     {
       "key": "eurekaUrl",
@@ -1199,151 +1207,15 @@
       ]
     },
     {
-      "name": "4. Payment",
+      "name": "4. Payment & Hosted Checkout",
       "item": [
         {
-          "name": "Create Payment Method (normal)",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              },
-              {
-                "key": "Authorization",
-                "value": "Bearer {{custToken}}"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"type\": \"CARD\",\n  \"token\": \"tok-cov-{{runId}}\"\n}"
-            },
-            "url": {
-              "raw": "{{paymentBaseUrl}}/payment-methods",
-              "host": [
-                "{{paymentBaseUrl}}"
-              ],
-              "path": [
-                "payment-methods"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
-                  "pm.collectionVariables.set('pmId', pm.response.json().id);"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Create Payment Method (FAIL-TRANSIENT)",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              },
-              {
-                "key": "Authorization",
-                "value": "Bearer {{custToken}}"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"type\": \"CARD\",\n  \"token\": \"FAIL-TRANSIENT\"\n}"
-            },
-            "url": {
-              "raw": "{{paymentBaseUrl}}/payment-methods",
-              "host": [
-                "{{paymentBaseUrl}}"
-              ],
-              "path": [
-                "payment-methods"
-              ]
-            },
-            "description": "The stub gateway always answers FAIL-TRANSIENT with a retryable failure."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
-                  "pm.collectionVariables.set('transientPmId', pm.response.json().id);"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Create Payment Method (scratch)",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              },
-              {
-                "key": "Authorization",
-                "value": "Bearer {{custToken}}"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"type\": \"CARD\",\n  \"token\": \"tok-scratch\"\n}"
-            },
-            "url": {
-              "raw": "{{paymentBaseUrl}}/payment-methods",
-              "host": [
-                "{{paymentBaseUrl}}"
-              ],
-              "path": [
-                "payment-methods"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
-                  "pm.collectionVariables.set('scratchPmId', pm.response.json().id);"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "List Payment Methods",
+          "name": "Gateway Merchant API Requires Key [expect 401]",
           "request": {
             "method": "GET",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{custToken}}"
-              }
-            ],
-            "url": {
-              "raw": "{{paymentBaseUrl}}/payment-methods",
-              "host": [
-                "{{paymentBaseUrl}}"
-              ],
-              "path": [
-                "payment-methods"
-              ]
-            }
+            "header": [],
+            "url": "{{paymentGatewayUrl}}/api/checkout-sessions/cs_unknown",
+            "description": "The dummy gateway's server-to-server API only answers payment-service (secret key)."
           },
           "event": [
             {
@@ -1351,110 +1223,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
-                  "pm.test(\"Lists exactly this customer's 3 methods\", function () {",
-                  "    var b = pm.response.json();",
-                  "    pm.expect(b.length).to.eql(3);",
-                  "});"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Delete Another Customer's Method [expect 404]",
-          "request": {
-            "method": "DELETE",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{otherToken}}"
-              }
-            ],
-            "url": {
-              "raw": "{{paymentBaseUrl}}/payment-methods/{{scratchPmId}}",
-              "host": [
-                "{{paymentBaseUrl}}"
-              ],
-              "path": [
-                "payment-methods",
-                "{{scratchPmId}}"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('Status is 404', function () { pm.response.to.have.status(404); });"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Delete Payment Method",
-          "request": {
-            "method": "DELETE",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{custToken}}"
-              }
-            ],
-            "url": {
-              "raw": "{{paymentBaseUrl}}/payment-methods/{{scratchPmId}}",
-              "host": [
-                "{{paymentBaseUrl}}"
-              ],
-              "path": [
-                "payment-methods",
-                "{{scratchPmId}}"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('Status is 204', function () { pm.response.to.have.status(204); });"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Delete Again [expect 404]",
-          "request": {
-            "method": "DELETE",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{custToken}}"
-              }
-            ],
-            "url": {
-              "raw": "{{paymentBaseUrl}}/payment-methods/{{scratchPmId}}",
-              "host": [
-                "{{paymentBaseUrl}}"
-              ],
-              "path": [
-                "payment-methods",
-                "{{scratchPmId}}"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('Status is 404', function () { pm.response.to.have.status(404); });"
+                  "pm.test('Status is 401', function () { pm.response.to.have.status(401); });"
                 ]
               }
             }
@@ -1476,7 +1245,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"orderId\": \"{{directOrderId}}\",\n  \"paymentMethodId\": \"{{pmId}}\",\n  \"amount\": 1.00,\n  \"currency\": \"USD\"\n}"
+              "raw": "{\n  \"orderId\": \"{{directOrderId}}\",\n  \"amount\": 1.00,\n  \"currency\": \"USD\"\n}"
             },
             "url": {
               "raw": "{{paymentBaseUrl}}/payments",
@@ -1487,7 +1256,7 @@
                 "payments"
               ]
             },
-            "description": "Uses a synthetic orderId that no real order will ever have. Settlement is async, so the API answers 202 Accepted with status PENDING."
+            "description": "Uses a synthetic orderId that no real order will ever have. Opens a checkout session; nothing is charged until the customer pays on it, so the API answers 202 Accepted with status PENDING."
           },
           "event": [
             {
@@ -1505,11 +1274,13 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 202', function () { pm.response.to.have.status(202); });",
-                  "pm.test(\"Accepted as PENDING\", function () {",
+                  "pm.test(\"PENDING with a checkout page\", function () {",
                   "    var b = pm.response.json();",
                   "    pm.expect(b.status).to.eql('PENDING');",
+                  "    pm.expect(b.checkoutUrl).to.include('/checkout/cs_');",
                   "});",
-                  "pm.collectionVariables.set('directPaymentId', pm.response.json().id);"
+                  "pm.collectionVariables.set('directPaymentId', pm.response.json().id);",
+                  "pm.collectionVariables.set('directCheckoutUrl', pm.response.json().checkoutUrl);"
                 ]
               }
             }
@@ -1531,7 +1302,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"orderId\": \"{{directOrderId}}\",\n  \"paymentMethodId\": \"{{pmId}}\",\n  \"amount\": 1.00,\n  \"currency\": \"USD\"\n}"
+              "raw": "{\n  \"orderId\": \"{{directOrderId}}\",\n  \"amount\": 1.00,\n  \"currency\": \"USD\"\n}"
             },
             "url": {
               "raw": "{{paymentBaseUrl}}/payments",
@@ -1542,7 +1313,7 @@
                 "payments"
               ]
             },
-            "description": "Payment initiation is idempotent per orderId - the existing payment comes back, no second charge."
+            "description": "Payment initiation is idempotent per orderId - the same payment and checkout come back."
           },
           "event": [
             {
@@ -1550,50 +1321,11 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"Same payment id returned\", function () {",
+                  "pm.test(\"Same payment and checkout returned\", function () {",
                   "    var b = pm.response.json();",
                   "    pm.expect(b.id).to.eql(Number(pm.collectionVariables.get('directPaymentId')));",
+                  "    pm.expect(b.checkoutUrl).to.eql(pm.collectionVariables.get('directCheckoutUrl'));",
                   "});"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Initiate with Another Customer's Method [expect 404]",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              },
-              {
-                "key": "Authorization",
-                "value": "Bearer {{otherToken}}"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"orderId\": \"{{directOrderId}}1\",\n  \"paymentMethodId\": \"{{pmId}}\",\n  \"amount\": 1.00,\n  \"currency\": \"USD\"\n}"
-            },
-            "url": {
-              "raw": "{{paymentBaseUrl}}/payments",
-              "host": [
-                "{{paymentBaseUrl}}"
-              ],
-              "path": [
-                "payments"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('Status is 404', function () { pm.response.to.have.status(404); });"
                 ]
               }
             }
@@ -1631,11 +1363,237 @@
               }
             }
           ]
+        },
+        {
+          "name": "Refund an Unpaid Payment [expect 409]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"nothing was charged\"\n}"
+            },
+            "url": {
+              "raw": "{{paymentBaseUrl}}/payments/{{directPaymentId}}/refund",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "{{directPaymentId}}",
+                "refund"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 409', function () { pm.response.to.have.status(409); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Forged Gateway Webhook Rejected [expect 401]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Dummy-Gateway-Signature",
+                "value": "sha256=forged"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"type\": \"checkout.session.completed\", \"sessionId\": \"cs_forged\", \"chargeReference\": \"ch_forged\"}"
+            },
+            "url": {
+              "raw": "{{paymentBaseUrl}}/payments/webhooks/gateway",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "webhooks",
+                "gateway"
+              ]
+            },
+            "description": "The webhook needs no JWT but must carry a valid HMAC signature - otherwise anyone could mark payments as paid."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 401', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Invalid Card Number [expect 402]",
+          "protocolProfileBehavior": {
+            "followRedirects": false
+          },
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{directCheckoutUrl}}/pay",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "name",
+                  "value": "Alice Example"
+                },
+                {
+                  "key": "cardNumber",
+                  "value": "4242 4242 4242 4241"
+                },
+                {
+                  "key": "expiry",
+                  "value": "12/30"
+                },
+                {
+                  "key": "cvc",
+                  "value": "123"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('directCheckoutUrl')) {",
+                  "    throw new Error('{{directCheckoutUrl}} is empty - run \\'the Create Order step in this folder\\' first (and make sure no active environment defines directCheckoutUrl).');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 402', function () { pm.response.to.have.status(402); });",
+                  "pm.test('Explains the problem', function () { pm.expect(pm.response.text()).to.include('card number'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancel Direct Checkout",
+          "protocolProfileBehavior": {
+            "followRedirects": false
+          },
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{directCheckoutUrl}}/cancel"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('directCheckoutUrl')) {",
+                  "    throw new Error('{{directCheckoutUrl}} is empty - run \\'the Create Order step in this folder\\' first (and make sure no active environment defines directCheckoutUrl).');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 303', function () { pm.response.to.have.status(303); });",
+                  "pm.test('Redirected back to the store with payment=cancelled', function () {",
+                  "    var location = pm.response.headers.get('Location');",
+                  "    pm.expect(location).to.include('payment=cancelled');",
+                  "    pm.expect(location).to.include('orderId=');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancelled Checkout Fails the Payment",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentBaseUrl}}/payments/{{directPaymentId}}",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "{{directPaymentId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var body = pm.response.code === 200 ? pm.response.json() : null;",
+                  "var pollKey = 'poll_' + pm.info.requestId;",
+                  "var polls = Number(pm.collectionVariables.get(pollKey) || 0);",
+                  "var done = !!body && (body.status === 'FAILED');",
+                  "if (done || polls >= 20) {",
+                  "    pm.collectionVariables.unset(pollKey);",
+                  "    pm.test(\"Payment FAILED\", function () {",
+                  "        pm.expect(done, 'still not reached after ' + polls + ' polls (currently: ' + (body ? body.status : pm.response.code) + ')').to.be.true;",
+                  "    });",
+                  "    pm.test('Failure reason recorded', function () { pm.expect(body.failureReason).to.eql('Payment cancelled by customer'); });",
+                  "} else {",
+                  "    pm.collectionVariables.set(pollKey, polls + 1);",
+                  "    console.log(pm.info.requestName + ': waiting (' + (polls + 1) + '/20), currently ' + (body ? body.status : pm.response.code));",
+                  "    setTimeout(function () {}, 3000);",
+                  "    pm.execution.setNextRequest(pm.info.requestId);",
+                  "}"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
     {
-      "name": "5. Orders (retries, backorders, isolation)",
+      "name": "5. Orders (backorders, isolation)",
       "item": [
         {
           "name": "List My Orders (none yet)",
@@ -1674,190 +1632,6 @@
           ]
         },
         {
-          "name": "Order with FAIL-TRANSIENT Card",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              },
-              {
-                "key": "Authorization",
-                "value": "Bearer {{custToken}}"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"items\": [\n    {\n      \"sku\": \"{{sku}}\",\n      \"quantity\": 1\n    }\n  ],\n  \"paymentMethodId\": \"{{transientPmId}}\",\n  \"currency\": \"USD\",\n  \"shippingDestination\": \"42 Coverage Rd\"\n}"
-            },
-            "url": {
-              "raw": "{{ordersBaseUrl}}/orders",
-              "host": [
-                "{{ordersBaseUrl}}"
-              ],
-              "path": [
-                "orders"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
-                  "pm.collectionVariables.set('transientOrderId', pm.response.json().id);",
-                  "pm.collectionVariables.set('transientPaymentId', pm.response.json().paymentId);"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Transient Payment Retries then FAILS",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{custToken}}"
-              }
-            ],
-            "url": {
-              "raw": "{{paymentBaseUrl}}/payments/{{transientPaymentId}}",
-              "host": [
-                "{{paymentBaseUrl}}"
-              ],
-              "path": [
-                "payments",
-                "{{transientPaymentId}}"
-              ]
-            },
-            "description": "payment-service retries a transient gateway failure up to payment.processing.max-retries (3), one attempt per ~5s sweep, then gives up."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "var body = pm.response.code === 200 ? pm.response.json() : null;",
-                  "var pollKey = 'poll_' + pm.info.requestId;",
-                  "var polls = Number(pm.collectionVariables.get(pollKey) || 0);",
-                  "var done = !!body && (body.status === 'FAILED');",
-                  "if (done || polls >= 20) {",
-                  "    pm.collectionVariables.unset(pollKey);",
-                  "    pm.test(\"Payment FAILED after retries\", function () {",
-                  "        pm.expect(done, 'still not reached after ' + polls + ' polls (currently: ' + (body ? body.status : pm.response.code) + ')').to.be.true;",
-                  "    });",
-                  "    pm.test('It was retried, not failed on the first sweep', function () {",
-                  "        var secs = (new Date(body.updatedAt) - new Date(body.createdAt)) / 1000;",
-                  "        pm.expect(secs).to.be.above(9);",
-                  "    });",
-                  "} else {",
-                  "    pm.collectionVariables.set(pollKey, polls + 1);",
-                  "    console.log(pm.info.requestName + ': waiting (' + (polls + 1) + '/20), currently ' + (body ? body.status : pm.response.code));",
-                  "    setTimeout(function () {}, 3000);",
-                  "    pm.execution.setNextRequest(pm.info.requestId);",
-                  "}"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Transient Order Cancelled",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{custToken}}"
-              }
-            ],
-            "url": {
-              "raw": "{{ordersBaseUrl}}/orders/{{transientOrderId}}",
-              "host": [
-                "{{ordersBaseUrl}}"
-              ],
-              "path": [
-                "orders",
-                "{{transientOrderId}}"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "var body = pm.response.code === 200 ? pm.response.json() : null;",
-                  "var pollKey = 'poll_' + pm.info.requestId;",
-                  "var polls = Number(pm.collectionVariables.get(pollKey) || 0);",
-                  "var done = !!body && (body.status === 'CANCELLED');",
-                  "if (done || polls >= 20) {",
-                  "    pm.collectionVariables.unset(pollKey);",
-                  "    pm.test(\"Order CANCELLED after payment failure\", function () {",
-                  "        pm.expect(done, 'still not reached after ' + polls + ' polls (currently: ' + (body ? body.status : pm.response.code) + ')').to.be.true;",
-                  "    });",
-                  "",
-                  "} else {",
-                  "    pm.collectionVariables.set(pollKey, polls + 1);",
-                  "    console.log(pm.info.requestName + ': waiting (' + (polls + 1) + '/20), currently ' + (body ? body.status : pm.response.code));",
-                  "    setTimeout(function () {}, 3000);",
-                  "    pm.execution.setNextRequest(pm.info.requestId);",
-                  "}"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Refund a FAILED Payment [expect 409]",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              },
-              {
-                "key": "Authorization",
-                "value": "Bearer {{custToken}}"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"reason\": \"should not be allowed\"\n}"
-            },
-            "url": {
-              "raw": "{{paymentBaseUrl}}/payments/{{transientPaymentId}}/refund",
-              "host": [
-                "{{paymentBaseUrl}}"
-              ],
-              "path": [
-                "payments",
-                "{{transientPaymentId}}",
-                "refund"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('Status is 409', function () { pm.response.to.have.status(409); });"
-                ]
-              }
-            }
-          ]
-        },
-        {
           "name": "Backorder: Order More Than In Stock",
           "request": {
             "method": "POST",
@@ -1873,7 +1647,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"items\": [\n    {\n      \"sku\": \"{{sku}}\",\n      \"quantity\": 20\n    }\n  ],\n  \"paymentMethodId\": \"{{pmId}}\",\n  \"currency\": \"USD\",\n  \"shippingDestination\": \"42 Coverage Rd\"\n}"
+              "raw": "{\n  \"items\": [\n    {\n      \"sku\": \"{{sku}}\",\n      \"quantity\": 20\n    }\n  ],\n  \"currency\": \"USD\",\n  \"shippingDestination\": \"42 Coverage Rd\"\n}"
             },
             "url": {
               "raw": "{{ordersBaseUrl}}/orders",
@@ -1884,7 +1658,7 @@
                 "orders"
               ]
             },
-            "description": "15 available, 20 ordered: 15 are reserved and 5 backordered. The order still proceeds and is charged for all 20."
+            "description": "15 available, 20 ordered: 15 are reserved and 5 backordered. The order still proceeds and is priced for all 20."
           },
           "event": [
             {
@@ -1894,6 +1668,7 @@
                 "exec": [
                   "pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
                   "pm.collectionVariables.set('boOrderId', pm.response.json().id);",
+                  "pm.collectionVariables.set('boCheckoutUrl', pm.response.json().checkoutUrl);",
                   "pm.test(\"Order accepted and priced for the full 20\", function () {",
                   "    var b = pm.response.json();",
                   "    pm.expect(b.status).to.eql('AWAITING_PAYMENT');",
@@ -1944,6 +1719,65 @@
           ]
         },
         {
+          "name": "Pay Backorder on Checkout Page",
+          "protocolProfileBehavior": {
+            "followRedirects": false
+          },
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{boCheckoutUrl}}/pay",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "name",
+                  "value": "Alice Example"
+                },
+                {
+                  "key": "cardNumber",
+                  "value": "{{successCard}}"
+                },
+                {
+                  "key": "expiry",
+                  "value": "12/30"
+                },
+                {
+                  "key": "cvc",
+                  "value": "123"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('boCheckoutUrl')) {",
+                  "    throw new Error('{{boCheckoutUrl}} is empty - run \\'the Create Order step in this folder\\' first (and make sure no active environment defines boCheckoutUrl).');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 303', function () { pm.response.to.have.status(303); });",
+                  "pm.test('Redirected back to the store with payment=success', function () {",
+                  "    var location = pm.response.headers.get('Location');",
+                  "    pm.expect(location).to.include('payment=success');",
+                  "    pm.expect(location).to.include('orderId=');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "List My Orders",
           "request": {
             "method": "GET",
@@ -1970,9 +1804,9 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
-                  "pm.test(\"Both orders listed\", function () {",
+                  "pm.test(\"Order listed\", function () {",
                   "    var b = pm.response.json();",
-                  "    pm.expect(b.map(function (o) { return o.id; })).to.include.members([Number(pm.collectionVariables.get('transientOrderId')), Number(pm.collectionVariables.get('boOrderId'))]);",
+                  "    pm.expect(b.map(function (o) { return o.id; })).to.include(Number(pm.collectionVariables.get('boOrderId')));",
                   "});"
                 ]
               }
