@@ -39,6 +39,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
 
 @ExtendWith(MockitoExtension.class)
 class OrderServiceTest {
@@ -197,7 +200,58 @@ class OrderServiceTest {
 
     assertThat(order.getStatus()).isEqualTo(OrderStatus.CONFIRMED);
     assertThat(order.getShipmentId()).isEqualTo(7L);
+    verify(inventoryClient).confirm(10L, "Bearer service-token");
     verify(eventPublisher).publishEvent(any(OrderConfirmedEvent.class));
+  }
+
+  @Test
+  void paymentCompletedStaysAwaitingPaymentWhenInventoryConfirmIsUnavailable() {
+    Order order = new Order("alice");
+    order.setId(10L);
+    order.setPaymentId(42L);
+    order.markStatus(OrderStatus.AWAITING_PAYMENT);
+    when(orderRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(order));
+    when(paymentClient.getStatus(42L, "Bearer service-token"))
+        .thenReturn(PaymentClient.PaymentStatus.COMPLETED);
+    doThrow(
+            new InventoryReservationException(
+                "down",
+                HttpServerErrorException.create(
+                    HttpStatus.SERVICE_UNAVAILABLE, "", null, null, null)))
+        .when(inventoryClient)
+        .confirm(10L, "Bearer service-token");
+
+    orderService.progressAwaitingPayment(10L);
+
+    // Left for the next saga sweep to retry - not confirmed, not cancelled, nothing refunded.
+    assertThat(order.getStatus()).isEqualTo(OrderStatus.AWAITING_PAYMENT);
+    verify(shippingClient, never()).createShipment(any(), any(), any(), any());
+    verify(paymentClient, never()).refund(any(), any(), any());
+    verify(eventPublisher, never()).publishEvent(any(OrderConfirmedEvent.class));
+    verify(eventPublisher, never()).publishEvent(any(OrderCancelledEvent.class));
+  }
+
+  @Test
+  void paymentCompletedRefundsAndCancelsWhenReservationCanNoLongerBeConfirmed() {
+    Order order = new Order("alice");
+    order.setId(10L);
+    order.setPaymentId(42L);
+    order.markStatus(OrderStatus.AWAITING_PAYMENT);
+    when(orderRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(order));
+    doThrow(
+            new InventoryReservationException(
+                "expired",
+                HttpClientErrorException.create(HttpStatus.CONFLICT, "", null, null, null)))
+        .when(inventoryClient)
+        .confirm(10L, "Bearer service-token");
+
+    orderService.onPaymentEvent(10L, true);
+
+    assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCELLED);
+    verify(paymentClient).refund(eq(42L), anyString(), eq("Bearer service-token"));
+    verify(shippingClient, never()).createShipment(any(), any(), any(), any());
+    verify(eventPublisher, never()).publishEvent(any(OrderConfirmedEvent.class));
+    verify(eventPublisher).publishEvent(any(OrderCancelledEvent.class));
   }
 
   @Test
@@ -290,6 +344,7 @@ class OrderServiceTest {
 
     assertThat(order.getStatus()).isEqualTo(OrderStatus.CONFIRMED);
     assertThat(order.getShipmentId()).isEqualTo(7L);
+    verify(inventoryClient).confirm(10L, "Bearer service-token");
     verify(eventPublisher).publishEvent(any(OrderConfirmedEvent.class));
     verify(paymentClient, never()).getStatus(any(), any());
   }

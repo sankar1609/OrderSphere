@@ -284,8 +284,6 @@ The system uses the Saga pattern to maintain consistency across distributed serv
 3. Payment settles (async) → shipment created → Order CONFIRMED
 4. Shipment progresses to DELIVERED (the order stays CONFIRMED; delivery is tracked on the shipment)
 
-> ⚠️ **Known bug:** the saga never calls Inventory's `/inventory/reservations/{orderId}/confirm`, so a successful order's reservation stays ACTIVE and is EXPIRED by `ReservationExpiryJob` after 15 minutes - returning delivered units to available stock (overselling).
-
 **Failure & Compensation:**
 - Inventory can't reserve (e.g. unknown SKU) or returns no price → order CANCELLED immediately, nothing charged
 - Payment initiation fails → inventory released → CANCELLED
@@ -436,7 +434,6 @@ Service Registry (Eureka) - 8761
 - [x] Implement circuit breakers (Resilience4j)
 - [x] CI pipeline (GitHub Actions)
 - [ ] Web UI - customer screens done; shipment tracking, notifications, cancellation and admin/vendor screens remaining
-- [ ] Fix: confirm inventory reservations when an order is confirmed (reservations currently expire and return delivered stock)
 - [ ] Fix: retry shipment creation for CONFIRMED orders left without a shipment
 - [ ] Security hardening: token refresh/revocation, gateway rate limiting, unauthenticated `/actuator/health`, PATCH in gateway CORS, real service-to-service identity; later OAuth2/OIDC
 - [ ] Consume `StockLowEvent` (e.g. notify vendors)

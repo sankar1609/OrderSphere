@@ -58,6 +58,41 @@ public class InventoryClient {
         "Inventory reservation circuit breaker open for orderId " + orderId, ex);
   }
 
+  /**
+   * Commits the order's reservation so Inventory's expiry sweep never hands the stock back. Throws
+   * {@link InventoryReservationException} on any failure - unlike {@link #release}, a lost confirm
+   * can't be swallowed, or the paid order's stock silently becomes sellable again.
+   */
+  @CircuitBreaker(name = "inventory-service", fallbackMethod = "confirmFallback")
+  public void confirm(Long orderId, String bearerToken) {
+    try {
+      restClient
+          .post()
+          .uri("/inventory/reservations/{orderId}/confirm", orderId)
+          .header(HttpHeaders.AUTHORIZATION, bearerToken)
+          .retrieve()
+          .toBodilessEntity();
+    } catch (RestClientResponseException ex) {
+      throw new InventoryReservationException(
+          "Inventory confirmation failed for orderId "
+              + orderId
+              + " with status "
+              + ex.getStatusCode(),
+          ex);
+    } catch (RestClientException ex) {
+      throw new InventoryReservationException(
+          "Inventory service unreachable while confirming orderId " + orderId, ex);
+    }
+  }
+
+  void confirmFallback(Long orderId, String bearerToken, Throwable ex) {
+    if (ex instanceof InventoryReservationException ire) {
+      throw ire;
+    }
+    throw new InventoryReservationException(
+        "Inventory confirmation circuit breaker open for orderId " + orderId, ex);
+  }
+
   @CircuitBreaker(name = "inventory-service", fallbackMethod = "releaseFallback")
   public void release(Long orderId, String bearerToken) {
     try {

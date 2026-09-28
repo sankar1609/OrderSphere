@@ -7,6 +7,7 @@ import com.ordersphere.orders.client.InventoryClient;
 import com.ordersphere.orders.client.PaymentClient;
 import com.ordersphere.orders.client.ServiceTokenProvider;
 import com.ordersphere.orders.client.ShippingClient;
+import com.ordersphere.orders.config.DownstreamClientErrorPredicate;
 import com.ordersphere.orders.domain.Order;
 import com.ordersphere.orders.domain.OrderItem;
 import com.ordersphere.orders.domain.OrderStatus;
@@ -35,6 +36,8 @@ import org.springframework.transaction.annotation.Transactional;
 public class OrderService {
 
   private static final Logger log = LoggerFactory.getLogger(OrderService.class);
+  private static final DownstreamClientErrorPredicate DOWNSTREAM_CLIENT_ERROR =
+      new DownstreamClientErrorPredicate();
 
   private final OrderRepository orderRepository;
   private final InventoryClient inventoryClient;
@@ -222,6 +225,34 @@ public class OrderService {
   }
 
   private void handlePaymentCompleted(Order order) {
+    // Commit the reservation before confirming the order: an unconfirmed reservation is expired by
+    // Inventory's sweep, which would put this paid order's stock back on sale.
+    try {
+      inventoryClient.confirm(order.getId(), serviceTokenProvider.bearerToken());
+    } catch (InventoryReservationException ex) {
+      if (DOWNSTREAM_CLIENT_ERROR.test(ex)) {
+        // Inventory rejected it: the reservation already expired or was released, so the stock is
+        // no longer held. Don't ship what we don't have - refund and cancel.
+        log.error(
+            "Reservation for paid orderId {} can no longer be confirmed ({}); refunding and"
+                + " cancelling",
+            order.getId(),
+            ex.getMessage());
+        paymentClient.refund(
+            order.getPaymentId(),
+            "Reserved stock was no longer available",
+            serviceTokenProvider.bearerToken());
+        cancelWithReason(order, OrderCancelledEvent.Reason.INVENTORY_UNAVAILABLE);
+        return;
+      }
+      // Inventory unavailable: stay AWAITING_PAYMENT so the next saga sweep retries.
+      log.warn(
+          "Could not confirm reservation for orderId {}, will retry: {}",
+          order.getId(),
+          ex.getMessage());
+      return;
+    }
+
     try {
       Long shipmentId =
           shippingClient.createShipment(
