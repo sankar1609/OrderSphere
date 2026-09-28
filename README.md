@@ -4,19 +4,13 @@ Cloud-native, microservices-based order and inventory management platform. See [
 
 ## Prerequisites
 
-- Java 17+
-- Maven 3.8+
-- Docker & Docker Compose
+- Docker & Docker Compose (Docker Desktop must be running)
+- Node.js 20+ (for the Web UI and the Postman/newman checks)
+- Java 17+ and Maven 3.8+ — only needed to run the tests or a service outside Docker. The Docker images compile the code themselves.
 
 ## Running the Full Application
 
-### 1. Build all services
-
-```bash
-mvn clean package -DskipTests
-```
-
-### 2. (Optional) Set a JWT secret
+### 1. (Optional) Set a JWT secret
 
 If unset, Docker Compose falls back to a dev-only default (`dev-only-secret-key-change-me-before-any-real-deployment`).
 
@@ -24,37 +18,75 @@ If unset, Docker Compose falls back to a dev-only default (`dev-only-secret-key-
 export JWT_SECRET=your-secret-here
 ```
 
-### 3. Start everything
+### 2. Start the backend
+
+From the repository root:
 
 ```bash
-docker-compose up --build
+docker compose up -d --build
 ```
 
-This brings up, in dependency order:
+The first build takes roughly 10–15 minutes while Maven downloads dependencies inside Docker; later builds are much faster. This starts:
 
 | Service | Port | Notes |
 |---|---|---|
-| postgres | 5432 | Single Postgres instance; per-service DBs seeded via `docker/postgres-init` |
-| service-registry | 8761 | Eureka; all other services depend on this |
-| ordersphere-gateway | 8080 | Single entry point for external clients |
+| postgres | 5432 | Single Postgres instance; per-service DBs created via `docker/postgres-init` (user/password `ordersphere`) |
+| rabbitmq | 5672, 15672 | Event broker; management UI on 15672 (user/password `ordersphere`) |
+| service-registry | 8761 | Eureka; every service registers here |
+| ordersphere-gateway | 8080 | API gateway — single entry point, routes `/{service-id}/...` |
 | auth-service | 8081 | |
 | ordersphere-orders | 8082 | |
 | inventory-service | 8083 | |
 | payment-service | 8084 | |
 | shipping-service | 8085 | |
 | notification-service | 8086 | |
+| dummy-payment-gateway | 8087 | Stand-in payment provider (hosted payment page); not in Eureka, not behind the API gateway |
 
-To run in the background:
+### 3. Wait until it's ready
+
+The compose file has no health checks: containers start immediately and keep retrying until their dependencies are up. After about a minute, open the Eureka dashboard at http://localhost:8761 and check that **7 applications are UP** (the six services plus the API gateway). `docker compose ps` lists the containers.
+
+### 4. Start the Web UI
 
 ```bash
-docker-compose up --build -d
-docker-compose logs -f <service>   # tail a specific service
+cd web-ui
+npm install      # first time only
+npm run dev
 ```
 
-### 4. Verify
+The Web UI runs on http://localhost:5173 and talks to the API gateway set in `web-ui/.env` (`VITE_GATEWAY_URL=http://localhost:8080`).
 
-- Eureka dashboard: http://localhost:8761 — confirm all services are registered
-- Gateway entry point: http://localhost:8080
+### 5. Use it
+
+| What | URL |
+|---|---|
+| Web UI | http://localhost:5173 |
+| API gateway | http://localhost:8080 |
+| Payment page (dummy gateway) | http://localhost:8087 |
+| Eureka dashboard | http://localhost:8761 |
+| RabbitMQ management | http://localhost:15672 |
+
+- **Accounts:** register customers in the Web UI. An admin account is created on first start: `admin` / `admin123` (override with `ADMIN_BOOTSTRAP_USERNAME` / `ADMIN_BOOTSTRAP_PASSWORD`).
+- **Products:** only an admin or vendor can create products, and the Web UI has no admin screens yet — create them through the API, e.g. the "Create Product (Admin/Vendor)" request in `postman/api-reference.postman_collection.json`.
+- **Paying:** placing an order takes you to the payment page. Test cards: `4242 4242 4242 4242` succeeds, `4000 0000 0000 0002` is declined (any name, a future MM/YY expiry, any CVC). No real money moves.
+
+### 6. (Optional) Check the whole flow
+
+With the stack running:
+
+```bash
+npx newman run postman/full-order-flow.postman_collection.json
+npx newman run postman/feature-coverage.postman_collection.json
+```
+
+### Day-to-day commands
+
+```bash
+docker compose up -d --build ordersphere-orders   # rebuild and restart one service after a change
+docker compose logs -f payment-service            # follow a service's logs
+docker compose down                               # stop everything, keep the data
+docker compose down -v                            # stop and wipe the data (deletes the postgres-data volume)
+```
 
 ## Running a Single Service Locally
 
@@ -65,4 +97,10 @@ cd services/<service-name>
 mvn spring-boot:run
 ```
 
-The service still needs `postgres` and `service-registry` reachable (either the Docker Compose containers or local instances), with matching `DB_HOST` / `EUREKA_URI` environment variables.
+The service still needs `postgres`, `rabbitmq` and `service-registry` reachable (either the Docker Compose containers or local instances), with matching `DB_HOST` / `RABBITMQ_HOST` / `EUREKA_URI` environment variables.
+
+To run one module's tests (this also rebuilds the shared `common-*` modules it depends on):
+
+```bash
+mvn verify -pl services/<service-name> -am
+```
