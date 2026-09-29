@@ -299,6 +299,281 @@
           ]
         },
         {
+          "name": "Login Returns a Refresh Token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"cust_{{runId}}\",\n  \"password\": \"password123\"\n}"
+            },
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/login",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Access tokens are short-lived (15 min); the refresh token renews the session. This login starts a separate session used by the refresh checks below."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"15-minute access token plus refresh token\", function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.expiresInSeconds).to.eql(900);",
+                  "    pm.expect(b.refreshToken).to.be.a('string').and.not.empty;",
+                  "});",
+                  "pm.collectionVariables.set('refreshToken', pm.response.json().refreshToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refresh Rotates the Refresh Token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
+            },
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/refresh",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "refresh"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"New access token and a different refresh token\", function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.token).to.be.a('string').and.not.empty;",
+                  "    pm.expect(b.refreshToken).to.not.eql(pm.collectionVariables.get('refreshToken'));",
+                  "});",
+                  "pm.collectionVariables.set('rotatedRefreshToken', pm.response.json().refreshToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reusing a Used Refresh Token [expect 401]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
+            },
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/refresh",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "refresh"
+              ]
+            },
+            "description": "Refresh tokens are single-use. Reuse means it leaked, so it fails..."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 401', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "...and Revokes the Whole Session [expect 401]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{rotatedRefreshToken}}\"\n}"
+            },
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/refresh",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "refresh"
+              ]
+            },
+            "description": "...and the token it had been rotated into stops working too."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 401', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login for Logout Check",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"cust_{{runId}}\",\n  \"password\": \"password123\"\n}"
+            },
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/login",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.collectionVariables.set('logoutRefreshToken', pm.response.json().refreshToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{logoutRefreshToken}}\"\n}"
+            },
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/logout",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "logout"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 204', function () { pm.response.to.have.status(204); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refresh After Logout [expect 401]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{logoutRefreshToken}}\"\n}"
+            },
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/refresh",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "refresh"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 401', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Get Me (customer)",
           "request": {
             "method": "GET",

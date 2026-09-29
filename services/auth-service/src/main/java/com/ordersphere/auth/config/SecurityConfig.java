@@ -43,6 +43,8 @@ public class SecurityConfig {
                 auth.requestMatchers(
                         "/auth/register",
                         "/auth/login",
+                        "/auth/refresh",
+                        "/auth/logout",
                         "/auth/token",
                         "/auth/.well-known/jwks.json",
                         "/error")

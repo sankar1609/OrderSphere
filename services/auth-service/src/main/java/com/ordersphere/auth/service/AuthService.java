@@ -10,6 +10,7 @@ import com.ordersphere.auth.exception.DuplicateUsernameException;
 import com.ordersphere.auth.exception.InvalidRoleSelectionException;
 import com.ordersphere.auth.exception.UserNotFoundException;
 import com.ordersphere.auth.repository.UserRepository;
+import com.ordersphere.auth.security.RefreshTokenService;
 import com.ordersphere.auth.security.TokenIssuer;
 import com.ordersphere.events.UserAuthenticatedEvent;
 import com.ordersphere.events.UserRegisteredEvent;
@@ -28,16 +29,19 @@ public class AuthService {
   private final UserRepository userRepository;
   private final PasswordEncoder passwordEncoder;
   private final TokenIssuer tokenIssuer;
+  private final RefreshTokenService refreshTokens;
   private final ApplicationEventPublisher eventPublisher;
 
   public AuthService(
       UserRepository userRepository,
       PasswordEncoder passwordEncoder,
       TokenIssuer tokenIssuer,
+      RefreshTokenService refreshTokens,
       ApplicationEventPublisher eventPublisher) {
     this.userRepository = userRepository;
     this.passwordEncoder = passwordEncoder;
     this.tokenIssuer = tokenIssuer;
+    this.refreshTokens = refreshTokens;
     this.eventPublisher = eventPublisher;
   }
 
@@ -70,12 +74,36 @@ public class AuthService {
       throw new BadCredentialsException("Invalid username or password");
     }
 
-    TokenIssuer.IssuedToken token =
-        tokenIssuer.issueAccessToken(user.getUsername(), user.getRole().name());
-
     eventPublisher.publishEvent(new UserAuthenticatedEvent(user.getId(), user.getUsername()));
 
-    return AuthResponse.bearer(token.token(), token.expiresInSeconds());
+    return tokensFor(user, refreshTokens.issue(user));
+  }
+
+  /** Exchanges a refresh token for a new access token and a new (rotated) refresh token. */
+  public AuthResponse refresh(String refreshToken) {
+    RefreshTokenService.Rotation rotation = refreshTokens.rotate(refreshToken);
+    return tokensFor(rotation.user(), rotation.refreshToken());
+  }
+
+  /** Ends the session the refresh token belongs to. */
+  public void logout(String refreshToken) {
+    refreshTokens.revokeSession(refreshToken);
+  }
+
+  /** Ends every session of the user. */
+  public void logoutEverywhere(String username) {
+    User user =
+        userRepository
+            .findByUsername(username)
+            .orElseThrow(
+                () -> new UserNotFoundException("No user found for username: " + username));
+    refreshTokens.revokeAll(user);
+  }
+
+  private AuthResponse tokensFor(User user, String refreshToken) {
+    TokenIssuer.IssuedToken access =
+        tokenIssuer.issueAccessToken(user.getUsername(), user.getRole().name());
+    return AuthResponse.bearer(access.token(), access.expiresInSeconds(), refreshToken);
   }
 
   public UserResponse getCurrentUser(String username) {
@@ -92,6 +120,10 @@ public class AuthService {
             .orElseThrow(() -> new UserNotFoundException("No user found with id: " + userId));
 
     user.setRole(newRole);
-    return UserResponse.from(userRepository.save(user));
+    User saved = userRepository.save(user);
+    // Sessions refresh into tokens carrying the old role; end them so the new role applies from
+    // the next login (access tokens already out expire within their short lifetime).
+    refreshTokens.revokeAll(saved);
+    return UserResponse.from(saved);
   }
 }

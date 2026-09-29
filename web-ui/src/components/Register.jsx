@@ -16,8 +16,7 @@ export default function Register({ onRegistered, onSwitchToLogin }) {
       await register(username, password);
       // Registration doesn't return a token - log straight in with the same
       // credentials so signing up is a single flow, not two.
-      const { token } = await login(username, password);
-      onRegistered(token);
+      onRegistered(await login(username, password));
     } catch (err) {
       setError(err.message);
     } finally {

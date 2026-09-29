@@ -47,10 +47,11 @@
   - Password hashing with bcrypt
 - **Database:** PostgreSQL (auth_db)
 - **Key Features:**
-  - JWT token expiration: 1 hour
+  - Access tokens expire after 15 minutes (`JWT_EXPIRATION_MILLIS`); sessions continue via refresh tokens (`POST /auth/refresh`, 30 days, `AUTH_REFRESH_TOKEN_TTL`)
+  - Refresh tokens are stored hashed and single-use: each refresh rotates them, and reusing a spent one revokes the whole session (token family)
+  - `POST /auth/logout` ends one session, `POST /auth/logout-all` ends all of a user's sessions; an admin role change also ends them
   - Support for multiple user roles (CUSTOMER, VENDOR, ADMIN, AUDITOR)
   - Bootstrapped admin account on startup (`ADMIN_BOOTSTRAP_USERNAME`/`ADMIN_BOOTSTRAP_PASSWORD`, defaults `admin`/`admin123`)
-- **Not implemented yet:** token refresh, token revocation/logout
 - **Events Produced:** UserRegisteredEvent, UserAuthenticatedEvent
 - **Events Consumed:** None
 
@@ -253,7 +254,7 @@ Order Placement Flow:
 - **Internal endpoints:** stock reservations, payment initiation/refund, shipment creation and direct notifications require the `SERVICE` or `ADMIN` role - customers get 403
 - **Payments:** card details are entered only on the payment provider's hosted page; the provider's webhook is authenticated by HMAC signature and its merchant API by secret key
 - **Password Security:** Bcrypt hashing with salt
-- **Token Expiration:** 1-hour JWT expiration (no refresh or revocation yet)
+- **Token Expiration & Revocation:** 15-minute access tokens plus rotating, revocable refresh tokens. Logout/role changes stop a session from refreshing; an access token already issued stays valid until it expires (at most 15 minutes)
 - **Service-to-Service Auth:** the orders saga calls every downstream service with its own `SERVICE`-role token, never the customer's. `ServiceTokenProvider` obtains it from auth-service via client credentials (`POST /auth/token`) and caches it until shortly before expiry
 - **Audit Trail (Planned):** Blockchain-based immutable audit logs via Hyperledger Fabric
 
@@ -458,7 +459,8 @@ Service Registry (Eureka) - 8761
 - [x] CI pipeline (GitHub Actions)
 - [ ] Web UI - customer screens done; shipment tracking, notifications, cancellation and admin/vendor screens remaining
 - [ ] Fix: retry shipment creation for CONFIRMED orders left without a shipment
-- [ ] Security hardening: token refresh/revocation, gateway rate limiting, unauthenticated `/actuator/health`, PATCH in gateway CORS, real service-to-service identity; later OAuth2/OIDC
+- [x] Security hardening: internal endpoints limited to SERVICE/ADMIN, RS256 tokens signed only by auth-service (JWKS), service identity via client credentials, refresh tokens with rotation/revocation
+- [ ] Security hardening (remaining): gateway rate limiting, unauthenticated `/actuator/health`, PATCH in gateway CORS; later OAuth2/OIDC
 - [ ] Consume `StockLowEvent` (e.g. notify vendors)
 - [ ] Payment reconciliation
 - [ ] Add comprehensive API documentation (OpenAPI/Swagger)

@@ -2,6 +2,7 @@ package com.ordersphere.auth.controller;
 
 import com.ordersphere.auth.dto.AuthResponse;
 import com.ordersphere.auth.dto.LoginRequest;
+import com.ordersphere.auth.dto.RefreshRequest;
 import com.ordersphere.auth.dto.RegisterRequest;
 import com.ordersphere.auth.dto.UserResponse;
 import com.ordersphere.auth.service.AuthService;
@@ -33,6 +34,25 @@ public class AuthController {
   @PostMapping("/login")
   public AuthResponse login(@Valid @RequestBody LoginRequest request) {
     return authService.login(request);
+  }
+
+  @PostMapping("/refresh")
+  public AuthResponse refresh(@Valid @RequestBody RefreshRequest request) {
+    return authService.refresh(request.refreshToken());
+  }
+
+  /** Ends this session. Always 204, so it can't be used to probe which tokens exist. */
+  @PostMapping("/logout")
+  public ResponseEntity<Void> logout(@Valid @RequestBody RefreshRequest request) {
+    authService.logout(request.refreshToken());
+    return ResponseEntity.noContent().build();
+  }
+
+  /** Ends every session of the logged-in user. */
+  @PostMapping("/logout-all")
+  public ResponseEntity<Void> logoutAll(Principal principal) {
+    authService.logoutEverywhere(principal.getName());
+    return ResponseEntity.noContent().build();
   }
 
   @GetMapping("/me")

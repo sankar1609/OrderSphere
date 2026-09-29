@@ -12,6 +12,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ordersphere.auth.domain.Role;
 import com.ordersphere.auth.dto.LoginRequest;
+import com.ordersphere.auth.dto.RefreshRequest;
 import com.ordersphere.auth.dto.RegisterRequest;
 import com.ordersphere.auth.dto.RoleChangeRequest;
 import com.ordersphere.security.JwtVerifier;
@@ -245,6 +246,122 @@ class AuthControllerIntegrationTest {
                 .param("grant_type", "password"))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.error", is("unsupported_grant_type")));
+  }
+
+  @Test
+  void refreshRotatesTokensAndReuseRevokesTheWholeSession() throws Exception {
+    register("hank");
+    JsonNode login = loginResponse("hank", "password123");
+    String first = login.get("refreshToken").asText();
+
+    JsonNode refreshed = refresh(first, 200);
+    String second = refreshed.get("refreshToken").asText();
+    assertThat(second).isNotEqualTo(first);
+    assertThat(jwtVerifier.verify(refreshed.get("token").asText()).getSubject()).isEqualTo("hank");
+
+    // Replaying the already-used token looks like theft: it fails, and so does the token that
+    // replaced it, because the whole session (token family) is revoked.
+    refresh(first, 401);
+    refresh(second, 401);
+  }
+
+  @Test
+  void logoutEndsOnlyThatSession() throws Exception {
+    register("ivy");
+    String laptop = loginResponse("ivy", "password123").get("refreshToken").asText();
+    String phone = loginResponse("ivy", "password123").get("refreshToken").asText();
+
+    mockMvc
+        .perform(
+            post("/auth/logout")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(new RefreshRequest(laptop))))
+        .andExpect(status().isNoContent());
+
+    refresh(laptop, 401);
+    refresh(phone, 200);
+  }
+
+  @Test
+  void logoutEverywhereAndRoleChangesEndAllSessions() throws Exception {
+    register("jack");
+    JsonNode login = loginResponse("jack", "password123");
+    String laptop = login.get("refreshToken").asText();
+    String phone = loginResponse("jack", "password123").get("refreshToken").asText();
+
+    mockMvc
+        .perform(
+            post("/auth/logout-all")
+                .header("Authorization", "Bearer " + login.get("token").asText()))
+        .andExpect(status().isNoContent());
+    refresh(laptop, 401);
+    refresh(phone, 401);
+
+    JsonNode relogin = loginResponse("jack", "password123");
+    String adminToken = loginAndGetToken("admin", "admin123");
+    Long jackId =
+        objectMapper
+            .readTree(
+                mockMvc
+                    .perform(
+                        get("/auth/me")
+                            .header("Authorization", "Bearer " + relogin.get("token").asText()))
+                    .andReturn()
+                    .getResponse()
+                    .getContentAsString())
+            .get("id")
+            .asLong();
+    mockMvc
+        .perform(
+            patch("/auth/admin/users/" + jackId + "/role")
+                .header("Authorization", "Bearer " + adminToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(new RoleChangeRequest(Role.VENDOR))))
+        .andExpect(status().isOk());
+    refresh(relogin.get("refreshToken").asText(), 401);
+  }
+
+  @Test
+  void unknownRefreshTokenIsRejected() throws Exception {
+    refresh("not-a-real-refresh-token", 401);
+  }
+
+  private void register(String username) throws Exception {
+    mockMvc
+        .perform(
+            post("/auth/register")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(
+                        new RegisterRequest(username, "password123", Role.CUSTOMER))))
+        .andExpect(status().isCreated());
+  }
+
+  private JsonNode loginResponse(String username, String password) throws Exception {
+    return objectMapper.readTree(
+        mockMvc
+            .perform(
+                post("/auth/login")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(new LoginRequest(username, password))))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString());
+  }
+
+  private JsonNode refresh(String refreshToken, int expectedStatus) throws Exception {
+    String body =
+        mockMvc
+            .perform(
+                post("/auth/refresh")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(new RefreshRequest(refreshToken))))
+            .andExpect(status().is(expectedStatus))
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    return body.isEmpty() ? null : objectMapper.readTree(body);
   }
 
   private static String basic(String clientId, String secret) {

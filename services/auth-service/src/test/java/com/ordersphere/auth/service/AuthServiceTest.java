@@ -16,6 +16,7 @@ import com.ordersphere.auth.exception.DuplicateUsernameException;
 import com.ordersphere.auth.exception.InvalidRoleSelectionException;
 import com.ordersphere.auth.exception.UserNotFoundException;
 import com.ordersphere.auth.repository.UserRepository;
+import com.ordersphere.auth.security.RefreshTokenService;
 import com.ordersphere.auth.security.TokenIssuer;
 import com.ordersphere.events.UserAuthenticatedEvent;
 import com.ordersphere.events.UserRegisteredEvent;
@@ -35,13 +36,16 @@ class AuthServiceTest {
   @Mock private UserRepository userRepository;
   @Mock private PasswordEncoder passwordEncoder;
   @Mock private TokenIssuer tokenIssuer;
+  @Mock private RefreshTokenService refreshTokens;
   @Mock private ApplicationEventPublisher eventPublisher;
 
   private AuthService authService;
 
   @BeforeEach
   void setUp() {
-    authService = new AuthService(userRepository, passwordEncoder, tokenIssuer, eventPublisher);
+    authService =
+        new AuthService(
+            userRepository, passwordEncoder, tokenIssuer, refreshTokens, eventPublisher);
   }
 
   @Test
@@ -107,12 +111,14 @@ class AuthServiceTest {
     when(passwordEncoder.matches("password123", "hashed")).thenReturn(true);
     when(tokenIssuer.issueAccessToken("alice", "CUSTOMER"))
         .thenReturn(new TokenIssuer.IssuedToken("signed-jwt", 3_600));
+    when(refreshTokens.issue(user)).thenReturn("refresh-1");
 
     AuthResponse response = authService.login(new LoginRequest("alice", "password123"));
 
     assertThat(response.token()).isEqualTo("signed-jwt");
     assertThat(response.tokenType()).isEqualTo("Bearer");
     assertThat(response.expiresInSeconds()).isEqualTo(3_600);
+    assertThat(response.refreshToken()).isEqualTo("refresh-1");
     verify(eventPublisher).publishEvent(any(UserAuthenticatedEvent.class));
   }
 
@@ -134,5 +140,6 @@ class AuthServiceTest {
     UserResponse response = authService.changeRole(1L, Role.ADMIN);
 
     assertThat(response.role()).isEqualTo(Role.ADMIN);
+    verify(refreshTokens).revokeAll(user);
   }
 }

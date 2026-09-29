@@ -1,11 +1,62 @@
 const GATEWAY_URL = import.meta.env.VITE_GATEWAY_URL ?? "http://localhost:8080";
 
 /**
+ * Session renewal. Access tokens live 15 minutes; when an authenticated call comes back 401, the
+ * refresh token is exchanged once for a new pair (POST /auth/refresh) and the call is retried with
+ * the new access token. Refresh tokens are single-use and reusing one revokes the whole session,
+ * so concurrent 401s share a single in-flight refresh instead of each spending the token.
+ */
+const auth = { refreshToken: null, onTokens: null, inFlight: null };
+
+/** Called by App whenever its tokens change; onTokens receives each refreshed {token, refreshToken}. */
+export function configureAuth({ refreshToken, onTokens }) {
+  auth.refreshToken = refreshToken;
+  auth.onTokens = onTokens;
+}
+
+function refreshSession() {
+  if (!auth.refreshToken) {
+    return Promise.resolve(null);
+  }
+  if (!auth.inFlight) {
+    auth.inFlight = send("/auth-service/auth/refresh", {
+      method: "POST",
+      body: { refreshToken: auth.refreshToken },
+    })
+      .then((tokens) => {
+        auth.refreshToken = tokens.refreshToken;
+        auth.onTokens?.(tokens);
+        return tokens.token;
+      })
+      .catch(() => null)
+      .finally(() => {
+        auth.inFlight = null;
+      });
+  }
+  return auth.inFlight;
+}
+
+async function request(path, options = {}) {
+  try {
+    return await send(path, options);
+  } catch (error) {
+    if (error.status !== 401 || !options.token) {
+      throw error;
+    }
+    const renewed = await refreshSession();
+    if (!renewed) {
+      throw error;
+    }
+    return send(path, { ...options, token: renewed });
+  }
+}
+
+/**
  * Thin fetch wrapper: builds the gateway URL, attaches the bearer token when
  * given, and turns a non-2xx response into a thrown Error carrying the
  * backend's own error message (see GlobalExceptionHandler's {message} shape).
  */
-async function request(path, { method = "GET", token, body } = {}) {
+async function send(path, { method = "GET", token, body } = {}) {
   const headers = { "Content-Type": "application/json" };
   if (token) {
     headers.Authorization = `Bearer ${token}`;
@@ -34,6 +85,11 @@ export function login(username, password) {
     method: "POST",
     body: { username, password },
   });
+}
+
+/** Ends this session server-side (best effort - the client forgets its tokens either way). */
+export function logout(refreshToken) {
+  return send("/auth-service/auth/logout", { method: "POST", body: { refreshToken } });
 }
 
 export function register(username, password) {

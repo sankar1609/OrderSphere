@@ -4,12 +4,25 @@ import Register from "./components/Register";
 import OrdersList from "./components/OrdersList";
 import ProductsList from "./components/ProductsList";
 import PlaceOrder from "./components/PlaceOrder";
+import { configureAuth, logout } from "./api";
 
-function readStoredToken() {
+function readStored(key) {
   try {
-    return localStorage.getItem("token");
+    return localStorage.getItem(key);
   } catch {
     return null;
+  }
+}
+
+function writeStored(key, value) {
+  try {
+    if (value) {
+      localStorage.setItem(key, value);
+    } else {
+      localStorage.removeItem(key);
+    }
+  } catch {
+    // e.g. private browsing with storage disabled — the session just won't survive a reload
   }
 }
 
@@ -26,7 +39,8 @@ function readPaymentReturn() {
 }
 
 export default function App() {
-  const [token, setToken] = useState(readStoredToken);
+  const [token, setToken] = useState(() => readStored("token"));
+  const [refreshToken, setRefreshToken] = useState(() => readStored("refreshToken"));
   const [view, setView] = useState("login"); // "login" | "register"
   const [page, setPage] = useState("orders"); // "orders" | "products" | "placeOrder"
   const [paymentReturn] = useState(readPaymentReturn);
@@ -39,34 +53,46 @@ export default function App() {
     }
   }, [paymentReturn]);
 
+  // Reached only once the refresh token can't renew the session either (see api.js).
   function handleUnauthorized() {
     setToken(null);
+    setRefreshToken(null);
     setSessionMessage("Your session has expired. Please log in again.");
   }
 
-  function handleLoggedIn(newToken) {
+  function handleLoggedIn(tokens) {
     setSessionMessage(null);
-    setToken(newToken);
+    setToken(tokens.token);
+    setRefreshToken(tokens.refreshToken);
   }
 
-  useEffect(() => {
-    try {
-      if (token) {
-        localStorage.setItem("token", token);
-      } else {
-        localStorage.removeItem("token");
-      }
-    } catch {
-      // e.g. private browsing with storage disabled — token just won't survive a refresh
+  function handleLogout() {
+    if (refreshToken) {
+      logout(refreshToken).catch(() => {});
     }
-  }, [token]);
+    setToken(null);
+    setRefreshToken(null);
+  }
+
+  useEffect(() => writeStored("token", token), [token]);
+  useEffect(() => writeStored("refreshToken", refreshToken), [refreshToken]);
+
+  useEffect(() => {
+    configureAuth({
+      refreshToken,
+      onTokens: (tokens) => {
+        setToken(tokens.token);
+        setRefreshToken(tokens.refreshToken);
+      },
+    });
+  }, [refreshToken]);
 
   if (token) {
     return (
       <div style={{ maxWidth: 720, margin: "40px auto", fontFamily: "sans-serif" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <h1>OrderSphere</h1>
-          <button type="button" onClick={() => setToken(null)}>
+          <button type="button" onClick={handleLogout}>
             Log out
           </button>
         </div>

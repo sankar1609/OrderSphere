@@ -28,6 +28,11 @@ public class GlobalExceptionHandler {
     return errorResponse(HttpStatus.NOT_FOUND, ex.getMessage());
   }
 
+  @ExceptionHandler(InvalidRefreshTokenException.class)
+  public ResponseEntity<Object> handleInvalidRefreshToken(InvalidRefreshTokenException ex) {
+    return errorResponse(HttpStatus.UNAUTHORIZED, ex.getMessage());
+  }
+
   @ExceptionHandler(BadCredentialsException.class)
   public ResponseEntity<Object> handleBadCredentials(BadCredentialsException ex) {
     return errorResponse(HttpStatus.UNAUTHORIZED, "Invalid username or password");
