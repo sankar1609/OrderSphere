@@ -8,11 +8,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.ordersphere.security.JwtTokenProvider;
+import com.ordersphere.security.testing.TestJwtIssuer;
 import com.ordersphere.shipping.dto.CreateShipmentRequest;
 import com.ordersphere.shipping.dto.ReturnShipmentRequest;
 import com.ordersphere.shipping.service.ShipmentProgressJob;
-import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -40,11 +39,10 @@ class ShippingControllerIntegrationTest {
 
   @Autowired private MockMvc mockMvc;
   @Autowired private ObjectMapper objectMapper;
-  @Autowired private JwtTokenProvider jwtTokenProvider;
   @Autowired private ShipmentProgressJob shipmentProgressJob;
 
   private String tokenFor(String username, String role) {
-    return jwtTokenProvider.generateToken(username, Map.of("role", role));
+    return TestJwtIssuer.token(username, role);
   }
 
   @Test

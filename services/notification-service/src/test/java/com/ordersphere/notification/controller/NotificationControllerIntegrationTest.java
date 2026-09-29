@@ -12,7 +12,7 @@ import com.ordersphere.notification.domain.TemplateKey;
 import com.ordersphere.notification.dto.CreateNotificationPreferenceRequest;
 import com.ordersphere.notification.dto.CreateNotificationRequest;
 import com.ordersphere.notification.service.NotificationDeliveryJob;
-import com.ordersphere.security.JwtTokenProvider;
+import com.ordersphere.security.testing.TestJwtIssuer;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -41,11 +41,10 @@ class NotificationControllerIntegrationTest {
 
   @Autowired private MockMvc mockMvc;
   @Autowired private ObjectMapper objectMapper;
-  @Autowired private JwtTokenProvider jwtTokenProvider;
   @Autowired private NotificationDeliveryJob notificationDeliveryJob;
 
   private String tokenFor(String username, String role) {
-    return jwtTokenProvider.generateToken(username, Map.of("role", role));
+    return TestJwtIssuer.token(username, role);
   }
 
   @Test

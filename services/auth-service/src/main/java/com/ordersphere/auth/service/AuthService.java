@@ -10,12 +10,10 @@ import com.ordersphere.auth.exception.DuplicateUsernameException;
 import com.ordersphere.auth.exception.InvalidRoleSelectionException;
 import com.ordersphere.auth.exception.UserNotFoundException;
 import com.ordersphere.auth.repository.UserRepository;
+import com.ordersphere.auth.security.TokenIssuer;
 import com.ordersphere.events.UserAuthenticatedEvent;
 import com.ordersphere.events.UserRegisteredEvent;
-import com.ordersphere.security.JwtProperties;
-import com.ordersphere.security.JwtTokenProvider;
 import java.util.EnumSet;
-import java.util.Map;
 import java.util.Set;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -29,20 +27,17 @@ public class AuthService {
 
   private final UserRepository userRepository;
   private final PasswordEncoder passwordEncoder;
-  private final JwtTokenProvider jwtTokenProvider;
-  private final JwtProperties jwtProperties;
+  private final TokenIssuer tokenIssuer;
   private final ApplicationEventPublisher eventPublisher;
 
   public AuthService(
       UserRepository userRepository,
       PasswordEncoder passwordEncoder,
-      JwtTokenProvider jwtTokenProvider,
-      JwtProperties jwtProperties,
+      TokenIssuer tokenIssuer,
       ApplicationEventPublisher eventPublisher) {
     this.userRepository = userRepository;
     this.passwordEncoder = passwordEncoder;
-    this.jwtTokenProvider = jwtTokenProvider;
-    this.jwtProperties = jwtProperties;
+    this.tokenIssuer = tokenIssuer;
     this.eventPublisher = eventPublisher;
   }
 
@@ -75,12 +70,12 @@ public class AuthService {
       throw new BadCredentialsException("Invalid username or password");
     }
 
-    String token =
-        jwtTokenProvider.generateToken(user.getUsername(), Map.of("role", user.getRole().name()));
+    TokenIssuer.IssuedToken token =
+        tokenIssuer.issueAccessToken(user.getUsername(), user.getRole().name());
 
     eventPublisher.publishEvent(new UserAuthenticatedEvent(user.getId(), user.getUsername()));
 
-    return AuthResponse.bearer(token, jwtProperties.getExpirationMillis() / 1000);
+    return AuthResponse.bearer(token.token(), token.expiresInSeconds());
   }
 
   public UserResponse getCurrentUser(String username) {

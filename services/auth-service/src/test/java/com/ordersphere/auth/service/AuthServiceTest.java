@@ -3,7 +3,6 @@ package com.ordersphere.auth.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -17,11 +16,9 @@ import com.ordersphere.auth.exception.DuplicateUsernameException;
 import com.ordersphere.auth.exception.InvalidRoleSelectionException;
 import com.ordersphere.auth.exception.UserNotFoundException;
 import com.ordersphere.auth.repository.UserRepository;
+import com.ordersphere.auth.security.TokenIssuer;
 import com.ordersphere.events.UserAuthenticatedEvent;
 import com.ordersphere.events.UserRegisteredEvent;
-import com.ordersphere.security.JwtProperties;
-import com.ordersphere.security.JwtTokenProvider;
-import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,18 +34,14 @@ class AuthServiceTest {
 
   @Mock private UserRepository userRepository;
   @Mock private PasswordEncoder passwordEncoder;
-  @Mock private JwtTokenProvider jwtTokenProvider;
+  @Mock private TokenIssuer tokenIssuer;
   @Mock private ApplicationEventPublisher eventPublisher;
 
   private AuthService authService;
 
   @BeforeEach
   void setUp() {
-    JwtProperties jwtProperties = new JwtProperties();
-    jwtProperties.setExpirationMillis(3_600_000);
-    authService =
-        new AuthService(
-            userRepository, passwordEncoder, jwtTokenProvider, jwtProperties, eventPublisher);
+    authService = new AuthService(userRepository, passwordEncoder, tokenIssuer, eventPublisher);
   }
 
   @Test
@@ -112,7 +105,8 @@ class AuthServiceTest {
     user.setId(1L);
     when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user));
     when(passwordEncoder.matches("password123", "hashed")).thenReturn(true);
-    when(jwtTokenProvider.generateToken(anyString(), any())).thenReturn("signed-jwt");
+    when(tokenIssuer.issueAccessToken("alice", "CUSTOMER"))
+        .thenReturn(new TokenIssuer.IssuedToken("signed-jwt", 3_600));
 
     AuthResponse response = authService.login(new LoginRequest("alice", "password123"));
 
@@ -120,7 +114,6 @@ class AuthServiceTest {
     assertThat(response.tokenType()).isEqualTo("Bearer");
     assertThat(response.expiresInSeconds()).isEqualTo(3_600);
     verify(eventPublisher).publishEvent(any(UserAuthenticatedEvent.class));
-    verify(jwtTokenProvider).generateToken("alice", Map.of("role", "CUSTOMER"));
   }
 
   @Test

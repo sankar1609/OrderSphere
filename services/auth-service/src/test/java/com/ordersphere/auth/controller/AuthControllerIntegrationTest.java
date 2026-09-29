@@ -1,5 +1,6 @@
 package com.ordersphere.auth.controller;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -7,11 +8,18 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ordersphere.auth.domain.Role;
 import com.ordersphere.auth.dto.LoginRequest;
 import com.ordersphere.auth.dto.RegisterRequest;
 import com.ordersphere.auth.dto.RoleChangeRequest;
+import com.ordersphere.security.JwtVerifier;
+import com.ordersphere.security.RsaKeys;
+import io.jsonwebtoken.Claims;
+import java.nio.charset.StandardCharsets;
+import java.security.interfaces.RSAPublicKey;
+import java.util.Base64;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -39,6 +47,7 @@ class AuthControllerIntegrationTest {
 
   @Autowired private MockMvc mockMvc;
   @Autowired private ObjectMapper objectMapper;
+  @Autowired private JwtVerifier jwtVerifier;
 
   @Test
   void customerCanRegisterLoginAndFetchOwnProfile() throws Exception {
@@ -154,6 +163,94 @@ class AuthControllerIntegrationTest {
                 .content(objectMapper.writeValueAsString(new RoleChangeRequest(Role.VENDOR))))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.role", is("VENDOR")));
+  }
+
+  @Test
+  void loginTokensVerifyAgainstThePublishedJwks() throws Exception {
+    mockMvc
+        .perform(
+            post("/auth/register")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(
+                        new RegisterRequest("gina", "password123", Role.CUSTOMER))))
+        .andExpect(status().isCreated());
+    String token = loginAndGetToken("gina", "password123");
+
+    JsonNode jwks =
+        objectMapper.readTree(
+            mockMvc
+                .perform(get("/auth/.well-known/jwks.json"))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+    JsonNode key = jwks.get("keys").get(0);
+    RSAPublicKey publicKey = RsaKeys.fromJwk(key.get("n").asText(), key.get("e").asText());
+    String kid = key.get("kid").asText();
+    JwtVerifier verifier =
+        new JwtVerifier(k -> kid.equals(k) ? publicKey : null, "ordersphere-auth");
+
+    Claims claims = verifier.verify(token);
+    assertThat(claims.getSubject()).isEqualTo("gina");
+    assertThat(claims.get("role", String.class)).isEqualTo("CUSTOMER");
+    assertThat(claims.get("typ", String.class)).isEqualTo("access");
+  }
+
+  @Test
+  void clientCredentialsIssueAServiceToken() throws Exception {
+    String body =
+        mockMvc
+            .perform(
+                post("/auth/token")
+                    .header("Authorization", basic("orders-service", "dev-orders-client-secret"))
+                    .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                    .param("grant_type", "client_credentials"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.token_type", is("Bearer")))
+            .andExpect(jsonPath("$.expires_in", is(300)))
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    String serviceToken = objectMapper.readTree(body).get("access_token").asText();
+
+    Claims claims = jwtVerifier.verify(serviceToken);
+    assertThat(claims.getSubject()).isEqualTo("orders-service");
+    assertThat(claims.get("role", String.class)).isEqualTo("SERVICE");
+    assertThat(claims.get("typ", String.class)).isEqualTo("service");
+  }
+
+  @Test
+  void clientCredentialsRejectBadSecretsAndGrants() throws Exception {
+    mockMvc
+        .perform(
+            post("/auth/token")
+                .header("Authorization", basic("orders-service", "wrong-secret"))
+                .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                .param("grant_type", "client_credentials"))
+        .andExpect(status().isUnauthorized())
+        .andExpect(jsonPath("$.error", is("invalid_client")));
+    mockMvc
+        .perform(
+            post("/auth/token")
+                .header("Authorization", basic("unknown-client", "whatever"))
+                .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                .param("grant_type", "client_credentials"))
+        .andExpect(status().isUnauthorized());
+    mockMvc
+        .perform(
+            post("/auth/token")
+                .header("Authorization", basic("orders-service", "dev-orders-client-secret"))
+                .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                .param("grant_type", "password"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error", is("unsupported_grant_type")));
+  }
+
+  private static String basic(String clientId, String secret) {
+    return "Basic "
+        + Base64.getEncoder()
+            .encodeToString((clientId + ":" + secret).getBytes(StandardCharsets.UTF_8));
   }
 
   private String loginAndGetToken(String username, String password) throws Exception {

@@ -3,8 +3,8 @@ package com.ordersphere.security;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.verify;
 
+import com.ordersphere.security.testing.TestJwtIssuer;
 import jakarta.servlet.FilterChain;
-import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -14,10 +14,10 @@ import org.springframework.security.core.context.SecurityContextHolder;
 
 class JwtAuthenticationFilterTest {
 
-  private static final String SECRET = "this-is-a-test-secret-key-that-is-long-enough-for-hs256";
-
-  private final JwtTokenProvider jwtTokenProvider = new JwtTokenProvider(SECRET, 60_000);
-  private final JwtAuthenticationFilter filter = new JwtAuthenticationFilter(jwtTokenProvider);
+  private final JwtAuthenticationFilter filter =
+      new JwtAuthenticationFilter(
+          new JwtVerifier(
+              kid -> RsaKeys.parsePublicKey(TestJwtIssuer.PUBLIC_KEY), TestJwtIssuer.ISSUER));
 
   @AfterEach
   void clearContext() {
@@ -26,9 +26,8 @@ class JwtAuthenticationFilterTest {
 
   @Test
   void populatesSecurityContextForValidTokenWithRole() throws Exception {
-    String token = jwtTokenProvider.generateToken("user-123", Map.of("role", "ADMIN"));
     MockHttpServletRequest request = new MockHttpServletRequest();
-    request.addHeader("Authorization", "Bearer " + token);
+    request.addHeader("Authorization", TestJwtIssuer.bearer("user-123", "ADMIN"));
     MockHttpServletResponse response = new MockHttpServletResponse();
     FilterChain chain = org.mockito.Mockito.mock(FilterChain.class);
 

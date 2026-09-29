@@ -1,5 +1,6 @@
 package com.ordersphere.orders.exception;
 
+import com.ordersphere.orders.client.ServiceTokenProvider;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -21,6 +22,12 @@ public class GlobalExceptionHandler {
   public ResponseEntity<Object> handleInventoryReservationFailure(
       InventoryReservationException ex) {
     return errorResponse(HttpStatus.FAILED_DEPENDENCY, ex.getMessage());
+  }
+
+  @ExceptionHandler(ServiceTokenProvider.ServiceTokenException.class)
+  public ResponseEntity<Object> handleServiceTokenUnavailable(
+      ServiceTokenProvider.ServiceTokenException ex) {
+    return errorResponse(HttpStatus.SERVICE_UNAVAILABLE, "Order service temporarily unavailable");
   }
 
   @ExceptionHandler(OrderCancellationNotAllowedException.class)

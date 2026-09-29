@@ -54,7 +54,7 @@ services:
       DB_NAME: auth_db
       DB_USERNAME: ordersphere
       DB_PASSWORD: ordersphere
-      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-key-change-me-before-any-real-deployment}
+      ORDERS_CLIENT_SECRET: ${ORDERS_CLIENT_SECRET:-dev-orders-client-secret}
       EUREKA_URI: http://service-registry:8761/eureka
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USERNAME: ordersphere
@@ -78,7 +78,7 @@ services:
       DB_NAME: inventory_db
       DB_USERNAME: ordersphere
       DB_PASSWORD: ordersphere
-      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-key-change-me-before-any-real-deployment}
+      JWT_JWKS_URI: http://auth-service:8081/auth/.well-known/jwks.json
       EUREKA_URI: http://service-registry:8761/eureka
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USERNAME: ordersphere
@@ -102,7 +102,8 @@ services:
       DB_NAME: orders_db
       DB_USERNAME: ordersphere
       DB_PASSWORD: ordersphere
-      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-key-change-me-before-any-real-deployment}
+      JWT_JWKS_URI: http://auth-service:8081/auth/.well-known/jwks.json
+      ORDERS_CLIENT_SECRET: ${ORDERS_CLIENT_SECRET:-dev-orders-client-secret}
       EUREKA_URI: http://service-registry:8761/eureka
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USERNAME: ordersphere
@@ -126,7 +127,7 @@ services:
       DB_NAME: payment_db
       DB_USERNAME: ordersphere
       DB_PASSWORD: ordersphere
-      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-key-change-me-before-any-real-deployment}
+      JWT_JWKS_URI: http://auth-service:8081/auth/.well-known/jwks.json
       EUREKA_URI: http://service-registry:8761/eureka
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USERNAME: ordersphere
@@ -171,7 +172,7 @@ services:
       DB_NAME: shipping_db
       DB_USERNAME: ordersphere
       DB_PASSWORD: ordersphere
-      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-key-change-me-before-any-real-deployment}
+      JWT_JWKS_URI: http://auth-service:8081/auth/.well-known/jwks.json
       EUREKA_URI: http://service-registry:8761/eureka
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USERNAME: ordersphere
@@ -195,7 +196,7 @@ services:
       DB_NAME: notification_db
       DB_USERNAME: ordersphere
       DB_PASSWORD: ordersphere
-      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-key-change-me-before-any-real-deployment}
+      JWT_JWKS_URI: http://auth-service:8081/auth/.well-known/jwks.json
       EUREKA_URI: http://service-registry:8761/eureka
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USERNAME: ordersphere

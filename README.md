@@ -10,12 +10,14 @@ Cloud-native, microservices-based order and inventory management platform. See [
 
 ## Running the Full Application
 
-### 1. (Optional) Set a JWT secret
+### 1. (Optional) Set secrets
 
-If unset, Docker Compose falls back to a dev-only default (`dev-only-secret-key-change-me-before-any-real-deployment`).
+Tokens are signed only by auth-service, with an RSA key it generates on first start and keeps in its database (supply your own with `JWT_PRIVATE_KEY` / `JWT_PUBLIC_KEY`). Other services verify tokens with auth-service's public keys, so there is no shared JWT secret.
+
+The orders service authenticates to auth-service with a client secret; Docker Compose falls back to a dev-only default:
 
 ```bash
-export JWT_SECRET=your-secret-here
+export ORDERS_CLIENT_SECRET=your-secret-here
 ```
 
 ### 2. Start the backend

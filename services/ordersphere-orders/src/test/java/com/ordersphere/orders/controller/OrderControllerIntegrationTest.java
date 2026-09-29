@@ -16,15 +16,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ordersphere.orders.client.InventoryClient;
 import com.ordersphere.orders.client.PaymentClient;
+import com.ordersphere.orders.client.ServiceTokenProvider;
 import com.ordersphere.orders.client.ShippingClient;
 import com.ordersphere.orders.dto.CreateOrderRequest;
 import com.ordersphere.orders.exception.InventoryReservationException;
 import com.ordersphere.orders.exception.PaymentInitiationException;
 import com.ordersphere.orders.service.OrderSagaProgressJob;
-import com.ordersphere.security.JwtTokenProvider;
+import com.ordersphere.security.testing.TestJwtIssuer;
 import java.math.BigDecimal;
 import java.util.List;
-import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -54,15 +54,16 @@ class OrderControllerIntegrationTest {
 
   @Autowired private MockMvc mockMvc;
   @Autowired private ObjectMapper objectMapper;
-  @Autowired private JwtTokenProvider jwtTokenProvider;
   @Autowired private OrderSagaProgressJob orderSagaProgressJob;
 
   @MockBean private InventoryClient inventoryClient;
   @MockBean private PaymentClient paymentClient;
   @MockBean private ShippingClient shippingClient;
+  @MockBean private ServiceTokenProvider serviceTokenProvider;
 
   @BeforeEach
   void stubPricedReservation() {
+    when(serviceTokenProvider.bearerToken()).thenReturn("Bearer test-service-token");
     // By default Inventory reserves everything requested at 10.00 per unit.
     when(inventoryClient.reserve(any(), any(), anyString()))
         .thenAnswer(
@@ -80,7 +81,7 @@ class OrderControllerIntegrationTest {
   }
 
   private String tokenFor(String username) {
-    return jwtTokenProvider.generateToken(username, Map.of("role", "CUSTOMER"));
+    return TestJwtIssuer.token(username, "CUSTOMER");
   }
 
   private CreateOrderRequest requestFor(String sku) {

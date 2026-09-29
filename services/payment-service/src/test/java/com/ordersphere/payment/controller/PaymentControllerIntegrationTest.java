@@ -18,11 +18,10 @@ import com.ordersphere.payment.gateway.PaymentGatewayClient.CheckoutSession;
 import com.ordersphere.payment.gateway.PaymentGatewayClient.SessionStatus;
 import com.ordersphere.payment.gateway.PaymentGatewayException;
 import com.ordersphere.payment.service.PaymentProcessingJob;
-import com.ordersphere.security.JwtTokenProvider;
+import com.ordersphere.security.testing.TestJwtIssuer;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.HexFormat;
-import java.util.Map;
 import java.util.Optional;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -55,17 +54,16 @@ class PaymentControllerIntegrationTest {
 
   @Autowired private MockMvc mockMvc;
   @Autowired private ObjectMapper objectMapper;
-  @Autowired private JwtTokenProvider jwtTokenProvider;
   @Autowired private PaymentProcessingJob paymentProcessingJob;
   @MockBean private PaymentGatewayClient gatewayClient;
 
   private String tokenFor(String username) {
-    return "Bearer " + jwtTokenProvider.generateToken(username, Map.of("role", "CUSTOMER"));
+    return "Bearer " + TestJwtIssuer.token(username, "CUSTOMER");
   }
 
   /** The identity ordersphere-orders calls payment-service with. */
   private String serviceToken() {
-    return "Bearer " + jwtTokenProvider.generateToken("orders-service", Map.of("role", "SERVICE"));
+    return "Bearer " + TestJwtIssuer.token("orders-service", "SERVICE");
   }
 
   /** Initiates a payment whose checkout session is {@code sessionId}; returns the payment id. */

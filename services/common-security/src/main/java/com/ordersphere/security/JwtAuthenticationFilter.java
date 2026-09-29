@@ -1,5 +1,7 @@
 package com.ordersphere.security;
 
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.JwtException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -18,10 +20,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
   private static final String BEARER_PREFIX = "Bearer ";
   private static final String ROLE_CLAIM = "role";
 
-  private final JwtTokenProvider jwtTokenProvider;
+  private final JwtVerifier jwtVerifier;
 
-  public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider) {
-    this.jwtTokenProvider = jwtTokenProvider;
+  public JwtAuthenticationFilter(JwtVerifier jwtVerifier) {
+    this.jwtVerifier = jwtVerifier;
   }
 
   @Override
@@ -30,11 +32,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
       @NonNull HttpServletResponse response,
       @NonNull FilterChain filterChain)
       throws ServletException, IOException {
-    String token = extractToken(request);
+    Claims claims = verifiedClaims(extractToken(request));
 
-    if (token != null && jwtTokenProvider.isValid(token)) {
-      String subject = jwtTokenProvider.getSubject(token);
-      Object role = jwtTokenProvider.getClaims(token).get(ROLE_CLAIM);
+    if (claims != null) {
+      String subject = claims.getSubject();
+      Object role = claims.get(ROLE_CLAIM);
 
       List<GrantedAuthority> authorities =
           role == null ? List.of() : List.of(new SimpleGrantedAuthority("ROLE_" + role));
@@ -44,6 +46,18 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     }
 
     filterChain.doFilter(request, response);
+  }
+
+  /** An invalid, expired or foreign-signed token simply leaves the request unauthenticated. */
+  private Claims verifiedClaims(String token) {
+    if (token == null) {
+      return null;
+    }
+    try {
+      return jwtVerifier.verify(token);
+    } catch (JwtException | IllegalArgumentException ex) {
+      return null;
+    }
   }
 
   private String extractToken(HttpServletRequest request) {

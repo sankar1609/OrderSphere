@@ -10,6 +10,10 @@
       "value": "http://localhost:8080"
     },
     {
+      "key": "ordersClientSecret",
+      "value": "dev-orders-client-secret"
+    },
+    {
       "key": "paymentGatewayUrl",
       "value": "http://localhost:8087"
     },
@@ -735,6 +739,292 @@
                   "        pm.expect(cb[n].state, n).to.eql('CLOSED');",
                   "    });",
                   "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "1b. Token Signing & Service Identity",
+      "item": [
+        {
+          "name": "JWKS Publishes RSA Signing Keys",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/.well-known/jwks.json",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                ".well-known",
+                "jwks.json"
+              ]
+            },
+            "description": "auth-service is the only token signer (RS256); every other service verifies with these public keys."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"At least one RS256 key with n/e\", function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.keys.length).to.be.at.least(1);",
+                  "    b.keys.forEach(function (k) {",
+                  "        pm.expect(k.kty).to.eql('RSA');",
+                  "        pm.expect(k.alg).to.eql('RS256');",
+                  "        pm.expect(k.kid).to.be.a('string').and.not.empty;",
+                  "        pm.expect(k.n).to.be.a('string').and.not.empty;",
+                  "    });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Customer Token Is RS256-Signed",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/me",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "me"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var header = JSON.parse(atob(pm.collectionVariables.get('custToken').split('.')[0].replace(/-/g, '+').replace(/_/g, '/')));",
+                  "pm.test('Token header: RS256 with a key id', function () {",
+                  "    pm.expect(header.alg).to.eql('RS256');",
+                  "    pm.expect(header.kid).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Token Forged With Old Shared Secret [expect 401]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{forgedToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders",
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            },
+            "description": "Before RS256, every service held the HMAC secret and could mint any token. A token signed with that old secret must now be rejected."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function b64url(words) {",
+                  "    return CryptoJS.enc.Base64.stringify(words).replace(/=+$/, '').replace(/\\+/g, '-').replace(/\\//g, '_');",
+                  "}",
+                  "var header = b64url(CryptoJS.enc.Utf8.parse(JSON.stringify({ alg: 'HS256', typ: 'JWT' })));",
+                  "var payload = b64url(CryptoJS.enc.Utf8.parse(JSON.stringify({",
+                  "    sub: 'mallory', role: 'ADMIN', iss: 'ordersphere-auth', exp: Math.floor(Date.now() / 1000) + 600",
+                  "})));",
+                  "var signature = b64url(CryptoJS.HmacSHA256(header + '.' + payload,",
+                  "    'dev-only-secret-key-change-me-before-any-real-deployment'));",
+                  "pm.collectionVariables.set('forgedToken', header + '.' + payload + '.' + signature);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 401', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Client Credentials: Bad Secret [expect 401]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{badClientBasic}}"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/token",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "token"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('badClientBasic', btoa('orders-service:wrong-secret'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 401', function () { pm.response.to.have.status(401); });",
+                  "pm.test(\"OAuth error code\", function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.error).to.eql('invalid_client');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Client Credentials: Service Token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{clientBasic}}"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/token",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "token"
+              ]
+            },
+            "description": "How ordersphere-orders gets its SERVICE identity (dev client secret from docker-compose)."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('clientBasic', btoa('orders-service:' + pm.collectionVariables.get('ordersClientSecret')));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"Short-lived bearer token\", function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.token_type).to.eql('Bearer');",
+                  "    pm.expect(b.expires_in).to.be.at.most(300);",
+                  "    var claims = JSON.parse(atob(b.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));",
+                  "    pm.expect(claims.role).to.eql('SERVICE');",
+                  "    pm.expect(claims.sub).to.eql('orders-service');",
+                  "});",
+                  "pm.collectionVariables.set('serviceToken', pm.response.json().access_token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Service Token Reaches Internal Endpoint",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{serviceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/reservations/999999999/release",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "inventory",
+                "reservations",
+                "999999999",
+                "release"
+              ]
+            },
+            "description": "The SERVICE role passes the internal-endpoint check (404/409: there's no such reservation, which is fine - it wasn't 401/403)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Authorized (not 401/403)', function () { pm.expect(pm.response.code).to.be.oneOf([200, 404, 409]); });"
                 ]
               }
             }

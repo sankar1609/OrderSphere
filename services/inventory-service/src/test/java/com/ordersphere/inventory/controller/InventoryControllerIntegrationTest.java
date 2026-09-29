@@ -10,10 +10,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ordersphere.inventory.dto.CreateProductRequest;
 import com.ordersphere.inventory.dto.ReserveStockRequest;
 import com.ordersphere.inventory.dto.RestockRequest;
-import com.ordersphere.security.JwtTokenProvider;
+import com.ordersphere.security.testing.TestJwtIssuer;
 import java.math.BigDecimal;
 import java.util.List;
-import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -41,19 +40,18 @@ class InventoryControllerIntegrationTest {
 
   @Autowired private MockMvc mockMvc;
   @Autowired private ObjectMapper objectMapper;
-  @Autowired private JwtTokenProvider jwtTokenProvider;
 
   private String adminToken() {
-    return jwtTokenProvider.generateToken("test-admin", Map.of("role", "ADMIN"));
+    return TestJwtIssuer.token("test-admin", "ADMIN");
   }
 
   private String customerToken() {
-    return jwtTokenProvider.generateToken("test-customer", Map.of("role", "CUSTOMER"));
+    return TestJwtIssuer.token("test-customer", "CUSTOMER");
   }
 
   /** The identity ordersphere-orders drives reservations with. */
   private String serviceToken() {
-    return jwtTokenProvider.generateToken("orders-service", Map.of("role", "SERVICE"));
+    return TestJwtIssuer.token("orders-service", "SERVICE");
   }
 
   @Test

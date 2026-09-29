@@ -40,7 +40,12 @@ public class SecurityConfig {
                     new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
         .authorizeHttpRequests(
             auth ->
-                auth.requestMatchers("/auth/register", "/auth/login", "/error")
+                auth.requestMatchers(
+                        "/auth/register",
+                        "/auth/login",
+                        "/auth/token",
+                        "/auth/.well-known/jwks.json",
+                        "/error")
                     .permitAll()
                     .anyRequest()
                     .authenticated())

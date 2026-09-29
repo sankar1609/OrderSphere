@@ -170,10 +170,10 @@ Orders' second migration is a small but telling design signal: rather than joini
 
 Authentication is centralized in `auth-service`; enforcement is distributed via the shared `common-security` library.
 
-- **JWT, 1-hour expiry** — `JwtProperties.expirationMillis` defaults to 3,600,000ms; tokens are signed with a secret injected via `JWT_SECRET` (falls back to a clearly-marked dev-only default in Compose).
+- **JWT, RS256, 1-hour expiry** — only auth-service signs tokens, with an RSA key generated on first start and stored in `signing_keys` (or supplied via `JWT_PRIVATE_KEY`/`JWT_PUBLIC_KEY`). Its public keys are published at `/auth/.well-known/jwks.json`; `common-security`'s `JwtVerifier` fetches them lazily, caches them, and re-fetches when a token names an unknown `kid` (throttled), so a rotated key is picked up without restarts. No other service holds a signing key, so none can forge a token.
 - **Four roles** — `CUSTOMER`, `VENDOR`, `ADMIN`, `AUDITOR`, defined once in `auth-service`'s domain model and carried in the token's claims for downstream services to authorize against.
 - **Password storage** — bcrypt via Spring Security's `PasswordEncoder`.
-- **Service-to-service calls** — Orders' outbound REST calls to Inventory/Payment/Shipping forward the caller's bearer token; a `ServiceTokenProvider` issues a service-level token for calls the scheduled saga sweep makes without an inbound request context.
+- **Service-to-service calls** — Orders calls Inventory/Payment/Shipping with its own `SERVICE`-role token, never the customer's. `ServiceTokenProvider` gets it from auth-service via OAuth2 client credentials (`POST /auth/token`, 5-minute tokens) and caches it. The internal endpoints (stock reservations, payment initiation/refund, shipment creation, direct notifications) accept only `SERVICE`/`ADMIN`.
 
 ---
 
@@ -212,7 +212,7 @@ The working deployment path today is Docker Compose; Kubernetes is documented as
 
 - `mvn clean package` builds all ten modules from the root parent POM.
 - Each of the eight runtime services has its own `Dockerfile`; `docker-compose.yml` builds and wires all eight plus `postgres` and `rabbitmq`, in dependency order (registry and brokers first, business services depend on both).
-- Configuration is environment-variable driven throughout — `DB_HOST`, `EUREKA_URI`, `RABBITMQ_HOST`, `JWT_SECRET` — the same images run locally or in a cluster without rebuilding.
+- Configuration is environment-variable driven throughout — `DB_HOST`, `EUREKA_URI`, `RABBITMQ_HOST`, `JWT_JWKS_URI`, `ORDERS_CLIENT_SECRET` — the same images run locally or in a cluster without rebuilding.
 - A single service can be run standalone with `mvn spring-boot:run` provided Postgres and Eureka are reachable.
 
 ---

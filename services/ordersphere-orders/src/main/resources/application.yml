@@ -27,10 +27,14 @@ spring:
           initial-interval: 1000ms
 
 jwt:
-  secret: ${JWT_SECRET:dev-only-secret-key-change-me-before-any-real-deployment}
-  expiration-millis: ${JWT_EXPIRATION_MILLIS:3600000}
+  # Tokens are verified with auth-service's public keys (RS256); nothing here can sign one.
+  jwks-uri: ${JWT_JWKS_URI:http://localhost:8081/auth/.well-known/jwks.json}
 
 orders:
+  auth:
+    # Client credentials orders uses to get its SERVICE token from auth-service (POST /auth/token).
+    client-id: ${ORDERS_CLIENT_ID:orders-service}
+    client-secret: ${ORDERS_CLIENT_SECRET:dev-orders-client-secret}
   saga:
     sweep-interval-ms: ${ORDERS_SAGA_SWEEP_INTERVAL_MS:5000}
   rest-client:

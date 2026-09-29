@@ -41,7 +41,8 @@
 - **Purpose:** Centralized authentication and authorization
 - **Responsibilities:**
   - User registration and login (`POST /auth/register`, `POST /auth/login`, `GET /auth/me`)
-  - JWT token generation (validated in every service by `common-security`)
+  - The only JWT signer: RS256 with an RSA key generated on first start and stored in `signing_keys` (or supplied via `JWT_PRIVATE_KEY`/`JWT_PUBLIC_KEY`); public keys published at `GET /auth/.well-known/jwks.json`
+  - Service identities via OAuth2 client credentials (`POST /auth/token`, HTTP Basic client id/secret) → 5-minute `SERVICE`-role token; clients configured as `auth.clients.<id>.secret` (`orders-service`, secret `ORDERS_CLIENT_SECRET`)
   - Role-based access control (RBAC); ADMIN can change a user's role (`PATCH /auth/admin/users/{id}/role`)
   - Password hashing with bcrypt
 - **Database:** PostgreSQL (auth_db)
@@ -180,10 +181,9 @@
 ### 9. **Common Libraries** (Shared Code)
 
 #### `common-security`
-- JWT token utilities
-- Authentication filters
-- RBAC annotations and interceptors
-- Security configuration templates
+- JWT verification only (`JwtVerifier`): RS256 public keys from auth-service's JWKS (`jwt.jwks-uri`, fetched lazily, cached, re-fetched for unknown key ids) or a fixed `jwt.public-key`
+- `JwtAuthenticationFilter` mapping the `role` claim to `ROLE_*` authorities
+- Test-jar with `TestJwtIssuer`, auto-configured so every service's tests can mint tokens without auth-service
 
 #### `common-events`
 - Event definitions (POJOs)
@@ -247,14 +247,14 @@ Order Placement Flow:
 
 ## 🔐 Security Features
 
-- **JWT Authentication:** Token-based stateless auth, one shared signing secret validated by `common-security` in every service
+- **JWT Authentication:** stateless RS256 tokens signed only by auth-service; every other service verifies them with the public keys from auth-service's JWKS (`common-security`), so no service can mint or forge a token. Tokens carry `iss=ordersphere-auth`, `kid`, `role`, `typ` (`access`/`service`)
 - **Role-Based Access Control (RBAC):** `@PreAuthorize` role checks per endpoint
 - **Resource ownership:** customers only see their own orders, payments, shipments and notifications (404 otherwise); ADMIN (and the SERVICE identity for payments/shipments) sees all
 - **Internal endpoints:** stock reservations, payment initiation/refund, shipment creation and direct notifications require the `SERVICE` or `ADMIN` role - customers get 403
 - **Payments:** card details are entered only on the payment provider's hosted page; the provider's webhook is authenticated by HMAC signature and its merchant API by secret key
 - **Password Security:** Bcrypt hashing with salt
 - **Token Expiration:** 1-hour JWT expiration (no refresh or revocation yet)
-- **Service-to-Service Auth:** the orders saga calls every downstream service with its own `SERVICE`-role JWT (`ServiceTokenProvider`), never the customer's token. It is still minted with the shared HMAC secret, so any service holding the secret could forge tokens - moving signing into auth-service (RS256 + client credentials) is next
+- **Service-to-Service Auth:** the orders saga calls every downstream service with its own `SERVICE`-role token, never the customer's. `ServiceTokenProvider` obtains it from auth-service via client credentials (`POST /auth/token`) and caches it until shortly before expiry
 - **Audit Trail (Planned):** Blockchain-based immutable audit logs via Hyperledger Fabric
 
 ---
