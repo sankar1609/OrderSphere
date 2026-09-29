@@ -77,6 +77,23 @@ class ServiceTokenProviderTest {
         .isInstanceOf(ServiceTokenProvider.ServiceTokenException.class);
   }
 
+  @Test
+  void authServiceMissingFromDiscoverySurfacesAsServiceTokenException() {
+    RestClient.Builder failing =
+        RestClient.builder()
+            .requestInterceptor(
+                (request, body, execution) -> {
+                  // What the load-balanced client throws when no auth-service instance is known.
+                  throw new IllegalStateException(
+                      "Service Instance cannot be null, serviceId: auth-service");
+                });
+    ServiceTokenProvider unavailable =
+        new ServiceTokenProvider(failing, "orders-service", "s3cret", clock);
+
+    assertThatThrownBy(unavailable::bearerToken)
+        .isInstanceOf(ServiceTokenProvider.ServiceTokenException.class);
+  }
+
   private static final class MutableClock extends Clock {
     private Instant now = Instant.parse("2026-01-01T00:00:00Z");
 

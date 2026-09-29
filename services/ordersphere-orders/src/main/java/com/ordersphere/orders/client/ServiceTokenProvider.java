@@ -11,7 +11,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestClient;
-import org.springframework.web.client.RestClientException;
 
 /**
  * orders' own identity for calling other services: a SERVICE-role token obtained from auth-service
@@ -75,7 +74,12 @@ public class ServiceTokenProvider {
         throw new ServiceTokenException("auth-service returned no access token", null);
       }
       return response;
-    } catch (RestClientException ex) {
+    } catch (ServiceTokenException ex) {
+      throw ex;
+    } catch (RuntimeException ex) {
+      // RestClientException, but also the load balancer's IllegalStateException when auth-service
+      // isn't registered in Eureka at that moment - both mean "no token right now" (503), not a
+      // bug.
       throw new ServiceTokenException("Could not obtain a service token from auth-service", ex);
     }
   }
