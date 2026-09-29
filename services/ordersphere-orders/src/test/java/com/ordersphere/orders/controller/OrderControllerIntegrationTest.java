@@ -90,6 +90,22 @@ class OrderControllerIntegrationTest {
   }
 
   @Test
+  void healthProbesAreOpenButCircuitBreakerDetailsAreAdminOnly() throws Exception {
+    mockMvc.perform(get("/actuator/health/liveness")).andExpect(status().isOk());
+    mockMvc.perform(get("/actuator/health/readiness")).andExpect(status().isOk());
+    mockMvc
+        .perform(
+            get("/actuator/circuitbreakers")
+                .header("Authorization", TestJwtIssuer.bearer("alice", "CUSTOMER")))
+        .andExpect(status().isForbidden());
+    mockMvc
+        .perform(
+            get("/actuator/circuitbreakers")
+                .header("Authorization", TestJwtIssuer.bearer("admin", "ADMIN")))
+        .andExpect(status().isOk());
+  }
+
+  @Test
   void ordersEndpointsRequireAuthentication() throws Exception {
     mockMvc.perform(get("/orders")).andExpect(status().isUnauthorized());
   }

@@ -35,6 +35,17 @@ inventory:
     hold-ttl-minutes: ${RESERVATION_HOLD_TTL_MINUTES:15}
     expiry-sweep-interval-ms: ${RESERVATION_EXPIRY_SWEEP_INTERVAL_MS:60000}
 
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
 eureka:
   client:
     service-url:

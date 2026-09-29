@@ -38,6 +38,9 @@ public class SecurityConfig {
                     // The provider's webhook authenticates by HMAC signature, not JWT.
                     .requestMatchers(HttpMethod.POST, "/payments/webhooks/gateway")
                     .permitAll()
+                    // Liveness/readiness probes (Docker / Kubernetes) run without a token.
+                    .requestMatchers("/actuator/health", "/actuator/health/**")
+                    .permitAll()
                     .requestMatchers("/error")
                     .permitAll()
                     .anyRequest()

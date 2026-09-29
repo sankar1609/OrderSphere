@@ -47,6 +47,8 @@ public class SecurityConfig {
                         "/auth/logout",
                         "/auth/token",
                         "/auth/.well-known/jwks.json",
+                        "/actuator/health",
+                        "/actuator/health/**",
                         "/error")
                     .permitAll()
                     .anyRequest()

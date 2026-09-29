@@ -34,6 +34,17 @@ shipping:
   progress:
     sweep-interval-ms: ${SHIPPING_SWEEP_INTERVAL_MS:5000}
 
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
 eureka:
   client:
     service-url:

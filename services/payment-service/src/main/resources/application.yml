@@ -45,6 +45,17 @@ payment:
     # Where the provider POSTs checkout outcomes (must be reachable from the provider).
     webhook-url: ${PAYMENT_WEBHOOK_URL:http://localhost:8084/payments/webhooks/gateway}
 
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
 eureka:
   client:
     service-url:

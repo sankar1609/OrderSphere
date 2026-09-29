@@ -32,7 +32,15 @@ public class SecurityConfig {
                 exceptions.authenticationEntryPoint(
                     new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
         .authorizeHttpRequests(
-            auth -> auth.requestMatchers("/error").permitAll().anyRequest().authenticated())
+            auth ->
+                auth
+                    // Liveness/readiness probes (Docker / Kubernetes) run without a token.
+                    .requestMatchers("/actuator/health", "/actuator/health/**")
+                    .permitAll()
+                    .requestMatchers("/error")
+                    .permitAll()
+                    .anyRequest()
+                    .authenticated())
         .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
         .build();
   }

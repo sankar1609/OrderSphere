@@ -32,7 +32,18 @@ public class SecurityConfig {
                 exceptions.authenticationEntryPoint(
                     new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
         .authorizeHttpRequests(
-            auth -> auth.requestMatchers("/error").permitAll().anyRequest().authenticated())
+            auth ->
+                auth
+                    // Liveness/readiness probes (Docker / Kubernetes) run without a token.
+                    .requestMatchers("/actuator/health", "/actuator/health/**")
+                    .permitAll()
+                    // Circuit-breaker state and event history are operational detail: admins only.
+                    .requestMatchers("/actuator/**")
+                    .hasRole("ADMIN")
+                    .requestMatchers("/error")
+                    .permitAll()
+                    .anyRequest()
+                    .authenticated())
         .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
         .build();
   }

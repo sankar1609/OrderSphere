@@ -52,6 +52,17 @@ admin:
     username: ${ADMIN_BOOTSTRAP_USERNAME:admin}
     password: ${ADMIN_BOOTSTRAP_PASSWORD:admin123}
 
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
 eureka:
   client:
     service-url:

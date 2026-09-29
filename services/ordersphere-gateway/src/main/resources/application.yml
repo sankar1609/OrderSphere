@@ -4,12 +4,39 @@ server:
 spring:
   application:
     name: ordersphere-gateway
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
   cloud:
     gateway:
       discovery:
         locator:
           enabled: true
           lower-case-service-id: true
+      # Applied to every route, including the discovery routes: a per-client-IP token bucket kept
+      # in Redis. If Redis is unreachable the limiter lets requests through (fails open).
+      default-filters:
+        - name: RequestRateLimiter
+          args:
+            key-resolver: "#{@clientIpKeyResolver}"
+            # 50/s, burst 100 by default (GATEWAY_RATE_LIMIT_PER_SECOND / _BURST) - see RateLimitConfig
+            rate-limiter: "#{@defaultRateLimiter}"
+      routes:
+        # Credential endpoints get a much stricter limit (brute force / credential stuffing). Takes
+        # precedence over auth-service's discovery route for these paths.
+        - id: auth-credentials
+          uri: lb://auth-service
+          order: -1
+          predicates:
+            - Path=/auth-service/auth/login,/auth-service/auth/register,/auth-service/auth/refresh,/auth-service/auth/token
+          filters:
+            - RewritePath=/auth-service/(?<segment>.*), /$\{segment}
+            - name: RequestRateLimiter
+              args:
+                key-resolver: "#{@authClientIpKeyResolver}"
+                # 5/s, burst 30 by default (GATEWAY_AUTH_RATE_LIMIT_PER_SECOND / _BURST)
+                rate-limiter: "#{@authRateLimiter}"
       globalcors:
         cors-configurations:
           '[/**]':
@@ -18,10 +45,21 @@ spring:
               - GET
               - POST
               - PUT
+              - PATCH
               - DELETE
               - OPTIONS
             allowedHeaders: "*"
             allowCredentials: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      probes:
+        enabled: true
 
 eureka:
   client:

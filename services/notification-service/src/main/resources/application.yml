@@ -35,6 +35,17 @@ notification:
     max-retries: ${NOTIFICATION_MAX_RETRIES:3}
     sweep-interval-ms: ${NOTIFICATION_SWEEP_INTERVAL_MS:5000}
 
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
 eureka:
   client:
     service-url:

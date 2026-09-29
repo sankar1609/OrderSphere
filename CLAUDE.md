@@ -29,8 +29,9 @@
 - **Responsibilities:**
   - Request routing via Eureka discovery locator: `/{service-id}/**` → that service (e.g. `/ordersphere-orders/orders`)
   - Client-side load balancing across registered instances
-  - CORS for the Web UI dev server (`http://localhost:5173`; GET/POST/PUT/DELETE/OPTIONS - **PATCH is not allowed yet**)
-- **Not implemented yet:** rate limiting, request validation, centralized logging/metrics
+  - CORS for the Web UI dev server (`http://localhost:5173`; GET/POST/PUT/PATCH/DELETE/OPTIONS)
+  - Rate limiting (`RequestRateLimiter`, token buckets in Redis, per client IP): 50 req/s burst 100 on every route; login/register/refresh/token 5 req/s burst 30 (`GATEWAY_*RATE_LIMIT*` env vars). Over the limit → 429 with `X-RateLimit-*` headers; if Redis is down requests are let through
+- **Not implemented yet:** request validation, centralized logging/metrics
 - **Technology:** Spring Cloud Gateway
 - **Interacts With:** All downstream services
 
@@ -237,12 +238,12 @@ Order Placement Flow:
 ## 🚀 Deployment Architecture
 
 ### Docker Compose (Development - the only deployment in the repo today)
-- `docker-compose.yml` - PostgreSQL, RabbitMQ (management UI on `:15672`, `ordersphere`/`ordersphere`), Eureka, the gateway, all six services and the dummy payment gateway (`:8087`)
+- `docker-compose.yml` - PostgreSQL, RabbitMQ, Redis (gateway rate limits) (management UI on `:15672`, `ordersphere`/`ordersphere`), Eureka, the gateway, all six services and the dummy payment gateway (`:8087`)
 - Each service has its own `Dockerfile` under `services/<name>/`; rebuild one with `docker compose up -d --build <service>`
 
 ### Kubernetes (Planned)
 - No Kubernetes manifests are checked in yet. Target: one Deployment per service, PostgreSQL as a StatefulSet with persistent volumes, credentials in Secrets.
-- Note: `/actuator/health` currently requires a JWT, so it can't be used as-is for liveness/readiness probes.
+- Every service and the gateway expose `/actuator/health` plus `/liveness` and `/readiness` probes without authentication; docker-compose health checks use `/actuator/health/readiness`. Orders' circuit-breaker actuator endpoints are ADMIN-only.
 
 ---
 
@@ -460,7 +461,8 @@ Service Registry (Eureka) - 8761
 - [ ] Web UI - customer screens done; shipment tracking, notifications, cancellation and admin/vendor screens remaining
 - [ ] Fix: retry shipment creation for CONFIRMED orders left without a shipment
 - [x] Security hardening: internal endpoints limited to SERVICE/ADMIN, RS256 tokens signed only by auth-service (JWKS), service identity via client credentials, refresh tokens with rotation/revocation
-- [ ] Security hardening (remaining): gateway rate limiting, unauthenticated `/actuator/health`, PATCH in gateway CORS; later OAuth2/OIDC
+- [x] Gateway rate limiting (Redis), unauthenticated health probes, PATCH in gateway CORS
+- [ ] Security hardening (later): OAuth2/OIDC, request validation at the gateway
 - [ ] Consume `StockLowEvent` (e.g. notify vendors)
 - [ ] Payment reconciliation
 - [ ] Add comprehensive API documentation (OpenAPI/Swagger)

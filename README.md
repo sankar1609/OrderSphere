@@ -33,6 +33,7 @@ The first build takes roughly 10–15 minutes while Maven downloads dependencies
 | Service | Port | Notes |
 |---|---|---|
 | postgres | 5432 | Single Postgres instance; per-service DBs created via `docker/postgres-init` (user/password `ordersphere`) |
+| redis | — | Rate-limit counters for the API gateway (not published to the host) |
 | rabbitmq | 5672, 15672 | Event broker; management UI on 15672 (user/password `ordersphere`) |
 | service-registry | 8761 | Eureka; every service registers here |
 | ordersphere-gateway | 8080 | API gateway — single entry point, routes `/{service-id}/...` |
@@ -46,7 +47,7 @@ The first build takes roughly 10–15 minutes while Maven downloads dependencies
 
 ### 3. Wait until it's ready
 
-The compose file has no health checks: containers start immediately and keep retrying until their dependencies are up. After about a minute, open the Eureka dashboard at http://localhost:8761 and check that **7 applications are UP** (the six services plus the API gateway). `docker compose ps` lists the containers.
+Containers start immediately and keep retrying until their dependencies are up. After about a minute, `docker compose ps` should show the gateway and the six services as **healthy** (each has a health check on `/actuator/health/readiness`), and the Eureka dashboard at http://localhost:8761 should list **7 applications UP** (the six services plus the API gateway).
 
 ### 4. Start the Web UI
 
@@ -89,6 +90,8 @@ docker compose logs -f payment-service            # follow a service's logs
 docker compose down                               # stop everything, keep the data
 docker compose down -v                            # stop and wipe the data (deletes the postgres-data volume)
 ```
+
+The gateway rate-limits each client IP (50 requests/s, and 5/s for login, register, refresh and token); over the limit it answers 429. Tune with `GATEWAY_RATE_LIMIT_PER_SECOND`, `GATEWAY_RATE_LIMIT_BURST`, `GATEWAY_AUTH_RATE_LIMIT_PER_SECOND` and `GATEWAY_AUTH_RATE_LIMIT_BURST`.
 
 ## Running a Single Service Locally
 
