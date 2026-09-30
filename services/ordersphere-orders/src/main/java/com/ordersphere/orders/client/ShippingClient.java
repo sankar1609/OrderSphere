@@ -1,5 +1,6 @@
 package com.ordersphere.orders.client;
 
+import com.ordersphere.orders.exception.RetryableHttpStatus;
 import com.ordersphere.orders.exception.ShipmentCreationException;
 import com.ordersphere.orders.exception.ShipmentLookupException;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
@@ -36,7 +37,8 @@ public class ShippingClient {
     } catch (RestClientResponseException ex) {
       throw new ShipmentCreationException(
           "Shipment creation failed for orderId " + orderId + " with status " + ex.getStatusCode(),
-          ex);
+          ex,
+          RetryableHttpStatus.isRetryable(ex.getStatusCode()));
     } catch (RestClientException ex) {
       throw new ShipmentCreationException(
           "Shipping service unreachable while creating shipment for orderId " + orderId, ex);

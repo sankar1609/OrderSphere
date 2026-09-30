@@ -15,14 +15,17 @@ public class OrderSagaProgressJob {
   private final OrderRepository orderRepository;
   private final OrderService orderService;
   private final CompensationService compensations;
+  private final OrderShipmentService shipments;
 
   public OrderSagaProgressJob(
       OrderRepository orderRepository,
       OrderService orderService,
-      CompensationService compensations) {
+      CompensationService compensations,
+      OrderShipmentService shipments) {
     this.orderRepository = orderRepository;
     this.orderService = orderService;
     this.compensations = compensations;
+    this.shipments = shipments;
   }
 
   @Scheduled(fixedDelayString = "${orders.saga.sweep-interval-ms}")
@@ -30,6 +33,8 @@ public class OrderSagaProgressJob {
     progressAwaitingPaymentOrders();
     // Retry refunds / stock releases that didn't go through right after their order change.
     compensations.processDue();
+    // Retry shipments for paid orders that didn't get one when they were confirmed.
+    shipments.processDue();
   }
 
   public void progressAwaitingPaymentOrders() {

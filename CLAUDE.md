@@ -73,6 +73,8 @@
   - `OrderSagaProgressJob` (~5s sweep) polls payment status, then confirms the order and creates the shipment
   - Compensation: releases inventory on payment failure/cancellation; refunds if already CONFIRMED
   - Compensations are durable (`order_compensations` outbox, `CompensationService`): recorded in the same transaction as the order change, attempted right after commit, retried by the saga sweep with exponential back-off (5s doubling to 10 min, 20 attempts). Outages, timeouts, 401/403/408/429 are retried; outright rejections (e.g. 409) and exhausted retries are marked FAILED and logged as needing attention
+  - Shipment creation is retried the same way: a paid order whose shipment can't be created is still CONFIRMED, and the saga sweep retries (`OrderShipmentService`, `shipment_*` columns on `orders`) with the same back-off until shipping accepts, rejects (4xx) or 20 attempts run out. Shipping returns the existing shipment for a repeated request, so a retry can't ship twice
+  - Admin endpoints for paid orders without a shipment (ADMIN only): `GET /orders/admin/unshipped` (`retrying: false` = given up), `POST /orders/admin/unshipped/{orderId}/retry` - tries again now with a fresh retry budget (409 if the order isn't CONFIRMED or already has a shipment)
   - Admin endpoints for the outbox (ADMIN only): `GET /orders/admin/compensations?status=FAILED` (default FAILED; also PENDING/DONE), `GET /orders/admin/compensations/{id}`, `POST /orders/admin/compensations/{id}/retry` - re-queues a FAILED compensation with a fresh retry budget and attempts it immediately (409 if it isn't FAILED)
   - Resilience4j circuit breakers on all outbound clients; a downstream 4xx is ignored (see `DownstreamClientErrorPredicate`), only 5xx/408/429/connection failures count
 - **Events Produced:** OrderCreatedEvent, OrderConfirmedEvent, OrderCancelledEvent
@@ -270,7 +272,7 @@ Order Placement Flow:
 
 ### Key Service Endpoints
 - **Auth Service:** `/auth/register`, `/auth/login`, `/auth/me`, `/auth/admin/users/{id}/role`
-- **Orders Service:** `/orders` (create, list), `/orders/{id}`, `/orders/{id}/cancel`, `/orders/admin/compensations` (ADMIN: list, get, retry failed)
+- **Orders Service:** `/orders` (create, list), `/orders/{id}`, `/orders/{id}/cancel`, `/orders/admin/compensations` (ADMIN: list, get, retry failed), `/orders/admin/unshipped` (ADMIN: list, retry)
 - **Inventory Service:** `/inventory/products` (create, list, get, restock), `/inventory/reservations` (reserve, confirm, release - internal, SERVICE/ADMIN)
 - **Payment Service:** `/payments` (initiate, status, refund), `/payments/webhooks/gateway` (provider webhook)
 - **Dummy Payment Gateway (:8087, direct):** `/checkout/{sessionId}` (hosted page), `/api/checkout-sessions`, `/api/refunds`
@@ -315,7 +317,7 @@ The system uses the Saga pattern to maintain consistency across distributed serv
 - Reservation confirm fails: Inventory unavailable → order stays AWAITING_PAYMENT and the next saga sweep retries; Inventory rejects it (reservation already expired/released) → payment refunded → CANCELLED
 - Customer cancels → inventory released; payment refunded if already CONFIRMED; undelivered shipment cancelled; 409 once delivered
 - A refund or stock release that fails (payment/inventory down, token not yet verifiable) is kept in `order_compensations` and retried until it succeeds - it is never silently dropped
-- Shipment creation failure → logged; the order is still marked CONFIRMED with no shipment and is **not** retried (known gap)
+- Shipment creation fails (shipping down) → the order is still CONFIRMED (it's paid) and the saga sweep retries creating the shipment with back-off; if shipping rejects it or the retries run out it's listed for an admin at `/orders/admin/unshipped`
 
 ---
 
@@ -462,7 +464,7 @@ Service Registry (Eureka) - 8761
 - [x] Implement circuit breakers (Resilience4j)
 - [x] CI pipeline (GitHub Actions)
 - [ ] Web UI - customer screens done; shipment tracking, notifications, cancellation and admin/vendor screens remaining
-- [ ] Fix: retry shipment creation for CONFIRMED orders left without a shipment
+- [x] Fix: retry shipment creation for CONFIRMED orders left without a shipment
 - [x] Security hardening: internal endpoints limited to SERVICE/ADMIN, RS256 tokens signed only by auth-service (JWKS), service identity via client credentials, refresh tokens with rotation/revocation
 - [x] Gateway rate limiting (Redis), unauthenticated health probes, PATCH in gateway CORS
 - [ ] Security hardening (later): OAuth2/OIDC, request validation at the gateway

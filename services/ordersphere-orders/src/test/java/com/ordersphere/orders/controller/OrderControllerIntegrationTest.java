@@ -20,11 +20,14 @@ import com.ordersphere.orders.client.PaymentClient;
 import com.ordersphere.orders.client.ServiceTokenProvider;
 import com.ordersphere.orders.client.ShippingClient;
 import com.ordersphere.orders.domain.Compensation;
+import com.ordersphere.orders.domain.Order;
 import com.ordersphere.orders.dto.CreateOrderRequest;
 import com.ordersphere.orders.exception.CompensationCallException;
 import com.ordersphere.orders.exception.InventoryReservationException;
 import com.ordersphere.orders.exception.PaymentInitiationException;
+import com.ordersphere.orders.exception.ShipmentCreationException;
 import com.ordersphere.orders.repository.CompensationRepository;
+import com.ordersphere.orders.repository.OrderRepository;
 import com.ordersphere.orders.service.OrderSagaProgressJob;
 import com.ordersphere.security.testing.TestJwtIssuer;
 import java.math.BigDecimal;
@@ -61,6 +64,7 @@ class OrderControllerIntegrationTest {
   @Autowired private ObjectMapper objectMapper;
   @Autowired private OrderSagaProgressJob orderSagaProgressJob;
   @Autowired private CompensationRepository compensationRepository;
+  @Autowired private OrderRepository orderRepository;
 
   @MockBean private InventoryClient inventoryClient;
   @MockBean private PaymentClient paymentClient;
@@ -342,6 +346,104 @@ class OrderControllerIntegrationTest {
                 .param("status", "BOGUS")
                 .header("Authorization", admin))
         .andExpect(status().isBadRequest());
+  }
+
+  private Long paidOrderFor(String username, long paymentId) throws Exception {
+    when(paymentClient.initiate(any(), anyString(), any(), any(), anyString()))
+        .thenReturn(
+            new PaymentClient.InitiatedPayment(paymentId, "http://gw/checkout/cs_" + paymentId));
+    when(paymentClient.getStatus(eq(paymentId), anyString()))
+        .thenReturn(PaymentClient.PaymentStatus.COMPLETED);
+    String createdBody =
+        mockMvc
+            .perform(
+                post("/orders")
+                    .header("Authorization", "Bearer " + tokenFor(username))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(requestFor("SKU-9"))))
+            .andExpect(status().isCreated())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    Long orderId = objectMapper.readTree(createdBody).get("id").asLong();
+    orderSagaProgressJob.progressAwaitingPaymentOrders(); // payment COMPLETED -> CONFIRMED
+    return orderId;
+  }
+
+  @Test
+  void shipmentThatCantBeCreatedYetIsRetriedUntilItIs() throws Exception {
+    // shipping-service is down when the order is paid, then comes back.
+    when(shippingClient.createShipment(any(), any(), any(), anyString()))
+        .thenThrow(new ShipmentCreationException("Shipping service unreachable"))
+        .thenReturn(600L);
+    Long orderId = paidOrderFor("fred", 88L);
+    String admin = "Bearer " + TestJwtIssuer.token("admin", "ADMIN");
+
+    // Paid, so confirmed - but without a shipment, and scheduled for a retry.
+    mockMvc
+        .perform(get("/orders/" + orderId).header("Authorization", "Bearer " + tokenFor("fred")))
+        .andExpect(jsonPath("$.status", is("CONFIRMED")))
+        .andExpect(jsonPath("$.shipmentId").doesNotExist());
+    mockMvc
+        .perform(get("/orders/admin/unshipped").header("Authorization", admin))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[?(@.orderId == " + orderId + ")].retrying").value(true))
+        .andExpect(jsonPath("$[?(@.orderId == " + orderId + ")].shipmentAttempts").value(1));
+
+    // Next due sweep: the shipment is created.
+    Order order = orderRepository.findById(orderId).orElseThrow();
+    order.setShipmentNextAttemptAt(Instant.now().minusSeconds(1));
+    orderRepository.save(order);
+    orderSagaProgressJob.sweep();
+
+    mockMvc
+        .perform(get("/orders/" + orderId).header("Authorization", "Bearer " + tokenFor("fred")))
+        .andExpect(jsonPath("$.status", is("CONFIRMED")))
+        .andExpect(jsonPath("$.shipmentId", is(600)));
+    mockMvc
+        .perform(get("/orders/admin/unshipped").header("Authorization", admin))
+        .andExpect(jsonPath("$[?(@.orderId == " + orderId + ")]").isEmpty());
+    verify(shippingClient, org.mockito.Mockito.times(2))
+        .createShipment(eq(orderId), eq("fred"), eq("1 Test Way"), anyString());
+  }
+
+  @Test
+  void adminsCanRetryAShipmentShippingRejected() throws Exception {
+    when(shippingClient.createShipment(any(), any(), any(), anyString()))
+        .thenThrow(new ShipmentCreationException("HTTP 400", null, false))
+        .thenReturn(601L);
+    Long orderId = paidOrderFor("gina", 89L);
+    String admin = "Bearer " + TestJwtIssuer.token("admin", "ADMIN");
+
+    mockMvc
+        .perform(
+            get("/orders/admin/unshipped").header("Authorization", "Bearer " + tokenFor("gina")))
+        .andExpect(status().isForbidden());
+    // Rejected, so the sweep has given up on it: it needs an admin.
+    mockMvc
+        .perform(get("/orders/admin/unshipped").header("Authorization", admin))
+        .andExpect(jsonPath("$[?(@.orderId == " + orderId + ")].retrying").value(false))
+        .andExpect(jsonPath("$[?(@.orderId == " + orderId + ")].lastError").value("HTTP 400"));
+    orderSagaProgressJob.sweep();
+    verify(shippingClient, org.mockito.Mockito.times(1))
+        .createShipment(eq(orderId), any(), any(), anyString());
+
+    // Fixed on the shipping side: the admin retry creates it.
+    mockMvc
+        .perform(
+            post("/orders/admin/unshipped/" + orderId + "/retry").header("Authorization", admin))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.shipmentId", is(601)))
+        .andExpect(jsonPath("$.retrying", is(false)))
+        .andExpect(jsonPath("$.lastError").doesNotExist());
+
+    mockMvc
+        .perform(
+            post("/orders/admin/unshipped/" + orderId + "/retry").header("Authorization", admin))
+        .andExpect(status().isConflict());
+    mockMvc
+        .perform(post("/orders/admin/unshipped/999999/retry").header("Authorization", admin))
+        .andExpect(status().isNotFound());
   }
 
   private Compensation refundFor(Long orderId) {

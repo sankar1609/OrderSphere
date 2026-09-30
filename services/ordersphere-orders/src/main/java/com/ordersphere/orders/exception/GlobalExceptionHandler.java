@@ -24,6 +24,11 @@ public class GlobalExceptionHandler {
     return errorResponse(HttpStatus.CONFLICT, ex.getMessage());
   }
 
+  @ExceptionHandler(ShipmentRetryNotAllowedException.class)
+  public ResponseEntity<Object> handleShipmentRetryNotAllowed(ShipmentRetryNotAllowedException ex) {
+    return errorResponse(HttpStatus.CONFLICT, ex.getMessage());
+  }
+
   @ExceptionHandler(OrderNotFoundException.class)
   public ResponseEntity<Object> handleOrderNotFound(OrderNotFoundException ex) {
     return errorResponse(HttpStatus.NOT_FOUND, ex.getMessage());

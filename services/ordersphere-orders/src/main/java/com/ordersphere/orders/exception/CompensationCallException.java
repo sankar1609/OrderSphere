@@ -23,14 +23,11 @@ public class CompensationCallException extends RuntimeException {
   public static CompensationCallException from(String action, RestClientException ex) {
     if (ex instanceof RestClientResponseException response) {
       int status = response.getStatusCode().value();
-      boolean retryable =
-          response.getStatusCode().is5xxServerError()
-              || status == 401
-              || status == 403
-              || status == 408
-              || status == 429;
       return new CompensationCallException(
-          action + " failed with HTTP " + status, ex, retryable, status);
+          action + " failed with HTTP " + status,
+          ex,
+          RetryableHttpStatus.isRetryable(response.getStatusCode()),
+          status);
     }
     return new CompensationCallException(action + " failed: " + ex.getMessage(), ex, true, null);
   }

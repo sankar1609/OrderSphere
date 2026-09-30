@@ -17,7 +17,6 @@ import com.ordersphere.orders.exception.InventoryReservationException;
 import com.ordersphere.orders.exception.OrderCancellationNotAllowedException;
 import com.ordersphere.orders.exception.OrderNotFoundException;
 import com.ordersphere.orders.exception.PaymentInitiationException;
-import com.ordersphere.orders.exception.ShipmentCreationException;
 import com.ordersphere.orders.exception.ShipmentLookupException;
 import com.ordersphere.orders.repository.OrderRepository;
 import java.math.BigDecimal;
@@ -46,6 +45,7 @@ public class OrderService {
   private final ServiceTokenProvider serviceTokenProvider;
   private final ApplicationEventPublisher eventPublisher;
   private final CompensationService compensations;
+  private final OrderShipmentService shipments;
 
   public OrderService(
       OrderRepository orderRepository,
@@ -54,7 +54,8 @@ public class OrderService {
       ShippingClient shippingClient,
       ServiceTokenProvider serviceTokenProvider,
       ApplicationEventPublisher eventPublisher,
-      CompensationService compensations) {
+      CompensationService compensations,
+      OrderShipmentService shipments) {
     this.orderRepository = orderRepository;
     this.inventoryClient = inventoryClient;
     this.paymentClient = paymentClient;
@@ -62,6 +63,7 @@ public class OrderService {
     this.serviceTokenProvider = serviceTokenProvider;
     this.eventPublisher = eventPublisher;
     this.compensations = compensations;
+    this.shipments = shipments;
   }
 
   @Transactional
@@ -261,18 +263,10 @@ public class OrderService {
       return;
     }
 
-    try {
-      Long shipmentId =
-          shippingClient.createShipment(
-              order.getId(),
-              order.getCustomerUsername(),
-              order.getShippingDestination(),
-              serviceTokenProvider.bearerToken());
-      order.setShipmentId(shipmentId);
-    } catch (ShipmentCreationException ex) {
-      log.warn("Shipment creation failed for orderId {}: {}", order.getId(), ex.getMessage());
-    }
+    // The order is paid, so it's confirmed either way; a shipment that can't be created now is
+    // retried by the saga sweep.
     order.markStatus(OrderStatus.CONFIRMED);
+    shipments.createShipment(order);
     orderRepository.save(order);
     eventPublisher.publishEvent(
         new OrderConfirmedEvent(order.getId(), order.getCustomerUsername()));

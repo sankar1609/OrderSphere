@@ -52,6 +52,17 @@ public class Order {
   @Column(name = "shipment_id")
   private Long shipmentId;
 
+  /** Shipment creation attempts so far; the first is made when the order is confirmed. */
+  @Column(name = "shipment_attempts", nullable = false)
+  private int shipmentAttempts;
+
+  /** When to retry creating the shipment; null once shipped or once retries are given up on. */
+  @Column(name = "shipment_next_attempt_at")
+  private Instant shipmentNextAttemptAt;
+
+  @Column(name = "shipment_last_error", length = 1024)
+  private String shipmentLastError;
+
   @Column(name = "shipping_destination")
   private String shippingDestination;
 

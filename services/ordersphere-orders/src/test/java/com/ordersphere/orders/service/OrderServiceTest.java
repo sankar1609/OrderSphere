@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -31,6 +32,7 @@ import com.ordersphere.orders.exception.ShipmentCreationException;
 import com.ordersphere.orders.exception.ShipmentLookupException;
 import com.ordersphere.orders.repository.OrderRepository;
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -40,6 +42,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpServerErrorException;
 
@@ -66,7 +69,15 @@ class OrderServiceTest {
             shippingClient,
             serviceTokenProvider,
             eventPublisher,
-            compensations);
+            compensations,
+            new OrderShipmentService(
+                orderRepository,
+                shippingClient,
+                serviceTokenProvider,
+                mock(PlatformTransactionManager.class),
+                20,
+                Duration.ofSeconds(5),
+                Duration.ofMinutes(10)));
     lenient().when(serviceTokenProvider.bearerToken()).thenReturn("Bearer service-token");
     lenient()
         .when(orderRepository.save(any(Order.class)))
@@ -258,7 +269,7 @@ class OrderServiceTest {
   }
 
   @Test
-  void progressAwaitingPaymentStillConfirmsWhenShipmentCreationFails() {
+  void progressAwaitingPaymentConfirmsAndSchedulesARetryWhenShipmentCreationFails() {
     Order order = new Order("alice");
     order.setId(10L);
     order.setPaymentId(42L);
@@ -274,6 +285,10 @@ class OrderServiceTest {
 
     assertThat(order.getStatus()).isEqualTo(OrderStatus.CONFIRMED);
     assertThat(order.getShipmentId()).isNull();
+    assertThat(order.getShipmentAttempts()).isEqualTo(1);
+    assertThat(order.getShipmentNextAttemptAt()).isNotNull();
+    assertThat(order.getShipmentLastError()).isEqualTo("boom");
+    verify(eventPublisher).publishEvent(any(OrderConfirmedEvent.class));
   }
 
   @Test
