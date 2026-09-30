@@ -13,6 +13,17 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
+  @ExceptionHandler(CompensationNotFoundException.class)
+  public ResponseEntity<Object> handleCompensationNotFound(CompensationNotFoundException ex) {
+    return errorResponse(HttpStatus.NOT_FOUND, ex.getMessage());
+  }
+
+  @ExceptionHandler(CompensationNotRetryableException.class)
+  public ResponseEntity<Object> handleCompensationNotRetryable(
+      CompensationNotRetryableException ex) {
+    return errorResponse(HttpStatus.CONFLICT, ex.getMessage());
+  }
+
   @ExceptionHandler(OrderNotFoundException.class)
   public ResponseEntity<Object> handleOrderNotFound(OrderNotFoundException ex) {
     return errorResponse(HttpStatus.NOT_FOUND, ex.getMessage());

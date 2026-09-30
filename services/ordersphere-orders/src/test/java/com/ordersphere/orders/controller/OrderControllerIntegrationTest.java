@@ -287,6 +287,63 @@ class OrderControllerIntegrationTest {
         .refund(eq(77L), eq("Order cancelled by customer"), anyString());
   }
 
+  @Test
+  void adminsCanListAndRetryFailedCompensations() throws Exception {
+    Compensation stuck =
+        new Compensation(
+            Compensation.Type.REFUND_PAYMENT,
+            9001L,
+            55L,
+            "Order cancelled by customer",
+            Instant.now());
+    stuck.setStatus(Compensation.Status.FAILED);
+    stuck.setAttempts(20);
+    stuck.setLastError("Refund of paymentId 55 failed with HTTP 503");
+    Long id = compensationRepository.save(stuck).getId();
+    String admin = "Bearer " + TestJwtIssuer.token("admin", "ADMIN");
+
+    mockMvc
+        .perform(
+            get("/orders/admin/compensations")
+                .header("Authorization", "Bearer " + tokenFor("erin")))
+        .andExpect(status().isForbidden());
+    mockMvc
+        .perform(get("/orders/admin/compensations").header("Authorization", admin))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[?(@.id == " + id + ")].orderId").value(9001))
+        .andExpect(jsonPath("$[?(@.id == " + id + ")].lastError").value(stuck.getLastError()));
+    mockMvc
+        .perform(
+            get("/orders/admin/compensations")
+                .param("status", "PENDING")
+                .header("Authorization", admin))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[?(@.id == " + id + ")]").isEmpty());
+
+    // Payment-service is healthy again: the retry goes straight through.
+    mockMvc
+        .perform(
+            post("/orders/admin/compensations/" + id + "/retry").header("Authorization", admin))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status", is("DONE")))
+        .andExpect(jsonPath("$.attempts", is(1)));
+    verify(paymentClient).refund(eq(55L), eq("Order cancelled by customer"), anyString());
+
+    mockMvc
+        .perform(
+            post("/orders/admin/compensations/" + id + "/retry").header("Authorization", admin))
+        .andExpect(status().isConflict());
+    mockMvc
+        .perform(post("/orders/admin/compensations/999999/retry").header("Authorization", admin))
+        .andExpect(status().isNotFound());
+    mockMvc
+        .perform(
+            get("/orders/admin/compensations")
+                .param("status", "BOGUS")
+                .header("Authorization", admin))
+        .andExpect(status().isBadRequest());
+  }
+
   private Compensation refundFor(Long orderId) {
     return compensationRepository.findByOrderIdOrderById(orderId).stream()
         .filter(c -> c.getType() == Compensation.Type.REFUND_PAYMENT)

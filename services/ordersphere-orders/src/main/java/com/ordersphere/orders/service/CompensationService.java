@@ -4,11 +4,15 @@ import com.ordersphere.orders.client.InventoryClient;
 import com.ordersphere.orders.client.PaymentClient;
 import com.ordersphere.orders.client.ServiceTokenProvider;
 import com.ordersphere.orders.domain.Compensation;
+import com.ordersphere.orders.dto.CompensationResponse;
 import com.ordersphere.orders.exception.CompensationCallException;
+import com.ordersphere.orders.exception.CompensationNotFoundException;
+import com.ordersphere.orders.exception.CompensationNotRetryableException;
 import com.ordersphere.orders.repository.CompensationRepository;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,6 +20,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -97,6 +102,45 @@ public class CompensationService {
     enqueue(new Compensation(Compensation.Type.REFUND_PAYMENT, orderId, paymentId, reason, now()));
   }
 
+  /** Admin view: compensations in the given state, most recently changed first. */
+  @Transactional(readOnly = true)
+  public List<CompensationResponse> list(Compensation.Status status) {
+    return repository.findByStatusOrderByUpdatedAtDesc(status).stream()
+        .map(CompensationResponse::from)
+        .toList();
+  }
+
+  @Transactional(readOnly = true)
+  public CompensationResponse get(Long id) {
+    return repository
+        .findById(id)
+        .map(CompensationResponse::from)
+        .orElseThrow(() -> new CompensationNotFoundException(id));
+  }
+
+  /**
+   * Admin action once whatever made a compensation fail is fixed: puts a FAILED one back in the
+   * queue with a fresh retry budget and attempts it right after this transaction commits.
+   */
+  @Transactional
+  public void retry(Long id) {
+    Compensation compensation =
+        repository.findById(id).orElseThrow(() -> new CompensationNotFoundException(id));
+    if (compensation.getStatus() != Compensation.Status.FAILED) {
+      throw new CompensationNotRetryableException(id, compensation.getStatus());
+    }
+    compensation.setStatus(Compensation.Status.PENDING);
+    compensation.setAttempts(0);
+    compensation.setNextAttemptAt(now());
+    compensation.setUpdatedAt(now());
+    repository.save(compensation);
+    log.info(
+        "{} for orderId {} re-queued by an admin",
+        compensation.getType(),
+        compensation.getOrderId());
+    attemptAfterCommit(id);
+  }
+
   /** Saga sweep: attempts every compensation that is due. */
   public void processDue() {
     for (Long id : repository.findDueIds(now())) {
@@ -105,7 +149,10 @@ public class CompensationService {
   }
 
   private void enqueue(Compensation compensation) {
-    Long id = repository.save(compensation).getId();
+    attemptAfterCommit(repository.save(compensation).getId());
+  }
+
+  private void attemptAfterCommit(Long id) {
     if (TransactionSynchronizationManager.isSynchronizationActive()) {
       // Only once the order change is committed - otherwise a rolled-back cancellation could
       // still release stock or refund.

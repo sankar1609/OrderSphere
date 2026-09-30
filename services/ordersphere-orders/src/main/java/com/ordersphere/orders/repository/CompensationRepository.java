@@ -27,4 +27,6 @@ public interface CompensationRepository extends JpaRepository<Compensation, Long
   Optional<Compensation> claim(@Param("id") Long id);
 
   List<Compensation> findByOrderIdOrderById(Long orderId);
+
+  List<Compensation> findByStatusOrderByUpdatedAtDesc(Compensation.Status status);
 }
