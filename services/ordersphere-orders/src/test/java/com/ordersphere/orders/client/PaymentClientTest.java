@@ -7,12 +7,15 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withServerError;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
+import com.ordersphere.orders.exception.CompensationCallException;
 import com.ordersphere.orders.exception.PaymentInitiationException;
 import java.math.BigDecimal;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
@@ -76,7 +79,7 @@ class PaymentClientTest {
   }
 
   @Test
-  void refundSendsExpectedRequestAndSwallowsFailures() {
+  void refundSendsExpectedRequestAndReportsRetryableFailures() {
     RestClient.Builder builder = RestClient.builder();
     MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
     PaymentClient client = new PaymentClient(builder);
@@ -88,9 +91,25 @@ class PaymentClientTest {
         .andExpect(jsonPath("$.reason").value("Order cancelled"))
         .andRespond(withServerError());
 
-    client.refund(42L, "Order cancelled", "Bearer token");
-
+    assertThatThrownBy(() -> client.refund(42L, "Order cancelled", "Bearer token"))
+        .isInstanceOfSatisfying(
+            CompensationCallException.class, ex -> assertThat(ex.isRetryable()).isTrue());
     server.verify();
+  }
+
+  @Test
+  void refundRejectedWith401IsStillRetryable() {
+    // e.g. payment-service couldn't fetch the JWKS yet - it will verify the token on a retry.
+    RestClient.Builder builder = RestClient.builder();
+    MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+    PaymentClient client = new PaymentClient(builder);
+    server
+        .expect(requestTo("http://payment-service/payments/42/refund"))
+        .andRespond(withStatus(HttpStatus.UNAUTHORIZED));
+
+    assertThatThrownBy(() -> client.refund(42L, "Order cancelled", "Bearer token"))
+        .isInstanceOfSatisfying(
+            CompensationCallException.class, ex -> assertThat(ex.isRetryable()).isTrue());
   }
 
   @Test
@@ -133,10 +152,17 @@ class PaymentClientTest {
   }
 
   @Test
-  void refundFallbackLogsAndDoesNotThrow() {
+  void refundFallbackReportsAnOpenBreakerAsRetryable() {
     PaymentClient client = new PaymentClient(RestClient.builder());
 
-    client.refundFallback(
-        42L, "Order cancelled", "Bearer token", new RuntimeException("circuit breaker open"));
+    assertThatThrownBy(
+            () ->
+                client.refundFallback(
+                    42L,
+                    "Order cancelled",
+                    "Bearer token",
+                    new RuntimeException("circuit breaker open")))
+        .isInstanceOfSatisfying(
+            CompensationCallException.class, ex -> assertThat(ex.isRetryable()).isTrue());
   }
 }

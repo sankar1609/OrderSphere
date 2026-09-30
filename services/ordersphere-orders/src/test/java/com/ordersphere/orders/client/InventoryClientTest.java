@@ -10,6 +10,7 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
+import com.ordersphere.orders.exception.CompensationCallException;
 import com.ordersphere.orders.exception.InventoryReservationException;
 import java.math.BigDecimal;
 import java.util.List;
@@ -107,7 +108,7 @@ class InventoryClientTest {
   }
 
   @Test
-  void releaseSendsExpectedRequestAndSwallowsFailures() {
+  void releaseSendsExpectedRequestAndReportsRetryableFailures() {
     RestClient.Builder builder = RestClient.builder();
     MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
     InventoryClient client = new InventoryClient(builder);
@@ -118,9 +119,28 @@ class InventoryClientTest {
         .andExpect(header("Authorization", "Bearer token"))
         .andRespond(withServerError());
 
-    client.release(1L, "Bearer token");
-
+    assertThatThrownBy(() -> client.release(1L, "Bearer token"))
+        .isInstanceOfSatisfying(
+            CompensationCallException.class, ex -> assertThat(ex.isRetryable()).isTrue());
     server.verify();
+  }
+
+  @Test
+  void releaseRejectionIsNotRetryable() {
+    RestClient.Builder builder = RestClient.builder();
+    MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+    InventoryClient client = new InventoryClient(builder);
+    server
+        .expect(requestTo("http://inventory-service/inventory/reservations/1/release"))
+        .andRespond(withStatus(HttpStatus.CONFLICT));
+
+    assertThatThrownBy(() -> client.release(1L, "Bearer token"))
+        .isInstanceOfSatisfying(
+            CompensationCallException.class,
+            ex -> {
+              assertThat(ex.isRetryable()).isFalse();
+              assertThat(ex.getStatus()).isEqualTo(409);
+            });
   }
 
   @Test
@@ -153,9 +173,14 @@ class InventoryClientTest {
   }
 
   @Test
-  void releaseFallbackLogsAndDoesNotThrow() {
+  void releaseFallbackReportsAnOpenBreakerAsRetryable() {
     InventoryClient client = new InventoryClient(RestClient.builder());
 
-    client.releaseFallback(1L, "Bearer token", new RuntimeException("circuit breaker open"));
+    assertThatThrownBy(
+            () ->
+                client.releaseFallback(
+                    1L, "Bearer token", new RuntimeException("circuit breaker open")))
+        .isInstanceOfSatisfying(
+            CompensationCallException.class, ex -> assertThat(ex.isRetryable()).isTrue());
   }
 }

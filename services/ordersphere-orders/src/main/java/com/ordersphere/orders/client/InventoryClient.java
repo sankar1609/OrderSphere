@@ -1,11 +1,10 @@
 package com.ordersphere.orders.client;
 
+import com.ordersphere.orders.exception.CompensationCallException;
 import com.ordersphere.orders.exception.InventoryReservationException;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import java.math.BigDecimal;
 import java.util.List;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -15,8 +14,6 @@ import org.springframework.web.client.RestClientResponseException;
 
 @Component
 public class InventoryClient {
-
-  private static final Logger log = LoggerFactory.getLogger(InventoryClient.class);
 
   private final RestClient restClient;
 
@@ -94,6 +91,10 @@ public class InventoryClient {
   }
 
   @CircuitBreaker(name = "inventory-service", fallbackMethod = "releaseFallback")
+  /**
+   * Releases the order's reservation. Throws {@link CompensationCallException} on failure - the
+   * caller (a durable compensation, see CompensationService) decides whether to retry.
+   */
   public void release(Long orderId, String bearerToken) {
     try {
       restClient
@@ -103,13 +104,19 @@ public class InventoryClient {
           .retrieve()
           .toBodilessEntity();
     } catch (RestClientException ex) {
-      log.warn(
-          "Failed to release inventory reservation for orderId {}: {}", orderId, ex.getMessage());
+      throw CompensationCallException.from("Inventory release for orderId " + orderId, ex);
     }
   }
 
   void releaseFallback(Long orderId, String bearerToken, Throwable ex) {
-    log.warn("Skipping inventory release for orderId {}: {}", orderId, ex.getMessage());
+    if (ex instanceof CompensationCallException cce) {
+      throw cce;
+    }
+    throw new CompensationCallException(
+        "Inventory release for orderId " + orderId + " not attempted: " + ex.getMessage(),
+        ex,
+        true,
+        null);
   }
 
   public record ReserveRequest(Long orderId, List<Item> items) {

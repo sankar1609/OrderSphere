@@ -52,6 +52,7 @@ class OrderServiceTest {
   @Mock private ShippingClient shippingClient;
   @Mock private ServiceTokenProvider serviceTokenProvider;
   @Mock private ApplicationEventPublisher eventPublisher;
+  @Mock private CompensationService compensations;
 
   private OrderService orderService;
 
@@ -64,7 +65,8 @@ class OrderServiceTest {
             paymentClient,
             shippingClient,
             serviceTokenProvider,
-            eventPublisher);
+            eventPublisher,
+            compensations);
     lenient().when(serviceTokenProvider.bearerToken()).thenReturn("Bearer service-token");
     lenient()
         .when(orderRepository.save(any(Order.class)))
@@ -153,7 +155,7 @@ class OrderServiceTest {
     OrderResponse response = orderService.createOrder("alice", requestFor("SKU-1"));
 
     assertThat(response.status()).isEqualTo(OrderStatus.CANCELLED);
-    verify(inventoryClient).release(any(), eq("Bearer service-token"));
+    verify(compensations).releaseInventory(any());
     verify(paymentClient, never()).initiate(any(), any(), any(), any(), any());
   }
 
@@ -180,7 +182,7 @@ class OrderServiceTest {
     OrderResponse response = orderService.createOrder("alice", requestFor("SKU-1"));
 
     assertThat(response.status()).isEqualTo(OrderStatus.CANCELLED);
-    verify(inventoryClient).release(any(), eq("Bearer service-token"));
+    verify(compensations).releaseInventory(any());
     verify(eventPublisher).publishEvent(any(OrderCancelledEvent.class));
   }
 
@@ -227,7 +229,7 @@ class OrderServiceTest {
     // Left for the next saga sweep to retry - not confirmed, not cancelled, nothing refunded.
     assertThat(order.getStatus()).isEqualTo(OrderStatus.AWAITING_PAYMENT);
     verify(shippingClient, never()).createShipment(any(), any(), any(), any());
-    verify(paymentClient, never()).refund(any(), any(), any());
+    verify(compensations, never()).refundPayment(any(), any(), any());
     verify(eventPublisher, never()).publishEvent(any(OrderConfirmedEvent.class));
     verify(eventPublisher, never()).publishEvent(any(OrderCancelledEvent.class));
   }
@@ -249,7 +251,7 @@ class OrderServiceTest {
     orderService.onPaymentEvent(10L, true);
 
     assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCELLED);
-    verify(paymentClient).refund(eq(42L), anyString(), eq("Bearer service-token"));
+    verify(compensations).refundPayment(eq(10L), eq(42L), anyString());
     verify(shippingClient, never()).createShipment(any(), any(), any(), any());
     verify(eventPublisher, never()).publishEvent(any(OrderConfirmedEvent.class));
     verify(eventPublisher).publishEvent(any(OrderCancelledEvent.class));
@@ -287,7 +289,7 @@ class OrderServiceTest {
     orderService.progressAwaitingPayment(10L);
 
     assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCELLED);
-    verify(inventoryClient).release(10L, "Bearer service-token");
+    verify(compensations).releaseInventory(10L);
     verify(shippingClient, never()).createShipment(any(), any(), any(), any());
     verify(eventPublisher).publishEvent(any(OrderCancelledEvent.class));
   }
@@ -305,7 +307,7 @@ class OrderServiceTest {
     orderService.progressAwaitingPayment(10L);
 
     assertThat(order.getStatus()).isEqualTo(OrderStatus.AWAITING_PAYMENT);
-    verify(inventoryClient, never()).release(any(), any());
+    verify(compensations, never()).releaseInventory(any());
     verify(shippingClient, never()).createShipment(any(), any(), any(), any());
     verify(eventPublisher, never()).publishEvent(any(OrderConfirmedEvent.class));
     verify(eventPublisher, never()).publishEvent(any(OrderCancelledEvent.class));
@@ -324,7 +326,7 @@ class OrderServiceTest {
     orderService.progressAwaitingPayment(10L);
 
     assertThat(order.getStatus()).isEqualTo(OrderStatus.AWAITING_PAYMENT);
-    verify(inventoryClient, never()).release(any(), any());
+    verify(compensations, never()).releaseInventory(any());
     verify(shippingClient, never()).createShipment(any(), any(), any(), any());
     verify(eventPublisher, never()).publishEvent(any(OrderConfirmedEvent.class));
     verify(eventPublisher, never()).publishEvent(any(OrderCancelledEvent.class));
@@ -361,7 +363,7 @@ class OrderServiceTest {
     orderService.onPaymentEvent(10L, true);
 
     assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCELLED);
-    verify(paymentClient).refund(eq(42L), anyString(), eq("Bearer service-token"));
+    verify(compensations).refundPayment(eq(10L), eq(42L), anyString());
     verify(inventoryClient, never()).confirm(any(), any());
     verify(eventPublisher, never()).publishEvent(any(OrderConfirmedEvent.class));
   }
@@ -389,7 +391,7 @@ class OrderServiceTest {
     orderService.onPaymentEvent(10L, false);
 
     assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCELLED);
-    verify(inventoryClient).release(10L, "Bearer service-token");
+    verify(compensations).releaseInventory(10L);
     verify(eventPublisher).publishEvent(any(OrderCancelledEvent.class));
   }
 
@@ -417,8 +419,8 @@ class OrderServiceTest {
     OrderResponse response = orderService.cancelOrder("alice", false, 10L);
 
     assertThat(response.status()).isEqualTo(OrderStatus.CANCELLED);
-    verify(inventoryClient).release(10L, "Bearer service-token");
-    verify(paymentClient, never()).refund(any(), any(), any());
+    verify(compensations).releaseInventory(10L);
+    verify(compensations, never()).refundPayment(any(), any(), any());
   }
 
   @Test
@@ -432,12 +434,12 @@ class OrderServiceTest {
     OrderResponse response = orderService.cancelOrder("alice", false, 10L);
 
     assertThat(response.status()).isEqualTo(OrderStatus.CANCELLED);
-    verify(inventoryClient).release(10L, "Bearer service-token");
-    verify(paymentClient).refund(42L, "Order cancelled by customer", "Bearer service-token");
+    verify(compensations).releaseInventory(10L);
+    verify(compensations).refundPayment(10L, 42L, "Order cancelled by customer");
 
     OrderResponse second = orderService.cancelOrder("alice", false, 10L);
     assertThat(second.status()).isEqualTo(OrderStatus.CANCELLED);
-    verify(inventoryClient).release(10L, "Bearer service-token");
+    verify(compensations).releaseInventory(10L);
   }
 
   @Test
@@ -454,8 +456,8 @@ class OrderServiceTest {
     assertThatThrownBy(() -> orderService.cancelOrder("alice", false, 10L))
         .isInstanceOf(OrderCancellationNotAllowedException.class);
 
-    verify(inventoryClient, never()).release(any(), any());
-    verify(paymentClient, never()).refund(any(), any(), any());
+    verify(compensations, never()).releaseInventory(any());
+    verify(compensations, never()).refundPayment(any(), any(), any());
   }
 
   @Test
@@ -472,8 +474,8 @@ class OrderServiceTest {
     OrderResponse response = orderService.cancelOrder("alice", false, 10L);
 
     assertThat(response.status()).isEqualTo(OrderStatus.CANCELLED);
-    verify(inventoryClient).release(10L, "Bearer service-token");
-    verify(paymentClient).refund(42L, "Order cancelled by customer", "Bearer service-token");
+    verify(compensations).releaseInventory(10L);
+    verify(compensations).refundPayment(10L, 42L, "Order cancelled by customer");
   }
 
   @Test

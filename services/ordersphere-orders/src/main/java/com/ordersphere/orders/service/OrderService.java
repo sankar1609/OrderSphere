@@ -45,6 +45,7 @@ public class OrderService {
   private final ShippingClient shippingClient;
   private final ServiceTokenProvider serviceTokenProvider;
   private final ApplicationEventPublisher eventPublisher;
+  private final CompensationService compensations;
 
   public OrderService(
       OrderRepository orderRepository,
@@ -52,13 +53,15 @@ public class OrderService {
       PaymentClient paymentClient,
       ShippingClient shippingClient,
       ServiceTokenProvider serviceTokenProvider,
-      ApplicationEventPublisher eventPublisher) {
+      ApplicationEventPublisher eventPublisher,
+      CompensationService compensations) {
     this.orderRepository = orderRepository;
     this.inventoryClient = inventoryClient;
     this.paymentClient = paymentClient;
     this.shippingClient = shippingClient;
     this.serviceTokenProvider = serviceTokenProvider;
     this.eventPublisher = eventPublisher;
+    this.compensations = compensations;
   }
 
   @Transactional
@@ -91,7 +94,7 @@ public class OrderService {
 
     // The total is always derived from Inventory's prices, never supplied by the client.
     if (!applyPricing(order, reservation)) {
-      inventoryClient.release(order.getId(), bearerToken);
+      compensations.releaseInventory(order.getId());
       cancelWithReason(order, OrderCancelledEvent.Reason.INVENTORY_UNAVAILABLE);
       return OrderResponse.from(order);
     }
@@ -107,7 +110,7 @@ public class OrderService {
       order.markStatus(OrderStatus.AWAITING_PAYMENT);
       orderRepository.save(order);
     } catch (PaymentInitiationException ex) {
-      inventoryClient.release(order.getId(), bearerToken);
+      compensations.releaseInventory(order.getId());
       cancelWithReason(order, OrderCancelledEvent.Reason.PAYMENT_FAILED);
     }
 
@@ -144,9 +147,10 @@ public class OrderService {
     }
     if (order.getStatus() == OrderStatus.AWAITING_PAYMENT
         || order.getStatus() == OrderStatus.CONFIRMED) {
-      inventoryClient.release(order.getId(), bearerToken);
+      compensations.releaseInventory(order.getId());
       if (order.getStatus() == OrderStatus.CONFIRMED) {
-        paymentClient.refund(order.getPaymentId(), "Order cancelled by customer", bearerToken);
+        compensations.refundPayment(
+            order.getId(), order.getPaymentId(), "Order cancelled by customer");
       }
     }
 
@@ -223,10 +227,8 @@ public class OrderService {
       // The customer paid on the still-open checkout page after the order was cancelled (e.g.
       // they cancelled in another tab). Don't keep money for an order we won't fulfil.
       log.warn("Payment completed for already-cancelled orderId {}; refunding", orderId);
-      paymentClient.refund(
-          order.getPaymentId(),
-          "Order was cancelled before payment completed",
-          serviceTokenProvider.bearerToken());
+      compensations.refundPayment(
+          order.getId(), order.getPaymentId(), "Order was cancelled before payment completed");
     } else {
       log.debug("Ignoring payment event for orderId {} in status {}", orderId, order.getStatus());
     }
@@ -246,10 +248,8 @@ public class OrderService {
                 + " cancelling",
             order.getId(),
             ex.getMessage());
-        paymentClient.refund(
-            order.getPaymentId(),
-            "Reserved stock was no longer available",
-            serviceTokenProvider.bearerToken());
+        compensations.refundPayment(
+            order.getId(), order.getPaymentId(), "Reserved stock was no longer available");
         cancelWithReason(order, OrderCancelledEvent.Reason.INVENTORY_UNAVAILABLE);
         return;
       }
@@ -279,7 +279,7 @@ public class OrderService {
   }
 
   private void handlePaymentFailed(Order order) {
-    inventoryClient.release(order.getId(), serviceTokenProvider.bearerToken());
+    compensations.releaseInventory(order.getId());
     cancelWithReason(order, OrderCancelledEvent.Reason.PAYMENT_FAILED);
   }
 

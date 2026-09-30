@@ -3607,35 +3607,29 @@
                 "login"
               ]
             },
-            "description": "Brute-force protection: credential endpoints get a much smaller per-IP token bucket than the rest of the API."
+            "description": "Brute-force protection: credential endpoints get a much smaller per-IP token bucket (burst 30) than the rest of the API. This request re-sends itself until the gateway answers 429."
           },
           "event": [
-            {
-              "listen": "prerequest",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "// Spend the per-IP login bucket (burst 30, refilling 5/s) with 80 rapid attempts before this",
-                  "// request - well past the burst even though the attempts spread over a few seconds.",
-                  "for (var i = 0; i < 80; i++) {",
-                  "    pm.sendRequest({",
-                  "        url: pm.variables.replaceIn('{{authBaseUrl}}/auth/login'), method: 'POST',",
-                  "        header: { 'Content-Type': 'application/json' },",
-                  "        body: { mode: 'raw', raw: JSON.stringify({ username: 'nobody', password: 'x' }) }",
-                  "    }, function () {});",
-                  "}"
-                ]
-              }
-            },
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('Status is 429', function () { pm.response.to.have.status(429); });",
-                  "pm.test('Rate-limit headers present', function () {",
-                  "    pm.expect(pm.response.headers.get('X-RateLimit-Burst-Capacity')).to.eql('30');",
-                  "});"
+                  "var key = 'burstAttempts';",
+                  "var attempts = Number(pm.collectionVariables.get(key) || 0) + 1;",
+                  "if (pm.response.code !== 429 && attempts < 60) {",
+                  "    pm.collectionVariables.set(key, attempts);",
+                  "    pm.execution.setNextRequest(pm.info.requestId);",
+                  "} else {",
+                  "    pm.collectionVariables.unset(key);",
+                  "    pm.test('Rate limited within the burst allowance (' + attempts + ' attempts)', function () {",
+                  "        pm.expect(pm.response.code).to.eql(429);",
+                  "        pm.expect(attempts).to.be.at.most(40);",
+                  "    });",
+                  "    pm.test('Rate-limit headers present', function () {",
+                  "        pm.expect(pm.response.headers.get('X-RateLimit-Burst-Capacity')).to.eql('30');",
+                  "    });",
+                  "}"
                 ]
               }
             }

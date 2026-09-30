@@ -72,6 +72,7 @@
   - Orchestrated saga: calls Inventory, Payment and Shipping synchronously over load-balanced REST
   - `OrderSagaProgressJob` (~5s sweep) polls payment status, then confirms the order and creates the shipment
   - Compensation: releases inventory on payment failure/cancellation; refunds if already CONFIRMED
+  - Compensations are durable (`order_compensations` outbox, `CompensationService`): recorded in the same transaction as the order change, attempted right after commit, retried by the saga sweep with exponential back-off (5s doubling to 10 min, 20 attempts). Outages, timeouts, 401/403/408/429 are retried; outright rejections (e.g. 409) and exhausted retries are marked FAILED and logged as needing attention
   - Resilience4j circuit breakers on all outbound clients; a downstream 4xx is ignored (see `DownstreamClientErrorPredicate`), only 5xx/408/429/connection failures count
 - **Events Produced:** OrderCreatedEvent, OrderConfirmedEvent, OrderCancelledEvent
 - **Events Consumed:** PaymentCompletedEvent, PaymentFailedEvent
@@ -312,6 +313,7 @@ The system uses the Saga pattern to maintain consistency across distributed serv
 - Customer cancels the order but then pays on the still-open page → the late payment is refunded automatically
 - Reservation confirm fails: Inventory unavailable → order stays AWAITING_PAYMENT and the next saga sweep retries; Inventory rejects it (reservation already expired/released) → payment refunded → CANCELLED
 - Customer cancels → inventory released; payment refunded if already CONFIRMED; undelivered shipment cancelled; 409 once delivered
+- A refund or stock release that fails (payment/inventory down, token not yet verifiable) is kept in `order_compensations` and retried until it succeeds - it is never silently dropped
 - Shipment creation failure → logged; the order is still marked CONFIRMED with no shipment and is **not** retried (known gap)
 
 ---

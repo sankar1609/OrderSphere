@@ -1,10 +1,9 @@
 package com.ordersphere.orders.client;
 
+import com.ordersphere.orders.exception.CompensationCallException;
 import com.ordersphere.orders.exception.PaymentInitiationException;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import java.math.BigDecimal;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -14,8 +13,6 @@ import org.springframework.web.client.RestClientResponseException;
 
 @Component
 public class PaymentClient {
-
-  private static final Logger log = LoggerFactory.getLogger(PaymentClient.class);
 
   private final RestClient restClient;
 
@@ -90,6 +87,11 @@ public class PaymentClient {
   }
 
   @CircuitBreaker(name = "payment-service", fallbackMethod = "refundFallback")
+  /**
+   * Requests a refund (idempotent on payment-service's side). Throws {@link
+   * CompensationCallException} on failure - the caller (a durable compensation, see
+   * CompensationService) decides whether to retry.
+   */
   public void refund(Long paymentId, String reason, String bearerToken) {
     try {
       restClient
@@ -101,12 +103,16 @@ public class PaymentClient {
           .retrieve()
           .toBodilessEntity();
     } catch (RestClientException ex) {
-      log.warn("Failed to refund paymentId {}: {}", paymentId, ex.getMessage());
+      throw CompensationCallException.from("Refund of paymentId " + paymentId, ex);
     }
   }
 
   void refundFallback(Long paymentId, String reason, String bearerToken, Throwable ex) {
-    log.warn("Skipping refund for paymentId {}: {}", paymentId, ex.getMessage());
+    if (ex instanceof CompensationCallException cce) {
+      throw cce;
+    }
+    throw new CompensationCallException(
+        "Refund of paymentId " + paymentId + " not attempted: " + ex.getMessage(), ex, true, null);
   }
 
   public enum PaymentStatus {

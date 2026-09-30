@@ -1,5 +1,6 @@
 package com.ordersphere.orders.controller;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -18,12 +19,16 @@ import com.ordersphere.orders.client.InventoryClient;
 import com.ordersphere.orders.client.PaymentClient;
 import com.ordersphere.orders.client.ServiceTokenProvider;
 import com.ordersphere.orders.client.ShippingClient;
+import com.ordersphere.orders.domain.Compensation;
 import com.ordersphere.orders.dto.CreateOrderRequest;
+import com.ordersphere.orders.exception.CompensationCallException;
 import com.ordersphere.orders.exception.InventoryReservationException;
 import com.ordersphere.orders.exception.PaymentInitiationException;
+import com.ordersphere.orders.repository.CompensationRepository;
 import com.ordersphere.orders.service.OrderSagaProgressJob;
 import com.ordersphere.security.testing.TestJwtIssuer;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -55,6 +60,7 @@ class OrderControllerIntegrationTest {
   @Autowired private MockMvc mockMvc;
   @Autowired private ObjectMapper objectMapper;
   @Autowired private OrderSagaProgressJob orderSagaProgressJob;
+  @Autowired private CompensationRepository compensationRepository;
 
   @MockBean private InventoryClient inventoryClient;
   @MockBean private PaymentClient paymentClient;
@@ -222,6 +228,70 @@ class OrderControllerIntegrationTest {
         .andExpect(jsonPath("$.status", is("CANCELLED")));
     verify(inventoryClient).release(eq(orderId), anyString());
     verify(shippingClient, org.mockito.Mockito.never()).createShipment(any(), any(), any(), any());
+  }
+
+  @Test
+  void refundThatFailsTransientlyIsRecordedAndRetriedUntilItSucceeds() throws Exception {
+    when(paymentClient.initiate(any(), anyString(), any(), any(), anyString()))
+        .thenReturn(new PaymentClient.InitiatedPayment(77L, "http://gw/checkout/cs_77"));
+    when(paymentClient.getStatus(eq(77L), anyString()))
+        .thenReturn(PaymentClient.PaymentStatus.COMPLETED);
+    when(shippingClient.createShipment(any(), any(), any(), anyString())).thenReturn(500L);
+    when(shippingClient.getStatus(eq(500L), anyString()))
+        .thenReturn(ShippingClient.ShipmentStatus.CREATED);
+    // payment-service can't verify the service token for a moment (e.g. JWKS not fetched yet),
+    // then recovers.
+    doThrow(
+            new CompensationCallException(
+                "Refund of paymentId 77 failed with HTTP 401", null, true, 401))
+        .doNothing()
+        .when(paymentClient)
+        .refund(eq(77L), anyString(), anyString());
+
+    String createdBody =
+        mockMvc
+            .perform(
+                post("/orders")
+                    .header("Authorization", "Bearer " + tokenFor("dora"))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(requestFor("SKU-8"))))
+            .andExpect(status().isCreated())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    Long orderId = objectMapper.readTree(createdBody).get("id").asLong();
+    orderSagaProgressJob.progressAwaitingPaymentOrders(); // payment COMPLETED -> CONFIRMED
+
+    mockMvc
+        .perform(
+            post("/orders/" + orderId + "/cancel")
+                .header("Authorization", "Bearer " + tokenFor("dora")))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status", is("CANCELLED")));
+
+    // The immediate attempt failed, but the refund is recorded rather than lost.
+    Compensation refund = refundFor(orderId);
+    assertThat(refund.getStatus()).isEqualTo(Compensation.Status.PENDING);
+    assertThat(refund.getAttempts()).isEqualTo(1);
+    assertThat(refund.getLastError()).contains("401");
+
+    // Next due sweep: payment-service is back and the refund goes through.
+    refund.setNextAttemptAt(Instant.now().minusSeconds(1));
+    compensationRepository.save(refund);
+    orderSagaProgressJob.sweep();
+
+    Compensation retried = refundFor(orderId);
+    assertThat(retried.getStatus()).isEqualTo(Compensation.Status.DONE);
+    assertThat(retried.getAttempts()).isEqualTo(2);
+    verify(paymentClient, org.mockito.Mockito.times(2))
+        .refund(eq(77L), eq("Order cancelled by customer"), anyString());
+  }
+
+  private Compensation refundFor(Long orderId) {
+    return compensationRepository.findByOrderIdOrderById(orderId).stream()
+        .filter(c -> c.getType() == Compensation.Type.REFUND_PAYMENT)
+        .findFirst()
+        .orElseThrow();
   }
 
   @Test
