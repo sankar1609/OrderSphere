@@ -107,7 +107,7 @@ class InventoryControllerIntegrationTest {
   }
 
   @Test
-  void fullReserveIdempotentReleaseBackorderRestockAndConfirmFlow() throws Exception {
+  void fullReserveIdempotentReleaseRejectRestockAndConfirmFlow() throws Exception {
     createProduct(new CreateProductRequest("SKU-FLOW", "Widget", 10, 3, new BigDecimal("9.99")));
 
     ReserveStockRequest firstReserve =
@@ -121,8 +121,7 @@ class InventoryControllerIntegrationTest {
         .andExpect(status().isCreated())
         .andExpect(jsonPath("$.reserved[0].sku", is("SKU-FLOW")))
         .andExpect(jsonPath("$.reserved[0].quantity", is(8)))
-        .andExpect(jsonPath("$.reserved[0].unitPrice", is(9.99)))
-        .andExpect(jsonPath("$.backordered", org.hamcrest.Matchers.hasSize(0)));
+        .andExpect(jsonPath("$.reserved[0].unitPrice", is(9.99)));
 
     // Re-reserving the same orderId must be idempotent, not double-reserve.
     mockMvc
@@ -158,7 +157,7 @@ class InventoryControllerIntegrationTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.availableQuantity", is(10)));
 
-    // Reserve more than available: partial fulfillment + backorder for the shortfall.
+    // Asking for more than is available is rejected outright - nothing is held.
     ReserveStockRequest overReserve =
         new ReserveStockRequest(200L, List.of(new ReserveStockRequest.Item("SKU-FLOW", 15)));
     mockMvc
@@ -167,11 +166,16 @@ class InventoryControllerIntegrationTest {
                 .header("Authorization", "Bearer " + serviceToken())
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(overReserve)))
-        .andExpect(status().isCreated())
-        .andExpect(jsonPath("$.reserved[0].quantity", is(10)))
-        .andExpect(jsonPath("$.backordered[0].quantity", is(5)));
+        .andExpect(status().isConflict())
+        .andExpect(
+            jsonPath("$.message", is("Not enough stock: SKU-FLOW (15 requested, 10 available)")));
+    mockMvc
+        .perform(
+            get("/inventory/products/SKU-FLOW")
+                .header("Authorization", "Bearer " + customerToken()))
+        .andExpect(jsonPath("$.availableQuantity", is(10)));
 
-    // Restocking should auto-fulfill the open backorder.
+    // After a restock the same order fits.
     mockMvc
         .perform(
             post("/inventory/products/SKU-FLOW/restock")
@@ -180,8 +184,16 @@ class InventoryControllerIntegrationTest {
                 .content(objectMapper.writeValueAsString(new RestockRequest(20))))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.quantityOnHand", is(30)))
-        .andExpect(jsonPath("$.quantityReserved", is(15)))
-        .andExpect(jsonPath("$.availableQuantity", is(15)));
+        .andExpect(jsonPath("$.quantityReserved", is(0)))
+        .andExpect(jsonPath("$.availableQuantity", is(30)));
+    mockMvc
+        .perform(
+            post("/inventory/reservations")
+                .header("Authorization", "Bearer " + serviceToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(overReserve)))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.reserved[0].quantity", is(15)));
 
     // Confirming locks the hold in (clears expiresAt so it's excluded from the expiry sweep).
     mockMvc

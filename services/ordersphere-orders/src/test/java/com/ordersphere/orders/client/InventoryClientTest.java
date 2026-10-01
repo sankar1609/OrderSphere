@@ -40,8 +40,7 @@ class InventoryClientTest {
             withSuccess(
                 """
                 {"orderId": 1, "status": "ACTIVE",
-                 "reserved": [{"sku": "SKU-1", "quantity": 1, "unitPrice": 9.99}],
-                 "backordered": [{"sku": "SKU-1", "quantity": 1, "unitPrice": 9.99}]}
+                 "reserved": [{"sku": "SKU-1", "quantity": 2, "unitPrice": 9.99}]}
                 """,
                 MediaType.APPLICATION_JSON));
 
@@ -52,8 +51,36 @@ class InventoryClientTest {
     server.verify();
     assertThat(response.reserved())
         .containsExactly(
-            new InventoryClient.ReserveResponse.LineItem("SKU-1", 1, new BigDecimal("9.99")));
-    assertThat(response.backordered()).hasSize(1);
+            new InventoryClient.ReserveResponse.LineItem("SKU-1", 2, new BigDecimal("9.99")));
+  }
+
+  @Test
+  void reserveRejectedByInventoryCarriesItsExplanation() {
+    RestClient.Builder builder = RestClient.builder();
+    MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+    InventoryClient client = new InventoryClient(builder);
+
+    server
+        .expect(requestTo("http://inventory-service/inventory/reservations"))
+        .andRespond(
+            withStatus(HttpStatus.CONFLICT)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(
+                    """
+                    {"status": 409, "message": "Not enough stock: SKU-1 (2 requested, 0 available)"}
+                    """));
+
+    assertThatThrownBy(
+            () ->
+                client.reserve(
+                    1L,
+                    List.of(new InventoryClient.ReserveRequest.Item("SKU-1", 2)),
+                    "Bearer token"))
+        .isInstanceOfSatisfying(
+            InventoryReservationException.class,
+            ex ->
+                assertThat(ex.getDetail())
+                    .isEqualTo("Not enough stock: SKU-1 (2 requested, 0 available)"));
   }
 
   @Test

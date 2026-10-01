@@ -85,8 +85,7 @@ class OrderControllerIntegrationTest {
                           item ->
                               new InventoryClient.ReserveResponse.LineItem(
                                   item.sku(), item.quantity(), new BigDecimal("10.00")))
-                      .toList(),
-                  List.of());
+                      .toList());
             });
   }
 
@@ -141,7 +140,11 @@ class OrderControllerIntegrationTest {
 
   @Test
   void createOrderCancelsWhenInventoryRejectsReservation() throws Exception {
-    doThrow(new InventoryReservationException("no such sku"))
+    doThrow(
+            new InventoryReservationException(
+                "Inventory reservation failed with status 409",
+                null,
+                "Not enough stock: SKU-EMPTY (2 requested, 0 available)"))
         .when(inventoryClient)
         .reserve(any(), any(), anyString());
 
@@ -150,9 +153,14 @@ class OrderControllerIntegrationTest {
             post("/orders")
                 .header("Authorization", "Bearer " + tokenFor("alice"))
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(requestFor("SKU-UNKNOWN"))))
+                .content(objectMapper.writeValueAsString(requestFor("SKU-EMPTY"))))
         .andExpect(status().isCreated())
-        .andExpect(jsonPath("$.status", is("CANCELLED")));
+        .andExpect(jsonPath("$.status", is("CANCELLED")))
+        .andExpect(
+            jsonPath(
+                "$.cancellationReason",
+                is("Not enough stock: SKU-EMPTY (2 requested, 0 available)")))
+        .andExpect(jsonPath("$.checkoutUrl").doesNotExist());
   }
 
   @Test

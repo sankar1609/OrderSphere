@@ -16,6 +16,7 @@ This document describes what OrderSphere can do today, from a business and user 
 - Any signed-in user can browse the catalog or look up a specific product to check its current price and availability.
 - Admins and vendors can restock a product, increasing the quantity on hand.
 - When a customer places an order, the required stock is automatically set aside so the same inventory can't be sold to two customers at once.
+- An order can only be placed for stock that's actually available: if any item is short (or out of stock), the whole order is declined before payment and the customer is told which item and how many are left. The store shows out-of-stock products as unavailable and won't let a customer add more than is in stock.
 - That set-aside stock is automatically confirmed once the order's payment succeeds, or automatically released back to available inventory if the order doesn't go through.
 - Stock that's set aside but never confirmed or released is automatically freed up again after a period of time, so abandoned orders don't permanently tie up inventory.
 
@@ -34,7 +35,7 @@ This document describes what OrderSphere can do today, from a business and user 
 
 - Customers can place an order for one or more products, specifying a delivery address, and then pay for it on the payment page.
 - Placing an order automatically reserves the needed inventory and opens the payment — no separate steps required.
-- The order total is always calculated by the system from each product's catalog price (including any quantity that has to be backordered); customers never enter or influence the amount charged. Each order records the unit price it was placed at, so later catalog price changes don't alter past orders.
+- The order total is always calculated by the system from each product's catalog price; customers never enter or influence the amount charged. Each order records the unit price it was placed at, so later catalog price changes don't alter past orders.
 - Customers can view their full order history and check the current status of any order at any time.
 - Customers can cancel their own order; cancelling is safe to do more than once without causing problems.
 - Every order automatically moves through its lifecycle on its own — from awaiting payment, to confirmed, to shipped, to delivered — without needing manual updates.

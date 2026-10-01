@@ -90,13 +90,13 @@
   - Stock level tracking
   - Inventory reservation, confirmation and release for orders (internal: SERVICE/ADMIN only - called by the orders saga over REST)
   - Restocking (`POST /inventory/products/{sku}/restock`, ADMIN/VENDOR)
-  - Backorder management (a shortfall is backordered; the order still proceeds and is charged in full)
+  - All-or-nothing reservation: if any line asks for more than is available, nothing is reserved and the request is rejected (409, "Not enough stock: SKU (N requested, M available)") - there are no backorders
 - **Database:** PostgreSQL (inventory_db)
 - **Key Features:**
   - Real-time stock availability checks
   - Saga compensation via reservation release
   - Reservation holds expire after 15 minutes (`ReservationExpiryJob`, 60s sweep)
-- **Events Produced:** InventoryReservedEvent, InventoryReleasedEvent, StockLowEvent (no consumer yet), BackorderCreatedEvent
+- **Events Produced:** InventoryReservedEvent, InventoryReleasedEvent, StockLowEvent (no consumer yet)
 - **Events Consumed:** None (driven by REST calls from Orders)
 
 ---
@@ -309,7 +309,7 @@ The system uses the Saga pattern to maintain consistency across distributed serv
 4. Shipment progresses to DELIVERED (the order stays CONFIRMED; delivery is tracked on the shipment)
 
 **Failure & Compensation:**
-- Inventory can't reserve (e.g. unknown SKU) or returns no price → order CANCELLED immediately, nothing charged
+- Not enough stock for any line, unknown SKU, or no price → order CANCELLED immediately with a `cancellationReason` the customer sees (e.g. "Not enough stock: SKU-1 (2 requested, 0 available)"), nothing reserved or charged
 - Payment initiation fails → inventory released → CANCELLED
 - Card declined → shown on the payment page; the customer can retry, the order keeps waiting
 - Customer cancels on the payment page, or the checkout expires (10 min) → payment FAILED → inventory released → CANCELLED

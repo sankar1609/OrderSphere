@@ -96,8 +96,9 @@ class OrderServiceTest {
             invocation -> {
               List<InventoryClient.ReserveRequest.Item> items = invocation.getArgument(1);
               return new InventoryClient.ReserveResponse(
-                  items.stream().map(item -> priced(item.sku(), item.quantity(), "10.00")).toList(),
-                  List.of());
+                  items.stream()
+                      .map(item -> priced(item.sku(), item.quantity(), "10.00"))
+                      .toList());
             });
   }
 
@@ -133,12 +134,11 @@ class OrderServiceTest {
   }
 
   @Test
-  void createOrderChargesInventoryPricesIncludingBackorderedQuantity() {
+  void createOrderChargesInventoryPrices() {
     when(inventoryClient.reserve(any(), anyList(), anyString()))
         .thenReturn(
             new InventoryClient.ReserveResponse(
-                List.of(priced("SKU-A", 2, "4.50"), priced("SKU-B", 1, "12.25")),
-                List.of(priced("SKU-B", 2, "12.25"))));
+                List.of(priced("SKU-A", 2, "4.50"), priced("SKU-B", 3, "12.25"))));
     when(paymentClient.initiate(any(), eq("alice"), any(), any(), anyString()))
         .thenReturn(new PaymentClient.InitiatedPayment(42L, "http://gw/checkout/cs_42"));
     CreateOrderRequest request =
@@ -150,7 +150,7 @@ class OrderServiceTest {
 
     OrderResponse response = orderService.createOrder("alice", request);
 
-    // 2 x 4.50 + 3 x 12.25 (1 reserved + 2 backordered) = 45.75
+    // 2 x 4.50 + 3 x 12.25 = 45.75
     verify(paymentClient)
         .initiate(
             any(), eq("alice"), eq(new BigDecimal("45.75")), eq("USD"), eq("Bearer service-token"));
@@ -158,10 +158,28 @@ class OrderServiceTest {
   }
 
   @Test
+  void createOrderForMoreThanIsInStockIsCancelledWithInventorysReason() {
+    doThrow(
+            new InventoryReservationException(
+                "Inventory reservation failed with status 409",
+                null,
+                "Not enough stock: SKU-1 (3 requested, 0 available)"))
+        .when(inventoryClient)
+        .reserve(any(), anyList(), anyString());
+
+    OrderResponse response = orderService.createOrder("alice", requestFor("SKU-1"));
+
+    assertThat(response.status()).isEqualTo(OrderStatus.CANCELLED);
+    assertThat(response.cancellationReason())
+        .isEqualTo("Not enough stock: SKU-1 (3 requested, 0 available)");
+    verify(compensations, never()).releaseInventory(any());
+    verify(paymentClient, never()).initiate(any(), any(), any(), any(), any());
+  }
+
+  @Test
   void createOrderCancelsWithoutChargingWhenInventoryReturnsNoPrice() {
     when(inventoryClient.reserve(any(), anyList(), anyString()))
-        .thenReturn(
-            new InventoryClient.ReserveResponse(List.of(priced("SKU-1", 3, null)), List.of()));
+        .thenReturn(new InventoryClient.ReserveResponse(List.of(priced("SKU-1", 3, null))));
 
     OrderResponse response = orderService.createOrder("alice", requestFor("SKU-1"));
 
@@ -179,6 +197,7 @@ class OrderServiceTest {
     OrderResponse response = orderService.createOrder("alice", requestFor("SKU-UNKNOWN"));
 
     assertThat(response.status()).isEqualTo(OrderStatus.CANCELLED);
+    assertThat(response.cancellationReason()).isEqualTo("Some items are unavailable");
     verify(eventPublisher).publishEvent(any(OrderCreatedEvent.class));
     verify(eventPublisher).publishEvent(any(OrderCancelledEvent.class));
     verify(paymentClient, never()).initiate(any(), any(), any(), any(), any());

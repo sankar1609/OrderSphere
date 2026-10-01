@@ -32,6 +32,11 @@ public class GlobalExceptionHandler {
     return errorResponse(HttpStatus.CONFLICT, ex.getMessage());
   }
 
+  @ExceptionHandler(InsufficientStockException.class)
+  public ResponseEntity<Object> handleInsufficientStock(InsufficientStockException ex) {
+    return errorResponse(HttpStatus.CONFLICT, ex.getMessage());
+  }
+
   @ExceptionHandler(MethodArgumentNotValidException.class)
   public ResponseEntity<Object> handleValidation(MethodArgumentNotValidException ex) {
     String message =

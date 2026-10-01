@@ -18,7 +18,8 @@ public record OrderResponse(
     BigDecimal totalAmount,
     String currency,
     Instant createdAt,
-    Instant updatedAt) {
+    Instant updatedAt,
+    String cancellationReason) {
 
   public record LineItem(String sku, int quantity, BigDecimal unitPrice) {}
 
@@ -40,6 +41,7 @@ public record OrderResponse(
         order.getTotalAmount(),
         order.getCurrency(),
         order.getCreatedAt(),
-        order.getUpdatedAt());
+        order.getUpdatedAt(),
+        order.getCancellationReason());
   }
 }

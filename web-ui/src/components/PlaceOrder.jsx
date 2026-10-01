@@ -12,14 +12,16 @@ export default function PlaceOrder({ token, onUnauthorized }) {
   const [currency, setCurrency] = useState("USD");
   const [shippingDestination, setShippingDestination] = useState("");
   const [error, setError] = useState(null);
+  const [itemNotice, setItemNotice] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     listProducts(token)
       .then((data) => {
         setProducts(data);
-        if (data.length > 0) {
-          setSelectedSku(data[0].sku);
+        const firstInStock = data.find((product) => product.availableQuantity > 0);
+        if (firstInStock) {
+          setSelectedSku(firstInStock.sku);
         }
       })
       .catch((err) => {
@@ -41,8 +43,28 @@ export default function PlaceOrder({ token, onUnauthorized }) {
     0
   );
 
+  // How many more of a product fit in this order: what's available minus what's already in the
+  // cart. Inventory has the final say (it rejects the whole order if stock ran out meanwhile).
+  function remainingFor(sku) {
+    const available = products?.find((product) => product.sku === sku)?.availableQuantity ?? 0;
+    const inCart = items
+      .filter((item) => item.sku === sku)
+      .reduce((sum, item) => sum + item.quantity, 0);
+    return Math.max(available - inCart, 0);
+  }
+
   function addItem() {
+    setItemNotice(null);
     if (!selectedSku || quantity < 1) {
+      return;
+    }
+    const remaining = remainingFor(selectedSku);
+    if (Number(quantity) > remaining) {
+      setItemNotice(
+        remaining === 0
+          ? `No more ${selectedSku} available.`
+          : `Only ${remaining} more ${selectedSku} available.`
+      );
       return;
     }
     setItems([...items, { sku: selectedSku, quantity: Number(quantity) }]);
@@ -72,8 +94,9 @@ export default function PlaceOrder({ token, onUnauthorized }) {
         return;
       }
       setError(
-        `Order #${order.id} couldn't be placed (status: ${order.status}). ` +
-          "Some items may be unavailable - check the catalog and try again."
+        `Order #${order.id} couldn't be placed: ${
+          order.cancellationReason ?? "some items may be unavailable"
+        }. Check the catalog and try again.`
       );
       setSubmitting(false);
     } catch (err) {
@@ -99,10 +122,16 @@ export default function PlaceOrder({ token, onUnauthorized }) {
             Product
             <select value={selectedSku} onChange={(e) => setSelectedSku(e.target.value)}>
               {products.map((product) => (
-                <option key={product.id} value={product.sku}>
+                <option
+                  key={product.id}
+                  value={product.sku}
+                  disabled={product.availableQuantity <= 0}
+                >
                   {`${product.sku} — ${product.name} — ${formatMoney(product.unitPrice)} (${
-                    product.availableQuantity
-                  } available)`}
+                    product.availableQuantity > 0
+                      ? `${product.availableQuantity} available`
+                      : "out of stock"
+                  })`}
                 </option>
               ))}
             </select>
@@ -112,14 +141,16 @@ export default function PlaceOrder({ token, onUnauthorized }) {
             <input
               type="number"
               min={1}
+              max={Math.max(remainingFor(selectedSku), 1)}
               value={quantity}
               onChange={(e) => setQuantity(e.target.value)}
               style={{ width: 60 }}
             />
           </label>{" "}
-          <button type="button" onClick={addItem}>
+          <button type="button" onClick={addItem} disabled={remainingFor(selectedSku) === 0}>
             Add item
           </button>
+          {itemNotice && <p style={{ color: "crimson" }}>{itemNotice}</p>}
         </div>
       )}
 

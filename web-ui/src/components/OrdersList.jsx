@@ -123,6 +123,9 @@ export default function OrdersList({ token, onUnauthorized, paymentReturn }) {
                 <td style={cellStyle}>{order.id}</td>
                 <td style={cellStyle}>
                   {order.status}
+                  {order.status === "CANCELLED" && order.cancellationReason && (
+                    <div style={{ fontSize: 12, color: "#555" }}>{order.cancellationReason}</div>
+                  )}
                   {order.status === "AWAITING_PAYMENT" && order.checkoutUrl && (
                     <>
                       {" "}

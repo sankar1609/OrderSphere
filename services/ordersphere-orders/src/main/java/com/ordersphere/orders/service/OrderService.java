@@ -23,8 +23,6 @@ import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
-import java.util.stream.Stream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
@@ -37,6 +35,7 @@ public class OrderService {
   private static final Logger log = LoggerFactory.getLogger(OrderService.class);
   private static final DownstreamClientErrorPredicate DOWNSTREAM_CLIENT_ERROR =
       new DownstreamClientErrorPredicate();
+  private static final String ITEMS_UNAVAILABLE = "Some items are unavailable";
 
   private final OrderRepository orderRepository;
   private final InventoryClient inventoryClient;
@@ -90,7 +89,11 @@ public class OrderService {
     try {
       reservation = inventoryClient.reserve(order.getId(), reserveItems, bearerToken);
     } catch (InventoryReservationException ex) {
-      cancelWithReason(order, OrderCancelledEvent.Reason.INVENTORY_UNAVAILABLE);
+      // Nothing was reserved (Inventory reserves all lines or none), so there's nothing to release.
+      cancelWithReason(
+          order,
+          OrderCancelledEvent.Reason.INVENTORY_UNAVAILABLE,
+          ex.getDetail() != null ? ex.getDetail() : ITEMS_UNAVAILABLE);
       return OrderResponse.from(order);
     }
 
@@ -252,7 +255,10 @@ public class OrderService {
             ex.getMessage());
         compensations.refundPayment(
             order.getId(), order.getPaymentId(), "Reserved stock was no longer available");
-        cancelWithReason(order, OrderCancelledEvent.Reason.INVENTORY_UNAVAILABLE);
+        cancelWithReason(
+            order,
+            OrderCancelledEvent.Reason.INVENTORY_UNAVAILABLE,
+            "The reserved stock was no longer available - your payment has been refunded");
         return;
       }
       // Inventory unavailable: stay AWAITING_PAYMENT so the next saga sweep retries.
@@ -278,6 +284,18 @@ public class OrderService {
   }
 
   private void cancelWithReason(Order order, OrderCancelledEvent.Reason reason) {
+    cancelWithReason(
+        order,
+        reason,
+        switch (reason) {
+          case INVENTORY_UNAVAILABLE -> ITEMS_UNAVAILABLE;
+          case PAYMENT_FAILED -> "Payment wasn't completed";
+          case CUSTOMER_REQUESTED -> "Cancelled at your request";
+        });
+  }
+
+  private void cancelWithReason(Order order, OrderCancelledEvent.Reason reason, String text) {
+    order.setCancellationReason(text);
     order.markStatus(OrderStatus.CANCELLED);
     orderRepository.save(order);
     eventPublisher.publishEvent(
@@ -315,16 +333,13 @@ public class OrderService {
   }
 
   /**
-   * Stamps each item with Inventory's unit price and sets the order total. Backordered lines are
-   * priced too: the customer pays for the full quantity ordered, not just what was in stock.
-   * Returns false if any item came back unpriced, in which case the order must not be charged.
+   * Stamps each item with Inventory's unit price and sets the order total. Returns false if any
+   * item came back unpriced, in which case the order must not be charged.
    */
   private boolean applyPricing(Order order, InventoryClient.ReserveResponse reservation) {
     Map<String, BigDecimal> unitPriceBySku = new HashMap<>();
-    if (reservation != null) {
-      Stream.of(reservation.reserved(), reservation.backordered())
-          .filter(Objects::nonNull)
-          .flatMap(List::stream)
+    if (reservation != null && reservation.reserved() != null) {
+      reservation.reserved().stream()
           .filter(line -> line.unitPrice() != null)
           .forEach(line -> unitPriceBySku.put(line.sku(), line.unitPrice()));
     }

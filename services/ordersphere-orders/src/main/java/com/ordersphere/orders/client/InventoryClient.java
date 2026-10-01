@@ -39,12 +39,25 @@ public class InventoryClient {
               + orderId
               + " with status "
               + ex.getStatusCode(),
-          ex);
+          ex,
+          ex.getStatusCode().is4xxClientError() ? errorMessage(ex) : null);
     } catch (RestClientException ex) {
       throw new InventoryReservationException(
           "Inventory service unreachable while reserving orderId " + orderId, ex);
     }
   }
+
+  /** The {@code message} of Inventory's error body, or null if there isn't a readable one. */
+  private static String errorMessage(RestClientResponseException ex) {
+    try {
+      ErrorBody body = ex.getResponseBodyAs(ErrorBody.class);
+      return body == null ? null : body.message();
+    } catch (RuntimeException unreadable) {
+      return null;
+    }
+  }
+
+  private record ErrorBody(String message) {}
 
   ReserveResponse reserveFallback(
       Long orderId, List<ReserveRequest.Item> items, String bearerToken, Throwable ex) {
@@ -124,10 +137,10 @@ public class InventoryClient {
   }
 
   /**
-   * Inventory prices every line, reserved or backordered, with the product's current unit price.
-   * Orders uses those prices as the authoritative source for the order total.
+   * Inventory reserves every line in full or none at all, and prices each with the product's
+   * current unit price. Orders uses those prices as the authoritative source for the order total.
    */
-  public record ReserveResponse(List<LineItem> reserved, List<LineItem> backordered) {
+  public record ReserveResponse(List<LineItem> reserved) {
     public record LineItem(String sku, int quantity, BigDecimal unitPrice) {}
   }
 }

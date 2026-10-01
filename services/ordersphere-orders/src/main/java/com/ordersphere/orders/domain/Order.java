@@ -63,6 +63,10 @@ public class Order {
   @Column(name = "shipment_last_error", length = 1024)
   private String shipmentLastError;
 
+  /** Customer-readable reason, set when the order is CANCELLED. */
+  @Column(name = "cancellation_reason")
+  private String cancellationReason;
+
   @Column(name = "shipping_destination")
   private String shippingDestination;
 

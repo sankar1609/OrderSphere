@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "OrderSphere - Feature Coverage",
-    "description": "Assertion-based coverage of every implemented feature listed in CLAUDE.md that the Full Order Flow collection doesn't already exercise: auth & RBAC, inventory catalog/restock/backorders, hosted checkout (payment idempotency, card validation, cancellation, webhook signature checks), shipment returns, notification preferences and delivery, service discovery, the RabbitMQ topology, and circuit breaker registration.\n\nRun top to bottom (`npx newman run postman/feature-coverage.postman_collection.json`) against the docker-compose stack. Every run uses fresh users/SKU suffixed with {{runId}}, so it is re-runnable. Async steps poll themselves (3s, up to 20 tries).\n\nThe RabbitMQ requests use the docker-compose default management credentials (ordersphere/ordersphere).",
+    "description": "Assertion-based coverage of every implemented feature listed in CLAUDE.md that the Full Order Flow collection doesn't already exercise: auth & RBAC, inventory catalog/restock/stock limits, hosted checkout (payment idempotency, card validation, cancellation, webhook signature checks), shipment returns, notification preferences and delivery, service discovery, the RabbitMQ topology, and circuit breaker registration.\n\nRun top to bottom (`npx newman run postman/feature-coverage.postman_collection.json`) against the docker-compose stack. Every run uses fresh users/SKU suffixed with {{runId}}, so it is re-runnable. Async steps poll themselves (3s, up to 20 tries).\n\nThe RabbitMQ requests use the docker-compose default management credentials (ordersphere/ordersphere).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -2361,7 +2361,7 @@
       ]
     },
     {
-      "name": "5. Orders (backorders, isolation)",
+      "name": "5. Orders (stock limits, isolation)",
       "item": [
         {
           "name": "List My Orders (none yet)",
@@ -2400,7 +2400,7 @@
           ]
         },
         {
-          "name": "Backorder: Order More Than In Stock",
+          "name": "Order More Than In Stock [expect CANCELLED]",
           "request": {
             "method": "POST",
             "header": [
@@ -2426,7 +2426,7 @@
                 "orders"
               ]
             },
-            "description": "15 available, 20 ordered: 15 are reserved and 5 backordered. The order still proceeds and is priced for all 20."
+            "description": "15 available, 20 ordered: Inventory reserves all lines or none, so the order is cancelled before any payment and says why."
           },
           "event": [
             {
@@ -2435,12 +2435,12 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
-                  "pm.collectionVariables.set('boOrderId', pm.response.json().id);",
-                  "pm.collectionVariables.set('boCheckoutUrl', pm.response.json().checkoutUrl);",
-                  "pm.test(\"Order accepted and priced for the full 20\", function () {",
+                  "pm.test(\"Cancelled with the shortfall as the reason, nothing to pay\", function () {",
                   "    var b = pm.response.json();",
-                  "    pm.expect(b.status).to.eql('AWAITING_PAYMENT');",
-                  "    pm.expect(Number(b.totalAmount)).to.be.closeTo(100, 0.001);",
+                  "    pm.expect(b.status).to.eql('CANCELLED');",
+                  "    pm.expect(b.cancellationReason).to.include(pm.collectionVariables.get('sku'));",
+                  "    pm.expect(b.cancellationReason).to.include('20 requested, 15 available');",
+                  "    pm.expect(b.checkoutUrl).to.not.exist;",
                   "});"
                 ]
               }
@@ -2448,7 +2448,93 @@
           ]
         },
         {
-          "name": "Stock After Backorder",
+          "name": "Stock Unchanged After Rejected Order",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/products/{{sku}}",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "inventory",
+                "products",
+                "{{sku}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"Nothing was reserved\", function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.quantityReserved).to.eql(0);",
+                  "    pm.expect(b.availableQuantity).to.eql(15);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Order Exactly What's In Stock",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"sku\": \"{{sku}}\",\n      \"quantity\": 15\n    }\n  ],\n  \"currency\": \"USD\",\n  \"shippingDestination\": \"42 Coverage Rd\"\n}"
+            },
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders",
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('stockOrderId', pm.response.json().id);",
+                  "pm.collectionVariables.set('stockCheckoutUrl', pm.response.json().checkoutUrl);",
+                  "pm.test(\"Order accepted and priced for all 15\", function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.status).to.eql('AWAITING_PAYMENT');",
+                  "    pm.expect(Number(b.totalAmount)).to.be.closeTo(75, 0.001);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Stock After Order",
           "request": {
             "method": "GET",
             "header": [
@@ -2487,14 +2573,59 @@
           ]
         },
         {
-          "name": "Pay Backorder on Checkout Page",
+          "name": "Order When Out of Stock [expect CANCELLED]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"sku\": \"{{sku}}\",\n      \"quantity\": 1\n    }\n  ],\n  \"currency\": \"USD\",\n  \"shippingDestination\": \"42 Coverage Rd\"\n}"
+            },
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders",
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.test(\"Cancelled - 0 available\", function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.status).to.eql('CANCELLED');",
+                  "    pm.expect(b.cancellationReason).to.include('1 requested, 0 available');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Pay Order on Checkout Page",
           "protocolProfileBehavior": {
             "followRedirects": false
           },
           "request": {
             "method": "POST",
             "header": [],
-            "url": "{{boCheckoutUrl}}/pay",
+            "url": "{{stockCheckoutUrl}}/pay",
             "body": {
               "mode": "urlencoded",
               "urlencoded": [
@@ -2523,8 +2654,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "if (!pm.variables.get('boCheckoutUrl')) {",
-                  "    throw new Error('{{boCheckoutUrl}} is empty - run \\'the Create Order step in this folder\\' first (and make sure no active environment defines boCheckoutUrl).');",
+                  "if (!pm.variables.get('stockCheckoutUrl')) {",
+                  "    throw new Error('{{stockCheckoutUrl}} is empty - run \\'the Create Order step in this folder\\' first (and make sure no active environment defines stockCheckoutUrl).');",
                   "}"
                 ]
               }
@@ -2574,7 +2705,7 @@
                   "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
                   "pm.test(\"Order listed\", function () {",
                   "    var b = pm.response.json();",
-                  "    pm.expect(b.map(function (o) { return o.id; })).to.include(Number(pm.collectionVariables.get('boOrderId')));",
+                  "    pm.expect(b.map(function (o) { return o.id; })).to.include(Number(pm.collectionVariables.get('stockOrderId')));",
                   "});"
                 ]
               }
@@ -2618,7 +2749,7 @@
           ]
         },
         {
-          "name": "Backorder Order Confirmed",
+          "name": "Order Confirmed",
           "request": {
             "method": "GET",
             "header": [
@@ -2628,13 +2759,13 @@
               }
             ],
             "url": {
-              "raw": "{{ordersBaseUrl}}/orders/{{boOrderId}}",
+              "raw": "{{ordersBaseUrl}}/orders/{{stockOrderId}}",
               "host": [
                 "{{ordersBaseUrl}}"
               ],
               "path": [
                 "orders",
-                "{{boOrderId}}"
+                "{{stockOrderId}}"
               ]
             }
           },
@@ -2653,7 +2784,7 @@
                   "    pm.test(\"Order CONFIRMED with shipment\", function () {",
                   "        pm.expect(done, 'still not reached after ' + polls + ' polls (currently: ' + (body ? body.status : pm.response.code) + ')').to.be.true;",
                   "    });",
-                  "    pm.collectionVariables.set('boShipmentId', body && body.shipmentId);",
+                  "    pm.collectionVariables.set('stockShipmentId', body && body.shipmentId);",
                   "} else {",
                   "    pm.collectionVariables.set(pollKey, polls + 1);",
                   "    console.log(pm.info.requestName + ': waiting (' + (polls + 1) + '/20), currently ' + (body ? body.status : pm.response.code));",
@@ -2681,14 +2812,14 @@
               }
             ],
             "url": {
-              "raw": "{{shippingBaseUrl}}/shipments/order/{{boOrderId}}",
+              "raw": "{{shippingBaseUrl}}/shipments/order/{{stockOrderId}}",
               "host": [
                 "{{shippingBaseUrl}}"
               ],
               "path": [
                 "shipments",
                 "order",
-                "{{boOrderId}}"
+                "{{stockOrderId}}"
               ]
             }
           },
@@ -2729,13 +2860,13 @@
               "raw": "{\n  \"reason\": \"changed my mind\"\n}"
             },
             "url": {
-              "raw": "{{shippingBaseUrl}}/shipments/{{boShipmentId}}/return",
+              "raw": "{{shippingBaseUrl}}/shipments/{{stockShipmentId}}/return",
               "host": [
                 "{{shippingBaseUrl}}"
               ],
               "path": [
                 "shipments",
-                "{{boShipmentId}}",
+                "{{stockShipmentId}}",
                 "return"
               ]
             }
@@ -2768,7 +2899,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"orderId\": \"{{boOrderId}}\",\n  \"customerUsername\": \"cust_{{runId}}\",\n  \"destination\": \"x\"\n}"
+              "raw": "{\n  \"orderId\": \"{{stockOrderId}}\",\n  \"customerUsername\": \"cust_{{runId}}\",\n  \"destination\": \"x\"\n}"
             },
             "url": {
               "raw": "{{shippingBaseUrl}}/shipments",
@@ -2803,13 +2934,13 @@
               }
             ],
             "url": {
-              "raw": "{{shippingBaseUrl}}/shipments/{{boShipmentId}}",
+              "raw": "{{shippingBaseUrl}}/shipments/{{stockShipmentId}}",
               "host": [
                 "{{shippingBaseUrl}}"
               ],
               "path": [
                 "shipments",
-                "{{boShipmentId}}"
+                "{{stockShipmentId}}"
               ]
             }
           },
@@ -2859,13 +2990,13 @@
               "raw": "{\n  \"reason\": \"damaged\"\n}"
             },
             "url": {
-              "raw": "{{shippingBaseUrl}}/shipments/{{boShipmentId}}/return",
+              "raw": "{{shippingBaseUrl}}/shipments/{{stockShipmentId}}/return",
               "host": [
                 "{{shippingBaseUrl}}"
               ],
               "path": [
                 "shipments",
-                "{{boShipmentId}}",
+                "{{stockShipmentId}}",
                 "return"
               ]
             }
@@ -2881,7 +3012,7 @@
                   "pm.test(\"RETURN shipment linked to the original\", function () {",
                   "    var b = pm.response.json();",
                   "    pm.expect(b.type).to.eql('RETURN');",
-                  "    pm.expect(b.parentShipmentId).to.eql(Number(pm.collectionVariables.get('boShipmentId')));",
+                  "    pm.expect(b.parentShipmentId).to.eql(Number(pm.collectionVariables.get('stockShipmentId')));",
                   "});"
                 ]
               }
@@ -2950,13 +3081,13 @@
               "raw": "{\n  \"reason\": \"not mine\"\n}"
             },
             "url": {
-              "raw": "{{shippingBaseUrl}}/shipments/{{boShipmentId}}/return",
+              "raw": "{{shippingBaseUrl}}/shipments/{{stockShipmentId}}/return",
               "host": [
                 "{{shippingBaseUrl}}"
               ],
               "path": [
                 "shipments",
-                "{{boShipmentId}}",
+                "{{stockShipmentId}}",
                 "return"
               ]
             },
@@ -2985,13 +3116,13 @@
               }
             ],
             "url": {
-              "raw": "{{shippingBaseUrl}}/shipments/{{boShipmentId}}",
+              "raw": "{{shippingBaseUrl}}/shipments/{{stockShipmentId}}",
               "host": [
                 "{{shippingBaseUrl}}"
               ],
               "path": [
                 "shipments",
-                "{{boShipmentId}}"
+                "{{stockShipmentId}}"
               ]
             },
             "description": "SECURITY: shipments should be private to the order's customer, like orders and payments are."
@@ -3019,13 +3150,13 @@
               }
             ],
             "url": {
-              "raw": "{{shippingBaseUrl}}/shipments/{{boShipmentId}}/tracking",
+              "raw": "{{shippingBaseUrl}}/shipments/{{stockShipmentId}}/tracking",
               "host": [
                 "{{shippingBaseUrl}}"
               ],
               "path": [
                 "shipments",
-                "{{boShipmentId}}",
+                "{{stockShipmentId}}",
                 "tracking"
               ]
             }
@@ -3053,14 +3184,14 @@
               }
             ],
             "url": {
-              "raw": "{{shippingBaseUrl}}/shipments/order/{{boOrderId}}",
+              "raw": "{{shippingBaseUrl}}/shipments/order/{{stockOrderId}}",
               "host": [
                 "{{shippingBaseUrl}}"
               ],
               "path": [
                 "shipments",
                 "order",
-                "{{boOrderId}}"
+                "{{stockOrderId}}"
               ]
             }
           },
