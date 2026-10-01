@@ -86,7 +86,8 @@
 - **Port:** 8083
 - **Purpose:** Stock reservation, release, and inventory tracking
 - **Responsibilities:**
-  - Product catalog management with unit prices (create is ADMIN/VENDOR only)
+  - Product catalog management with unit prices (create is ADMIN/VENDOR only; the creator is recorded as the product's `createdBy` owner)
+  - Low-stock alerts: when a reservation takes a product's available stock from above its reorder threshold to at/below it, `StockLowEvent` is published once (not again while it stays low; restock/release/expiry re-arm it)
   - Stock level tracking
   - Inventory reservation, confirmation and release for orders (internal: SERVICE/ADMIN only - called by the orders saga over REST)
   - Restocking (`POST /inventory/products/{sku}/restock`, ADMIN/VENDOR)
@@ -96,7 +97,7 @@
   - Real-time stock availability checks
   - Saga compensation via reservation release
   - Reservation holds expire after 15 minutes (`ReservationExpiryJob`, 60s sweep)
-- **Events Produced:** InventoryReservedEvent, InventoryReleasedEvent, StockLowEvent (no consumer yet)
+- **Events Produced:** InventoryReservedEvent, InventoryReleasedEvent, StockLowEvent
 - **Events Consumed:** None (driven by REST calls from Orders)
 
 ---
@@ -162,10 +163,11 @@
 - **Database:** PostgreSQL (notification_db)
 - **Key Features:**
   - Template-based message composition (`NotificationTemplateRenderer`)
+  - Low-stock alerts (IN_APP) to the product's owner; products with no recorded owner alert `LOW_STOCK_FALLBACK_RECIPIENT` (default `admin`)
   - Async delivery via `NotificationDeliveryJob` (~5s sweep, PENDING → SENT), retried up to 3 times
   - Customers only see their own notifications
 - **Events Produced:** NotificationSentEvent, NotificationFailedEvent
-- **Events Consumed:** OrderConfirmedEvent, OrderCancelledEvent, PaymentCompletedEvent, PaymentFailedEvent, ShipmentCreatedEvent, ShipmentPickedEvent, ShipmentInTransitEvent, DeliveryConfirmedEvent
+- **Events Consumed:** OrderConfirmedEvent, OrderCancelledEvent, PaymentCompletedEvent, PaymentFailedEvent, ShipmentCreatedEvent, ShipmentPickedEvent, ShipmentInTransitEvent, DeliveryConfirmedEvent, StockLowEvent
 
 ---
 
@@ -468,7 +470,7 @@ Service Registry (Eureka) - 8761
 - [x] Security hardening: internal endpoints limited to SERVICE/ADMIN, RS256 tokens signed only by auth-service (JWKS), service identity via client credentials, refresh tokens with rotation/revocation
 - [x] Gateway rate limiting (Redis), unauthenticated health probes, PATCH in gateway CORS
 - [ ] Security hardening (later): OAuth2/OIDC, request validation at the gateway
-- [ ] Consume `StockLowEvent` (e.g. notify vendors)
+- [x] Consume `StockLowEvent` - low-stock alerts to the product's vendor
 - [ ] Payment reconciliation
 - [ ] Add comprehensive API documentation (OpenAPI/Swagger)
 - [ ] Add distributed tracing (Jaeger/Zipkin)

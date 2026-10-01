@@ -81,14 +81,22 @@ public class ReservationService {
         new Reservation(request.orderId(), Instant.now().plus(holdTtlMinutes, ChronoUnit.MINUTES));
     for (Map.Entry<String, Integer> line : requested.entrySet()) {
       Product product = products.get(line.getKey());
+      int availableBefore = product.getAvailableQuantity();
       reservation.addItem(new ReservationItem(product, line.getValue()));
       product.setQuantityReserved(product.getQuantityReserved() + line.getValue());
       productRepository.save(product);
 
-      if (product.getAvailableQuantity() <= product.getReorderThreshold()) {
+      // Alert once, as stock crosses the threshold - not on every order while it stays low.
+      // Releases, expiries and restocks raise it back above, which re-arms the alert.
+      if (availableBefore > product.getReorderThreshold()
+          && product.getAvailableQuantity() <= product.getReorderThreshold()) {
         eventPublisher.publishEvent(
             new StockLowEvent(
-                product.getSku(), product.getAvailableQuantity(), product.getReorderThreshold()));
+                product.getSku(),
+                product.getName(),
+                product.getAvailableQuantity(),
+                product.getReorderThreshold(),
+                product.getCreatedBy()));
       }
     }
     reservationRepository.save(reservation);

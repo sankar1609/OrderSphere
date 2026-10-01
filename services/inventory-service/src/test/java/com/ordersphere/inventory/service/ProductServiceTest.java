@@ -2,6 +2,7 @@ package com.ordersphere.inventory.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -37,8 +38,20 @@ class ProductServiceTest {
     assertThatThrownBy(
             () ->
                 productService.createProduct(
-                    new CreateProductRequest("SKU-1", "Widget", 5, 1, new BigDecimal("9.99"))))
+                    new CreateProductRequest("SKU-1", "Widget", 5, 1, new BigDecimal("9.99")),
+                    "vendor1"))
         .isInstanceOf(DuplicateSkuException.class);
+  }
+
+  @Test
+  void createProductRecordsWhoCreatedIt() {
+    when(productRepository.save(any(Product.class))).thenAnswer(i -> i.getArgument(0));
+
+    ProductResponse response =
+        productService.createProduct(
+            new CreateProductRequest("SKU-2", "Gadget", 5, 1, new BigDecimal("4.00")), "vendor1");
+
+    assertThat(response.createdBy()).isEqualTo("vendor1");
   }
 
   @Test

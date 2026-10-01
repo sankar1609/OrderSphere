@@ -3,12 +3,14 @@ package com.ordersphere.inventory.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.ordersphere.events.InventoryReleasedEvent;
 import com.ordersphere.events.InventoryReservedEvent;
+import com.ordersphere.events.StockLowEvent;
 import com.ordersphere.inventory.domain.Product;
 import com.ordersphere.inventory.domain.Reservation;
 import com.ordersphere.inventory.domain.ReservationItem;
@@ -25,6 +27,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
@@ -71,6 +74,84 @@ class ReservationServiceTest {
         .containsExactly(new ReservationResponse.LineItem("SKU-1", 5, new BigDecimal("9.99")));
     assertThat(product.getQuantityReserved()).isEqualTo(5);
     verify(eventPublisher).publishEvent(any(InventoryReservedEvent.class));
+  }
+
+  private static Product product(String sku, int onHand, int threshold) {
+    Product product = new Product(sku, "Widget " + sku, onHand, threshold, new BigDecimal("9.99"));
+    product.setCreatedBy("vendor1");
+    return product;
+  }
+
+  private List<StockLowEvent> stockLowEvents() {
+    ArgumentCaptor<Object> events = ArgumentCaptor.forClass(Object.class);
+    verify(eventPublisher, atLeast(0)).publishEvent(events.capture());
+    return events.getAllValues().stream()
+        .filter(StockLowEvent.class::isInstance)
+        .map(StockLowEvent.class::cast)
+        .toList();
+  }
+
+  private void reserve(long orderId, Product... lines) {
+    when(reservationRepository.findByOrderId(orderId)).thenReturn(Optional.empty());
+    for (Product p : lines) {
+      when(productRepository.findWithLockBySku(p.getSku())).thenReturn(Optional.of(p));
+    }
+  }
+
+  @Test
+  void crossingTheReorderThresholdAlertsTheOwnerOnce() {
+    Product product = product("SKU-1", 10, 5);
+    reserve(20L, product);
+
+    reservationService.reserve(
+        new ReserveStockRequest(20L, List.of(new ReserveStockRequest.Item("SKU-1", 6))));
+
+    List<StockLowEvent> alerts = stockLowEvents();
+    assertThat(alerts).hasSize(1);
+    StockLowEvent alert = alerts.get(0);
+    assertThat(alert.getSku()).isEqualTo("SKU-1");
+    assertThat(alert.getProductName()).isEqualTo("Widget SKU-1");
+    assertThat(alert.getAvailableQuantity()).isEqualTo(4);
+    assertThat(alert.getReorderThreshold()).isEqualTo(5);
+    assertThat(alert.getOwnerUsername()).isEqualTo("vendor1");
+  }
+
+  @Test
+  void landingExactlyOnTheThresholdCountsAsCrossing() {
+    Product product = product("SKU-1", 7, 5);
+    reserve(21L, product);
+
+    reservationService.reserve(
+        new ReserveStockRequest(21L, List.of(new ReserveStockRequest.Item("SKU-1", 2))));
+
+    assertThat(stockLowEvents()).hasSize(1);
+  }
+
+  @Test
+  void stockThatIsAlreadyLowDoesNotAlertAgain() {
+    Product product = product("SKU-1", 4, 5);
+    reserve(22L, product);
+
+    reservationService.reserve(
+        new ReserveStockRequest(22L, List.of(new ReserveStockRequest.Item("SKU-1", 1))));
+
+    assertThat(stockLowEvents()).isEmpty();
+  }
+
+  @Test
+  void onlyTheLineThatCrossedAlerts() {
+    Product crosses = product("SKU-A", 6, 5);
+    Product staysHigh = product("SKU-B", 50, 5);
+    reserve(23L, crosses, staysHigh);
+
+    reservationService.reserve(
+        new ReserveStockRequest(
+            23L,
+            List.of(
+                new ReserveStockRequest.Item("SKU-A", 3),
+                new ReserveStockRequest.Item("SKU-B", 3))));
+
+    assertThat(stockLowEvents()).extracting(StockLowEvent::getSku).containsExactly("SKU-A");
   }
 
   @Test

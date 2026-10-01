@@ -11,7 +11,8 @@ public record ProductResponse(
     int quantityReserved,
     int availableQuantity,
     int reorderThreshold,
-    BigDecimal unitPrice) {
+    BigDecimal unitPrice,
+    String createdBy) {
 
   public static ProductResponse from(Product product) {
     return new ProductResponse(
@@ -22,6 +23,7 @@ public record ProductResponse(
         product.getQuantityReserved(),
         product.getAvailableQuantity(),
         product.getReorderThreshold(),
-        product.getUnitPrice());
+        product.getUnitPrice(),
+        product.getCreatedBy());
   }
 }

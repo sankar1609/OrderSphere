@@ -212,6 +212,7 @@ class InventoryControllerIntegrationTest {
                 .header("Authorization", "Bearer " + adminToken())
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(request)))
-        .andExpect(status().isCreated());
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.createdBy").isNotEmpty());
   }
 }

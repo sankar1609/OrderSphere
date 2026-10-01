@@ -19,7 +19,7 @@ public class ProductService {
     this.productRepository = productRepository;
   }
 
-  public ProductResponse createProduct(CreateProductRequest request) {
+  public ProductResponse createProduct(CreateProductRequest request, String createdBy) {
     if (productRepository.existsBySku(request.sku())) {
       throw new DuplicateSkuException(request.sku());
     }
@@ -30,6 +30,7 @@ public class ProductService {
             request.quantityOnHand(),
             request.reorderThreshold(),
             request.unitPrice());
+    product.setCreatedBy(createdBy);
     return ProductResponse.from(productRepository.save(product));
   }
 

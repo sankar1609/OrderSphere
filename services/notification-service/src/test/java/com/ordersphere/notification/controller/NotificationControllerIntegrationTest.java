@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ordersphere.events.StockLowEvent;
 import com.ordersphere.notification.domain.NotificationChannel;
 import com.ordersphere.notification.domain.TemplateKey;
 import com.ordersphere.notification.dto.CreateNotificationPreferenceRequest;
@@ -19,6 +20,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.MediaType;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.MockMvc;
@@ -42,9 +44,42 @@ class NotificationControllerIntegrationTest {
   @Autowired private MockMvc mockMvc;
   @Autowired private ObjectMapper objectMapper;
   @Autowired private NotificationDeliveryJob notificationDeliveryJob;
+  @Autowired private ApplicationEventPublisher eventPublisher;
 
   private String tokenFor(String username, String role) {
     return TestJwtIssuer.token(username, role);
+  }
+
+  @Test
+  void aStockLowEventOnTheBrokerBecomesAnAlertForTheProductsVendor() throws Exception {
+    // Published like inventory-service does: DomainEventRelay sends it to the exchange, and the
+    // listener picks it up off notification-service.events.
+    eventPublisher.publishEvent(new StockLowEvent("LOW-1", "Widget", 2, 5, "vendor-low"));
+
+    String body = "[]";
+    for (int i = 0; i < 50 && !body.contains("LOW-1"); i++) {
+      Thread.sleep(200);
+      body =
+          mockMvc
+              .perform(
+                  get("/notifications")
+                      .header("Authorization", "Bearer " + tokenFor("vendor-low", "VENDOR")))
+              .andReturn()
+              .getResponse()
+              .getContentAsString();
+    }
+
+    mockMvc
+        .perform(
+            get("/notifications")
+                .header("Authorization", "Bearer " + tokenFor("vendor-low", "VENDOR")))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[0].templateKey", is("STOCK_LOW")))
+        .andExpect(jsonPath("$[0].channel", is("IN_APP")))
+        .andExpect(
+            jsonPath(
+                "$[0].message",
+                is("Low stock: LOW-1 (Widget) has 2 left - reorder threshold is 5.")));
   }
 
   @Test

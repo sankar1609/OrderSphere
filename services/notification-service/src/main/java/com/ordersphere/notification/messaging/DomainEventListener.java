@@ -8,6 +8,7 @@ import com.ordersphere.events.PaymentFailedEvent;
 import com.ordersphere.events.ShipmentCreatedEvent;
 import com.ordersphere.events.ShipmentInTransitEvent;
 import com.ordersphere.events.ShipmentPickedEvent;
+import com.ordersphere.events.StockLowEvent;
 import com.ordersphere.notification.domain.NotificationChannel;
 import com.ordersphere.notification.domain.TemplateKey;
 import com.ordersphere.notification.dto.CreateNotificationRequest;
@@ -15,6 +16,7 @@ import com.ordersphere.notification.service.NotificationService;
 import java.util.Map;
 import org.springframework.amqp.rabbit.annotation.RabbitHandler;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
@@ -29,9 +31,14 @@ import org.springframework.stereotype.Component;
 public class DomainEventListener {
 
   private final NotificationService notificationService;
+  private final String lowStockFallbackRecipient;
 
-  public DomainEventListener(NotificationService notificationService) {
+  public DomainEventListener(
+      NotificationService notificationService,
+      @Value("${notification.low-stock.fallback-recipient:admin}")
+          String lowStockFallbackRecipient) {
     this.notificationService = notificationService;
+    this.lowStockFallbackRecipient = lowStockFallbackRecipient;
   }
 
   @RabbitHandler
@@ -99,6 +106,27 @@ public class DomainEventListener {
         event.getCustomerUsername(),
         TemplateKey.DELIVERY_CONFIRMED,
         Map.of("orderId", event.getOrderId().toString()));
+  }
+
+  /**
+   * Goes to whoever created the product; products from before ownership was recorded have no owner,
+   * so their alerts go to the configured fallback (an admin). In-app rather than email: it's an
+   * operational alert for the vendor's dashboard, not customer mail.
+   */
+  @RabbitHandler
+  public void onStockLow(StockLowEvent event) {
+    String recipient =
+        event.getOwnerUsername() != null ? event.getOwnerUsername() : lowStockFallbackRecipient;
+    notificationService.createNotification(
+        new CreateNotificationRequest(
+            recipient,
+            NotificationChannel.IN_APP,
+            TemplateKey.STOCK_LOW,
+            Map.of(
+                "sku", event.getSku(),
+                "name", String.valueOf(event.getProductName()),
+                "available", String.valueOf(event.getAvailableQuantity()),
+                "threshold", String.valueOf(event.getReorderThreshold()))));
   }
 
   private void notify(

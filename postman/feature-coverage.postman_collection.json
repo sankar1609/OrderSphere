@@ -3169,6 +3169,236 @@
               }
             }
           ]
+        },
+        {
+          "name": "Vendor Creates Low-Stock Product",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{vendToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sku\": \"{{sku}}-LOW\",\n  \"name\": \"Low Widget\",\n  \"quantityOnHand\": 3,\n  \"reorderThreshold\": 2,\n  \"unitPrice\": 5.00\n}"
+            },
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/products",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "inventory",
+                "products"
+              ]
+            },
+            "description": "3 in stock, alert at 2. The creator is recorded so low-stock alerts go to this vendor."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.test(\"Owner recorded\", function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.createdBy).to.eql('vend_' + pm.collectionVariables.get('runId'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Order Down to the Threshold",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"sku\": \"{{sku}}-LOW\",\n      \"quantity\": 1\n    }\n  ],\n  \"currency\": \"USD\",\n  \"shippingDestination\": \"42 Coverage Rd\"\n}"
+            },
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders",
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            },
+            "description": "3 -> 2 available: crosses the reorder threshold."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Vendor Gets One Low-Stock Alert",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{vendToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{notificationBaseUrl}}/notifications",
+              "host": [
+                "{{notificationBaseUrl}}"
+              ],
+              "path": [
+                "notifications"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var body = pm.response.code === 200 ? pm.response.json() : null;",
+                  "var pollKey = 'poll_' + pm.info.requestId;",
+                  "var polls = Number(pm.collectionVariables.get(pollKey) || 0);",
+                  "var done = !!body && (body.filter(function (n) { return n.templateKey === 'STOCK_LOW' && n.message.indexOf(pm.collectionVariables.get('sku') + '-LOW') >= 0; }).length === 1);",
+                  "if (done || polls >= 20) {",
+                  "    pm.collectionVariables.unset(pollKey);",
+                  "    pm.test(\"One STOCK_LOW alert for the product\", function () {",
+                  "        pm.expect(done, 'still not reached after ' + polls + ' polls (currently: ' + (body ? body.filter(function (n) { return n.templateKey === 'STOCK_LOW' && n.message.indexOf(pm.collectionVariables.get('sku') + '-LOW') >= 0; }).length : pm.response.code) + ')').to.be.true;",
+                  "    });",
+                  "",
+                  "} else {",
+                  "    pm.collectionVariables.set(pollKey, polls + 1);",
+                  "    console.log(pm.info.requestName + ': waiting (' + (polls + 1) + '/20), currently ' + (body ? body.filter(function (n) { return n.templateKey === 'STOCK_LOW' && n.message.indexOf(pm.collectionVariables.get('sku') + '-LOW') >= 0; }).length : pm.response.code));",
+                  "    setTimeout(function () {}, 3000);",
+                  "    pm.execution.setNextRequest(pm.info.requestId);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Order One More (already low)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"sku\": \"{{sku}}-LOW\",\n      \"quantity\": 1\n    }\n  ],\n  \"currency\": \"USD\",\n  \"shippingDestination\": \"42 Coverage Rd\"\n}"
+            },
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders",
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "setTimeout(function () {}, 1000);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Still One Alert (no repeat while low)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{vendToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{notificationBaseUrl}}/notifications",
+              "host": [
+                "{{notificationBaseUrl}}"
+              ],
+              "path": [
+                "notifications"
+              ]
+            },
+            "description": "Stock was already at/below the threshold, so no second alert."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "setTimeout(function () {}, 5000);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"Exactly one STOCK_LOW alert\", function () {",
+                  "    var b = pm.response.json();",
+                  "    var body = b;",
+                  "    pm.expect(body.filter(function (n) { return n.templateKey === 'STOCK_LOW' && n.message.indexOf(pm.collectionVariables.get('sku') + '-LOW') >= 0; }).length).to.eql(1);",
+                  "});"
+                ]
+              }
+            }
+          ]
         }
       ]
     },

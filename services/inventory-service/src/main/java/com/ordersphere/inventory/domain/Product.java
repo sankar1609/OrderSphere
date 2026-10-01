@@ -41,6 +41,10 @@ public class Product {
   @Column(name = "unit_price", nullable = false, precision = 12, scale = 2)
   private BigDecimal unitPrice;
 
+  /** Username of the vendor/admin who created it; null for products from before this was kept. */
+  @Column(name = "created_by", updatable = false)
+  private String createdBy;
+
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
 

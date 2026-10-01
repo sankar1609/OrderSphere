@@ -140,7 +140,10 @@ export default function ManageProducts({ token, onUnauthorized }) {
               style={{ display: "block", width: "100%" }}
               required
             />
-            <small>Stock at or below this is flagged as low.</small>
+            <small>
+              Stock at or below this is flagged as low, and you get a Notifications alert when it
+              drops there.
+            </small>
           </label>
         </div>
         <button type="submit" disabled={creating}>
@@ -174,6 +177,7 @@ export default function ManageProducts({ token, onUnauthorized }) {
               <th style={cellStyle}>On Hand</th>
               <th style={cellStyle}>Reserved</th>
               <th style={cellStyle}>Reorder at</th>
+              <th style={cellStyle}>Owner</th>
               <th style={cellStyle}>Restock</th>
             </tr>
           </thead>
@@ -192,6 +196,7 @@ export default function ManageProducts({ token, onUnauthorized }) {
                   <td style={cellStyle}>{product.quantityOnHand}</td>
                   <td style={cellStyle}>{product.quantityReserved}</td>
                   <td style={cellStyle}>{product.reorderThreshold}</td>
+                  <td style={cellStyle}>{product.createdBy ?? "—"}</td>
                   <td style={cellStyle}>
                     <input
                       type="number"

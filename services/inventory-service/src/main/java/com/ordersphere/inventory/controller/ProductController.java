@@ -5,6 +5,7 @@ import com.ordersphere.inventory.dto.ProductResponse;
 import com.ordersphere.inventory.dto.RestockRequest;
 import com.ordersphere.inventory.service.ProductService;
 import jakarta.validation.Valid;
+import java.security.Principal;
 import java.util.List;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -29,8 +30,9 @@ public class ProductController {
   @PostMapping
   @PreAuthorize("hasAnyRole('ADMIN', 'VENDOR')")
   public ResponseEntity<ProductResponse> createProduct(
-      @Valid @RequestBody CreateProductRequest request) {
-    return ResponseEntity.status(HttpStatus.CREATED).body(productService.createProduct(request));
+      @Valid @RequestBody CreateProductRequest request, Principal principal) {
+    return ResponseEntity.status(HttpStatus.CREATED)
+        .body(productService.createProduct(request, principal.getName()));
   }
 
   @GetMapping

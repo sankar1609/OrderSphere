@@ -34,6 +34,10 @@ notification:
   delivery:
     max-retries: ${NOTIFICATION_MAX_RETRIES:3}
     sweep-interval-ms: ${NOTIFICATION_SWEEP_INTERVAL_MS:5000}
+  low-stock:
+    # Who gets low-stock alerts for products with no recorded creator (created before V3 in
+    # inventory-service).
+    fallback-recipient: ${LOW_STOCK_FALLBACK_RECIPIENT:admin}
 
 
 management:
