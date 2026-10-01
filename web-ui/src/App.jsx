@@ -5,6 +5,8 @@ import OrdersList from "./components/OrdersList";
 import ProductsList from "./components/ProductsList";
 import PlaceOrder from "./components/PlaceOrder";
 import ManageProducts from "./components/ManageProducts";
+import OrderDetail from "./components/OrderDetail";
+import Notifications from "./components/Notifications";
 import { configureAuth, logout } from "./api";
 import { canManageProducts, roleOf } from "./auth";
 
@@ -44,7 +46,9 @@ export default function App() {
   const [token, setToken] = useState(() => readStored("token"));
   const [refreshToken, setRefreshToken] = useState(() => readStored("refreshToken"));
   const [view, setView] = useState("login"); // "login" | "register"
-  const [page, setPage] = useState("orders"); // "orders" | "products" | "placeOrder" | "manageProducts"
+  // "orders" | "orderDetail" | "products" | "placeOrder" | "notifications" | "manageProducts"
+  const [page, setPage] = useState("orders");
+  const [detailOrderId, setDetailOrderId] = useState(null);
   const [paymentReturn] = useState(readPaymentReturn);
   const [sessionMessage, setSessionMessage] = useState(null);
 
@@ -125,6 +129,14 @@ export default function App() {
           >
             Place Order
           </button>
+          <button
+            type="button"
+            onClick={() => setPage("notifications")}
+            disabled={page === "notifications"}
+            style={{ marginRight: 8 }}
+          >
+            Notifications
+          </button>
           {showManageProducts && (
             <button
               type="button"
@@ -140,7 +152,22 @@ export default function App() {
             token={token}
             onUnauthorized={handleUnauthorized}
             paymentReturn={paymentReturn}
+            onOpen={(orderId) => {
+              setDetailOrderId(orderId);
+              setPage("orderDetail");
+            }}
           />
+        )}
+        {page === "orderDetail" && (
+          <OrderDetail
+            token={token}
+            orderId={detailOrderId}
+            onBack={() => setPage("orders")}
+            onUnauthorized={handleUnauthorized}
+          />
+        )}
+        {page === "notifications" && (
+          <Notifications token={token} onUnauthorized={handleUnauthorized} />
         )}
         {page === "products" && <ProductsList token={token} onUnauthorized={handleUnauthorized} />}
         {page === "placeOrder" && (

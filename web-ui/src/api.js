@@ -129,3 +129,42 @@ export function restockProduct(token, sku, quantity) {
 export function createOrder(token, body) {
   return request("/ordersphere-orders/orders", { method: "POST", token, body });
 }
+
+/** Idempotent; refunds a paid order. 409 once the order has been delivered. */
+export function cancelOrder(token, id) {
+  return request(`/ordersphere-orders/orders/${id}/cancel`, { method: "POST", token });
+}
+
+export function listShipmentsForOrder(token, orderId) {
+  return request(`/shipping-service/shipments/order/${orderId}`, { token });
+}
+
+export function getTracking(token, shipmentId) {
+  return request(`/shipping-service/shipments/${shipmentId}/tracking`, { token });
+}
+
+/** Only for a DELIVERED outbound shipment (409 otherwise); creates a RETURN shipment. */
+export function requestReturn(token, shipmentId, reason) {
+  return request(`/shipping-service/shipments/${shipmentId}/return`, {
+    method: "POST",
+    token,
+    body: { reason },
+  });
+}
+
+export function listNotifications(token) {
+  return request("/notification-service/notifications", { token });
+}
+
+export function listPreferences(token) {
+  return request("/notification-service/notification-preferences", { token });
+}
+
+/** Upsert per channel; a channel with no saved preference is enabled. */
+export function setPreference(token, channel, enabled) {
+  return request("/notification-service/notification-preferences", {
+    method: "POST",
+    token,
+    body: { channel, enabled },
+  });
+}

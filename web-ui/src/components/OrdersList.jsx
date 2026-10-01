@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getOrder, listMyOrders } from "../api";
-import { cellStyle } from "../styles";
+import { cellStyle, linkButtonStyle } from "../styles";
 import { formatMoney } from "../format";
 
 const POLL_INTERVAL_MS = 2000;
@@ -70,7 +70,7 @@ function usePaymentReturn(token, paymentReturn, onSettled, onUnauthorized) {
 
 const toneColors = { info: "#0645ad", success: "green", error: "crimson" };
 
-export default function OrdersList({ token, onUnauthorized, paymentReturn }) {
+export default function OrdersList({ token, onUnauthorized, paymentReturn, onOpen }) {
   const [orders, setOrders] = useState(null);
   const [error, setError] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -120,7 +120,16 @@ export default function OrdersList({ token, onUnauthorized, paymentReturn }) {
           <tbody>
             {orders.map((order) => (
               <tr key={order.id}>
-                <td style={cellStyle}>{order.id}</td>
+                <td style={cellStyle}>
+                  <button
+                    type="button"
+                    onClick={() => onOpen(order.id)}
+                    style={linkButtonStyle}
+                    title="Order details, tracking and cancellation"
+                  >
+                    #{order.id}
+                  </button>
+                </td>
                 <td style={cellStyle}>
                   {order.status}
                   {order.status === "CANCELLED" && order.cancellationReason && (
