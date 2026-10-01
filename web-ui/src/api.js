@@ -168,3 +168,47 @@ export function setPreference(token, channel, enabled) {
     body: { channel, enabled },
   });
 }
+
+// --- Admin (ADMIN role only; the backend enforces it) ---
+
+export function listUsers(token) {
+  return request("/auth-service/auth/admin/users", { token });
+}
+
+/** Ends that user's sessions; the new role applies from their next login. 409 for your own role. */
+export function changeUserRole(token, id, role) {
+  return request(`/auth-service/auth/admin/users/${id}/role`, {
+    method: "PATCH",
+    token,
+    body: { role },
+  });
+}
+
+/** Refunds / stock releases the saga owes; status FAILED (default), PENDING or DONE. */
+export function listCompensations(token, status = "FAILED") {
+  return request(
+    `/ordersphere-orders/orders/admin/compensations?status=${encodeURIComponent(status)}`,
+    { token }
+  );
+}
+
+/** Re-queues a FAILED compensation and tries it right away; returns its new state. */
+export function retryCompensation(token, id) {
+  return request(`/ordersphere-orders/orders/admin/compensations/${id}/retry`, {
+    method: "POST",
+    token,
+  });
+}
+
+/** Paid orders that have no shipment yet. */
+export function listUnshipped(token) {
+  return request("/ordersphere-orders/orders/admin/unshipped", { token });
+}
+
+/** Tries to create the order's shipment now; returns the order's shipment state. */
+export function retryUnshipped(token, orderId) {
+  return request(`/ordersphere-orders/orders/admin/unshipped/${orderId}/retry`, {
+    method: "POST",
+    token,
+  });
+}

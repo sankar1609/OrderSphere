@@ -44,7 +44,7 @@
   - User registration and login (`POST /auth/register`, `POST /auth/login`, `GET /auth/me`)
   - The only JWT signer: RS256 with an RSA key generated on first start and stored in `signing_keys` (or supplied via `JWT_PRIVATE_KEY`/`JWT_PUBLIC_KEY`); public keys published at `GET /auth/.well-known/jwks.json`
   - Service identities via OAuth2 client credentials (`POST /auth/token`, HTTP Basic client id/secret) → 5-minute `SERVICE`-role token; clients configured as `auth.clients.<id>.secret` (`orders-service`, secret `ORDERS_CLIENT_SECRET`)
-  - Role-based access control (RBAC); ADMIN can change a user's role (`PATCH /auth/admin/users/{id}/role`)
+  - Role-based access control (RBAC); ADMIN can list users (`GET /auth/admin/users`) and change anyone's role but their own (`PATCH /auth/admin/users/{id}/role`; 409 for your own, so the last admin can't lock everyone out)
   - Password hashing with bcrypt
 - **Database:** PostgreSQL (auth_db)
 - **Key Features:**
@@ -271,7 +271,7 @@ Order Placement Flow:
 - **Base URL:** `http://localhost:8080/{service-id}` (e.g. `http://localhost:8080/ordersphere-orders/orders`)
 
 ### Key Service Endpoints
-- **Auth Service:** `/auth/register`, `/auth/login`, `/auth/me`, `/auth/admin/users/{id}/role`
+- **Auth Service:** `/auth/register`, `/auth/login`, `/auth/me`, `/auth/admin/users` (ADMIN: list), `/auth/admin/users/{id}/role`
 - **Orders Service:** `/orders` (create, list), `/orders/{id}`, `/orders/{id}/cancel`, `/orders/admin/compensations` (ADMIN: list, get, retry failed), `/orders/admin/unshipped` (ADMIN: list, retry)
 - **Inventory Service:** `/inventory/products` (create, list, get, restock), `/inventory/reservations` (reserve, confirm, release - internal, SERVICE/ADMIN)
 - **Payment Service:** `/payments` (initiate, status, refund), `/payments/webhooks/gateway` (provider webhook)
@@ -323,10 +323,10 @@ The system uses the Saga pattern to maintain consistency across distributed serv
 
 ## 📚 Additional Components
 
-### Web UI (`web-ui/` - customer screens and product management done)
+### Web UI (`web-ui/` - customer, vendor and admin screens done)
 - **Technology Stack:** React 18 + Vite (no router, no server of its own); see `web-ui/README.md`
-- **Done:** login/register as Customer or Vendor (tokens kept in `localStorage`, silent refresh, 401 → back to login), order list with totals and cancellation reasons, product catalog with prices and stock, order placement (out-of-stock products disabled, quantities capped at what's available) with redirect to the hosted payment page and back (with a "Pay now" link for unpaid orders), **order detail** (cancel with refund notice, shipment tracking timeline refreshed while in transit, return requests once delivered), **notifications** inbox with per-channel preferences, **Manage Products** for ADMIN/VENDOR (create a product, restock, low-stock highlighting; tab shown based on the token's `role` claim)
-- **Not yet:** admin screens beyond products (roles, failed compensations, unshipped orders), URL routing
+- **Done:** login/register as Customer or Vendor (tokens kept in `localStorage`, silent refresh, 401 → back to login), order list with totals and cancellation reasons, product catalog with prices and stock, order placement (out-of-stock products disabled, quantities capped at what's available) with redirect to the hosted payment page and back (with a "Pay now" link for unpaid orders), **order detail** (cancel with refund notice, shipment tracking timeline refreshed while in transit, return requests once delivered), **notifications** inbox with per-channel preferences, **Manage Products** for ADMIN/VENDOR (create a product, restock, low-stock highlighting; tab shown based on the token's `role` claim), **Admin** for ADMIN (users & roles with your own role locked, failed refunds/stock releases with Retry, unshipped paid orders with Retry)
+- **Not yet:** URL routing (pages aren't addressable by URL), automated UI tests
 - **Integration:** REST calls to the API Gateway (`VITE_GATEWAY_URL`, default `http://localhost:8080`); dev server on `http://localhost:5173`
 - **Deployment:** not decided (static hosting behind a CDN is the likely fit)
 
@@ -463,7 +463,7 @@ Service Registry (Eureka) - 8761
 - [x] Implement message broker (RabbitMQ)
 - [x] Implement circuit breakers (Resilience4j)
 - [x] CI pipeline (GitHub Actions)
-- [ ] Web UI - customer screens (orders, tracking, cancellation, returns, notifications) and product management done; remaining admin screens to go
+- [x] Web UI - customer screens (orders, tracking, cancellation, returns, notifications), product management and admin screens
 - [x] Fix: retry shipment creation for CONFIRMED orders left without a shipment
 - [x] Security hardening: internal endpoints limited to SERVICE/ADMIN, RS256 tokens signed only by auth-service (JWKS), service identity via client credentials, refresh tokens with rotation/revocation
 - [x] Gateway rate limiting (Redis), unauthenticated health probes, PATCH in gateway CORS

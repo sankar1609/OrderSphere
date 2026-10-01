@@ -167,6 +167,42 @@ class AuthControllerIntegrationTest {
   }
 
   @Test
+  void adminsCanListUsersButNotChangeTheirOwnRole() throws Exception {
+    register("kate");
+    String adminToken = loginAndGetToken("admin", "admin123");
+
+    String users =
+        mockMvc
+            .perform(get("/auth/admin/users").header("Authorization", "Bearer " + adminToken))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$[?(@.username == 'kate')].role").value("CUSTOMER"))
+            .andExpect(jsonPath("$[?(@.username == 'kate')].createdAt").isNotEmpty())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    long adminId = 0;
+    for (JsonNode user : objectMapper.readTree(users)) {
+      if (user.get("username").asText().equals("admin")) {
+        adminId = user.get("id").asLong();
+      }
+    }
+
+    mockMvc
+        .perform(
+            get("/auth/admin/users")
+                .header("Authorization", "Bearer " + loginAndGetToken("kate", "password123")))
+        .andExpect(status().isForbidden());
+    mockMvc
+        .perform(
+            patch("/auth/admin/users/" + adminId + "/role")
+                .header("Authorization", "Bearer " + adminToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(new RoleChangeRequest(Role.CUSTOMER))))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.message", is("You can't change your own role")));
+  }
+
+  @Test
   void loginTokensVerifyAgainstThePublishedJwks() throws Exception {
     mockMvc
         .perform(

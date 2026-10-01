@@ -8,6 +8,7 @@ import com.ordersphere.auth.dto.RegisterRequest;
 import com.ordersphere.auth.dto.UserResponse;
 import com.ordersphere.auth.exception.DuplicateUsernameException;
 import com.ordersphere.auth.exception.InvalidRoleSelectionException;
+import com.ordersphere.auth.exception.SelfRoleChangeException;
 import com.ordersphere.auth.exception.UserNotFoundException;
 import com.ordersphere.auth.repository.UserRepository;
 import com.ordersphere.auth.security.RefreshTokenService;
@@ -15,8 +16,10 @@ import com.ordersphere.auth.security.TokenIssuer;
 import com.ordersphere.events.UserAuthenticatedEvent;
 import com.ordersphere.events.UserRegisteredEvent;
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Set;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.data.domain.Sort;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -113,11 +116,23 @@ public class AuthService {
         .orElseThrow(() -> new UserNotFoundException("No user found for username: " + username));
   }
 
-  public UserResponse changeRole(Long userId, Role newRole) {
+  /** Admin view: every user, oldest first. */
+  public List<UserResponse> listUsers() {
+    return userRepository.findAll(Sort.by("id")).stream().map(UserResponse::from).toList();
+  }
+
+  /**
+   * Admins can change anyone's role but their own - otherwise the only admin could demote
+   * themselves and leave nobody able to manage roles.
+   */
+  public UserResponse changeRole(String actingUsername, Long userId, Role newRole) {
     User user =
         userRepository
             .findById(userId)
             .orElseThrow(() -> new UserNotFoundException("No user found with id: " + userId));
+    if (user.getUsername().equals(actingUsername)) {
+      throw new SelfRoleChangeException();
+    }
 
     user.setRole(newRole);
     User saved = userRepository.save(user);

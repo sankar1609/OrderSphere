@@ -7,8 +7,9 @@ import PlaceOrder from "./components/PlaceOrder";
 import ManageProducts from "./components/ManageProducts";
 import OrderDetail from "./components/OrderDetail";
 import Notifications from "./components/Notifications";
+import Admin from "./components/Admin";
 import { configureAuth, logout } from "./api";
-import { canManageProducts, roleOf } from "./auth";
+import { canManageProducts, isAdmin, roleOf, usernameOf } from "./auth";
 
 function readStored(key) {
   try {
@@ -46,7 +47,7 @@ export default function App() {
   const [token, setToken] = useState(() => readStored("token"));
   const [refreshToken, setRefreshToken] = useState(() => readStored("refreshToken"));
   const [view, setView] = useState("login"); // "login" | "register"
-  // "orders" | "orderDetail" | "products" | "placeOrder" | "notifications" | "manageProducts"
+  // "orders" | "orderDetail" | "products" | "placeOrder" | "notifications" | "manageProducts" | "admin"
   const [page, setPage] = useState("orders");
   const [detailOrderId, setDetailOrderId] = useState(null);
   const [paymentReturn] = useState(readPaymentReturn);
@@ -95,7 +96,9 @@ export default function App() {
   }, [refreshToken]);
 
   if (token) {
-    const showManageProducts = canManageProducts(roleOf(token));
+    const role = roleOf(token);
+    const showManageProducts = canManageProducts(role);
+    const showAdmin = isAdmin(role);
     return (
       <div style={{ maxWidth: 720, margin: "40px auto", fontFamily: "sans-serif" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -142,8 +145,14 @@ export default function App() {
               type="button"
               onClick={() => setPage("manageProducts")}
               disabled={page === "manageProducts"}
+              style={{ marginRight: 8 }}
             >
               Manage Products
+            </button>
+          )}
+          {showAdmin && (
+            <button type="button" onClick={() => setPage("admin")} disabled={page === "admin"}>
+              Admin
             </button>
           )}
         </nav>
@@ -172,6 +181,13 @@ export default function App() {
         {page === "products" && <ProductsList token={token} onUnauthorized={handleUnauthorized} />}
         {page === "placeOrder" && (
           <PlaceOrder token={token} onUnauthorized={handleUnauthorized} />
+        )}
+        {page === "admin" && showAdmin && (
+          <Admin
+            token={token}
+            currentUsername={usernameOf(token)}
+            onUnauthorized={handleUnauthorized}
+          />
         )}
         {page === "manageProducts" && showManageProducts && (
           <ManageProducts token={token} onUnauthorized={handleUnauthorized} />

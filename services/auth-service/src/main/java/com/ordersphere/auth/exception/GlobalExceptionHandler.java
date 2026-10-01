@@ -23,6 +23,11 @@ public class GlobalExceptionHandler {
     return errorResponse(HttpStatus.BAD_REQUEST, ex.getMessage());
   }
 
+  @ExceptionHandler(SelfRoleChangeException.class)
+  public ResponseEntity<Object> handleSelfRoleChange(SelfRoleChangeException ex) {
+    return errorResponse(HttpStatus.CONFLICT, ex.getMessage());
+  }
+
   @ExceptionHandler(UserNotFoundException.class)
   public ResponseEntity<Object> handleUserNotFound(UserNotFoundException ex) {
     return errorResponse(HttpStatus.NOT_FOUND, ex.getMessage());

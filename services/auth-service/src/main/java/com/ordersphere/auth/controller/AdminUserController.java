@@ -4,7 +4,10 @@ import com.ordersphere.auth.dto.RoleChangeRequest;
 import com.ordersphere.auth.dto.UserResponse;
 import com.ordersphere.auth.service.AuthService;
 import jakarta.validation.Valid;
+import java.security.Principal;
+import java.util.List;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -21,10 +24,16 @@ public class AdminUserController {
     this.authService = authService;
   }
 
+  @GetMapping
+  @PreAuthorize("hasRole('ADMIN')")
+  public List<UserResponse> listUsers() {
+    return authService.listUsers();
+  }
+
   @PatchMapping("/{id}/role")
   @PreAuthorize("hasRole('ADMIN')")
   public UserResponse changeRole(
-      @PathVariable Long id, @Valid @RequestBody RoleChangeRequest request) {
-    return authService.changeRole(id, request.role());
+      @PathVariable Long id, @Valid @RequestBody RoleChangeRequest request, Principal principal) {
+    return authService.changeRole(principal.getName(), id, request.role());
   }
 }

@@ -2,7 +2,9 @@ package com.ordersphere.auth.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -14,12 +16,14 @@ import com.ordersphere.auth.dto.RegisterRequest;
 import com.ordersphere.auth.dto.UserResponse;
 import com.ordersphere.auth.exception.DuplicateUsernameException;
 import com.ordersphere.auth.exception.InvalidRoleSelectionException;
+import com.ordersphere.auth.exception.SelfRoleChangeException;
 import com.ordersphere.auth.exception.UserNotFoundException;
 import com.ordersphere.auth.repository.UserRepository;
 import com.ordersphere.auth.security.RefreshTokenService;
 import com.ordersphere.auth.security.TokenIssuer;
 import com.ordersphere.events.UserAuthenticatedEvent;
 import com.ordersphere.events.UserRegisteredEvent;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -27,6 +31,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.data.domain.Sort;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
@@ -137,9 +142,34 @@ class AuthServiceTest {
     when(userRepository.findById(1L)).thenReturn(Optional.of(user));
     when(userRepository.save(user)).thenReturn(user);
 
-    UserResponse response = authService.changeRole(1L, Role.ADMIN);
+    UserResponse response = authService.changeRole("admin", 1L, Role.ADMIN);
 
     assertThat(response.role()).isEqualTo(Role.ADMIN);
     verify(refreshTokens).revokeAll(user);
+  }
+
+  @Test
+  void anAdminCannotChangeTheirOwnRole() {
+    User admin = new User("admin", "hashed", Role.ADMIN);
+    admin.setId(1L);
+    when(userRepository.findById(1L)).thenReturn(Optional.of(admin));
+
+    assertThatThrownBy(() -> authService.changeRole("admin", 1L, Role.CUSTOMER))
+        .isInstanceOf(SelfRoleChangeException.class);
+    assertThat(admin.getRole()).isEqualTo(Role.ADMIN);
+    verify(userRepository, never()).save(any());
+  }
+
+  @Test
+  void listUsersReturnsEveryUserInIdOrder() {
+    User alice = new User("alice", "hashed", Role.CUSTOMER);
+    alice.setId(1L);
+    User bob = new User("bob", "hashed", Role.VENDOR);
+    bob.setId(2L);
+    when(userRepository.findAll(Sort.by("id"))).thenReturn(List.of(alice, bob));
+
+    assertThat(authService.listUsers())
+        .extracting(UserResponse::username, UserResponse::role)
+        .containsExactly(tuple("alice", Role.CUSTOMER), tuple("bob", Role.VENDOR));
   }
 }
