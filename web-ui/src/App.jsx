@@ -4,7 +4,9 @@ import Register from "./components/Register";
 import OrdersList from "./components/OrdersList";
 import ProductsList from "./components/ProductsList";
 import PlaceOrder from "./components/PlaceOrder";
+import ManageProducts from "./components/ManageProducts";
 import { configureAuth, logout } from "./api";
+import { canManageProducts, roleOf } from "./auth";
 
 function readStored(key) {
   try {
@@ -42,7 +44,7 @@ export default function App() {
   const [token, setToken] = useState(() => readStored("token"));
   const [refreshToken, setRefreshToken] = useState(() => readStored("refreshToken"));
   const [view, setView] = useState("login"); // "login" | "register"
-  const [page, setPage] = useState("orders"); // "orders" | "products" | "placeOrder"
+  const [page, setPage] = useState("orders"); // "orders" | "products" | "placeOrder" | "manageProducts"
   const [paymentReturn] = useState(readPaymentReturn);
   const [sessionMessage, setSessionMessage] = useState(null);
 
@@ -67,6 +69,7 @@ export default function App() {
   }
 
   function handleLogout() {
+    setPage("orders");
     if (refreshToken) {
       logout(refreshToken).catch(() => {});
     }
@@ -88,6 +91,7 @@ export default function App() {
   }, [refreshToken]);
 
   if (token) {
+    const showManageProducts = canManageProducts(roleOf(token));
     return (
       <div style={{ maxWidth: 720, margin: "40px auto", fontFamily: "sans-serif" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -117,9 +121,19 @@ export default function App() {
             type="button"
             onClick={() => setPage("placeOrder")}
             disabled={page === "placeOrder"}
+            style={{ marginRight: 8 }}
           >
             Place Order
           </button>
+          {showManageProducts && (
+            <button
+              type="button"
+              onClick={() => setPage("manageProducts")}
+              disabled={page === "manageProducts"}
+            >
+              Manage Products
+            </button>
+          )}
         </nav>
         {page === "orders" && (
           <OrdersList
@@ -131,6 +145,9 @@ export default function App() {
         {page === "products" && <ProductsList token={token} onUnauthorized={handleUnauthorized} />}
         {page === "placeOrder" && (
           <PlaceOrder token={token} onUnauthorized={handleUnauthorized} />
+        )}
+        {page === "manageProducts" && showManageProducts && (
+          <ManageProducts token={token} onUnauthorized={handleUnauthorized} />
         )}
       </div>
     );

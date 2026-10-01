@@ -92,10 +92,11 @@ export function logout(refreshToken) {
   return send("/auth-service/auth/logout", { method: "POST", body: { refreshToken } });
 }
 
-export function register(username, password) {
+/** Self-registration allows CUSTOMER or VENDOR; other roles are granted by an admin. */
+export function register(username, password, role = "CUSTOMER") {
   return request("/auth-service/auth/register", {
     method: "POST",
-    body: { username, password, role: "CUSTOMER" },
+    body: { username, password, role },
   });
 }
 
@@ -109,6 +110,20 @@ export function getOrder(token, id) {
 
 export function listProducts(token) {
   return request("/inventory-service/inventory/products", { token });
+}
+
+/** ADMIN/VENDOR only. body: {sku, name, unitPrice, quantityOnHand, reorderThreshold}. */
+export function createProduct(token, body) {
+  return request("/inventory-service/inventory/products", { method: "POST", token, body });
+}
+
+/** ADMIN/VENDOR only. Adds quantity (at least 1) to the product's stock on hand. */
+export function restockProduct(token, sku, quantity) {
+  return request(`/inventory-service/inventory/products/${encodeURIComponent(sku)}/restock`, {
+    method: "POST",
+    token,
+    body: { quantity },
+  });
 }
 
 export function createOrder(token, body) {

@@ -323,10 +323,10 @@ The system uses the Saga pattern to maintain consistency across distributed serv
 
 ## 📚 Additional Components
 
-### Web UI (`web-ui/` - in progress, customer screens done)
+### Web UI (`web-ui/` - in progress, customer screens and product management done)
 - **Technology Stack:** React 18 + Vite (no router, no server of its own); see `web-ui/README.md`
-- **Done:** login/register (JWT kept in `localStorage`, 401 → back to login), order list with totals, product catalog with prices and stock, order placement with redirect to the hosted payment page and back (with a "Pay now" link for unpaid orders)
-- **Not yet:** shipment tracking, notifications and preferences, order cancellation, admin/vendor screens (products, restock, roles)
+- **Done:** login/register as Customer or Vendor (tokens kept in `localStorage`, silent refresh, 401 → back to login), order list with totals and cancellation reasons, product catalog with prices and stock, order placement (out-of-stock products disabled, quantities capped at what's available) with redirect to the hosted payment page and back (with a "Pay now" link for unpaid orders), **Manage Products** for ADMIN/VENDOR (create a product, restock, low-stock highlighting; tab shown based on the token's `role` claim)
+- **Not yet:** shipment tracking, notifications and preferences, order cancellation, admin screens beyond products (roles, failed compensations, unshipped orders)
 - **Integration:** REST calls to the API Gateway (`VITE_GATEWAY_URL`, default `http://localhost:8080`); dev server on `http://localhost:5173`
 - **Deployment:** not decided (static hosting behind a CDN is the likely fit)
 
@@ -463,7 +463,7 @@ Service Registry (Eureka) - 8761
 - [x] Implement message broker (RabbitMQ)
 - [x] Implement circuit breakers (Resilience4j)
 - [x] CI pipeline (GitHub Actions)
-- [ ] Web UI - customer screens done; shipment tracking, notifications, cancellation and admin/vendor screens remaining
+- [ ] Web UI - customer screens and product management done; shipment tracking, notifications, cancellation and remaining admin screens to go
 - [x] Fix: retry shipment creation for CONFIRMED orders left without a shipment
 - [x] Security hardening: internal endpoints limited to SERVICE/ADMIN, RS256 tokens signed only by auth-service (JWKS), service identity via client credentials, refresh tokens with rotation/revocation
 - [x] Gateway rate limiting (Redis), unauthenticated health probes, PATCH in gateway CORS

@@ -5,6 +5,7 @@ import { linkButtonStyle } from "../styles";
 export default function Register({ onRegistered, onSwitchToLogin }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [role, setRole] = useState("CUSTOMER");
   const [error, setError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -13,7 +14,7 @@ export default function Register({ onRegistered, onSwitchToLogin }) {
     setError(null);
     setSubmitting(true);
     try {
-      await register(username, password);
+      await register(username, password, role);
       // Registration doesn't return a token - log straight in with the same
       // credentials so signing up is a single flow, not two.
       onRegistered(await login(username, password));
@@ -55,6 +56,32 @@ export default function Register({ onRegistered, onSwitchToLogin }) {
           </label>
           <small>At least 8 characters.</small>
         </div>
+        <fieldset style={{ marginBottom: 12 }}>
+          <legend>Account type</legend>
+          <label style={{ marginRight: 12 }}>
+            <input
+              type="radio"
+              name="role"
+              value="CUSTOMER"
+              checked={role === "CUSTOMER"}
+              onChange={() => setRole("CUSTOMER")}
+            />{" "}
+            Customer
+          </label>
+          <label>
+            <input
+              type="radio"
+              name="role"
+              value="VENDOR"
+              checked={role === "VENDOR"}
+              onChange={() => setRole("VENDOR")}
+            />{" "}
+            Vendor
+          </label>
+          <div>
+            <small>Vendors can also add products to the catalog and restock them.</small>
+          </div>
+        </fieldset>
         <button type="submit" disabled={submitting}>
           {submitting ? "Creating account..." : "Create account"}
         </button>
