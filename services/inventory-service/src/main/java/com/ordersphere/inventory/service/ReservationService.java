@@ -57,7 +57,9 @@ public class ReservationService {
     // products can't deadlock), and only reserve once each one has enough available.
     Map<String, Integer> requested = new TreeMap<>();
     for (ReserveStockRequest.Item item : request.items()) {
-      requested.merge(item.sku(), item.quantity(), Integer::sum);
+      // addExact: request validation caps quantities, but a sum that wrapped negative would
+      // reserve negative stock - creating it out of nothing - so fail loudly instead.
+      requested.merge(item.sku(), item.quantity(), Math::addExact);
     }
     Map<String, Product> products = new LinkedHashMap<>();
     List<InsufficientStockException.Shortage> shortages = new ArrayList<>();

@@ -190,7 +190,12 @@ export default function App() {
           />
         )}
         {page === "manageProducts" && showManageProducts && (
-          <ManageProducts token={token} onUnauthorized={handleUnauthorized} />
+          <ManageProducts
+            token={token}
+            currentUsername={usernameOf(token)}
+            isAdmin={showAdmin}
+            onUnauthorized={handleUnauthorized}
+          />
         )}
       </div>
     );

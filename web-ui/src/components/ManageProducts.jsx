@@ -6,7 +6,7 @@ import { formatMoney } from "../format";
 const emptyForm = { sku: "", name: "", unitPrice: "", quantityOnHand: "0", reorderThreshold: "0" };
 
 /** ADMIN/VENDOR screen: add products to the catalog and restock existing ones. */
-export default function ManageProducts({ token, onUnauthorized }) {
+export default function ManageProducts({ token, currentUsername, isAdmin, onUnauthorized }) {
   const [products, setProducts] = useState(null);
   const [loadError, setLoadError] = useState(null);
   const [form, setForm] = useState(emptyForm);
@@ -92,6 +92,9 @@ export default function ManageProducts({ token, onUnauthorized }) {
               value={form.sku}
               onChange={updateField("sku")}
               style={{ display: "block", width: "100%" }}
+              maxLength={64}
+              pattern="[A-Za-z0-9][A-Za-z0-9._\-]*"
+              title="Letters, digits, '.', '_' or '-' (no spaces or '/')"
               required
             />
           </label>
@@ -102,6 +105,7 @@ export default function ManageProducts({ token, onUnauthorized }) {
               value={form.name}
               onChange={updateField("name")}
               style={{ display: "block", width: "100%" }}
+              maxLength={255}
               required
             />
           </label>
@@ -122,6 +126,7 @@ export default function ManageProducts({ token, onUnauthorized }) {
             <input
               type="number"
               min="0"
+              max="1000000"
               step="1"
               value={form.quantityOnHand}
               onChange={updateField("quantityOnHand")}
@@ -198,20 +203,27 @@ export default function ManageProducts({ token, onUnauthorized }) {
                   <td style={cellStyle}>{product.reorderThreshold}</td>
                   <td style={cellStyle}>{product.createdBy ?? "—"}</td>
                   <td style={cellStyle}>
-                    <input
-                      type="number"
-                      min="1"
-                      step="1"
-                      aria-label={`Restock quantity for ${product.sku}`}
-                      value={restockQuantities[product.sku] ?? ""}
-                      onChange={(e) =>
-                        setRestockQuantities({ ...restockQuantities, [product.sku]: e.target.value })
-                      }
-                      style={{ width: 60 }}
-                    />{" "}
-                    <button type="button" onClick={() => handleRestock(product.sku)}>
-                      Restock
-                    </button>
+                    {isAdmin || product.createdBy === currentUsername ? (
+                      <>
+                        <input
+                          type="number"
+                          min="1"
+                          max="1000000"
+                          step="1"
+                          aria-label={`Restock quantity for ${product.sku}`}
+                          value={restockQuantities[product.sku] ?? ""}
+                          onChange={(e) =>
+                            setRestockQuantities({ ...restockQuantities, [product.sku]: e.target.value })
+                          }
+                          style={{ width: 60 }}
+                        />{" "}
+                        <button type="button" onClick={() => handleRestock(product.sku)}>
+                          Restock
+                        </button>
+                      </>
+                    ) : (
+                      <span style={{ color: "#777", fontSize: 12 }}>not yours</span>
+                    )}
                   </td>
                 </tr>
               );

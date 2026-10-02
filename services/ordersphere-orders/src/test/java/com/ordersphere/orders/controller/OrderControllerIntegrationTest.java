@@ -139,6 +139,32 @@ class OrderControllerIntegrationTest {
   }
 
   @Test
+  void invalidOrdersAreRejectedBeforeAnythingIsReservedOrCharged() throws Exception {
+    List<CreateOrderRequest> invalid =
+        List.of(
+            new CreateOrderRequest(List.of(new CreateOrderRequest.Item("SKU-1", 1)), "EURO", "x"),
+            new CreateOrderRequest(List.of(new CreateOrderRequest.Item("SKU-1", 1)), "usd", "x"),
+            new CreateOrderRequest(List.of(new CreateOrderRequest.Item("SKU-1", 1)), "XYZ", "x"),
+            new CreateOrderRequest(
+                List.of(new CreateOrderRequest.Item("SKU-1", 1)), "USD", "d".repeat(256)),
+            new CreateOrderRequest(
+                List.of(new CreateOrderRequest.Item("SKU-1", Integer.MAX_VALUE)), "USD", "x"),
+            new CreateOrderRequest(
+                List.of(new CreateOrderRequest.Item("s".repeat(65), 1)), "USD", "x"));
+    for (CreateOrderRequest request : invalid) {
+      mockMvc
+          .perform(
+              post("/orders")
+                  .header("Authorization", "Bearer " + tokenFor("ivan"))
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(objectMapper.writeValueAsString(request)))
+          .andExpect(status().isBadRequest());
+    }
+    verify(inventoryClient, org.mockito.Mockito.never()).reserve(any(), any(), any());
+    verify(paymentClient, org.mockito.Mockito.never()).initiate(any(), any(), any(), any(), any());
+  }
+
+  @Test
   void createOrderCancelsWhenInventoryRejectsReservation() throws Exception {
     doThrow(
             new InventoryReservationException(

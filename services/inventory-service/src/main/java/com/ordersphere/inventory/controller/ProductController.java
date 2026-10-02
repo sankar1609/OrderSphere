@@ -10,6 +10,7 @@ import java.util.List;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -48,7 +49,12 @@ public class ProductController {
   @PostMapping("/{sku}/restock")
   @PreAuthorize("hasAnyRole('ADMIN', 'VENDOR')")
   public ProductResponse restock(
-      @PathVariable String sku, @Valid @RequestBody RestockRequest request) {
-    return productService.restock(sku, request.quantity());
+      @PathVariable String sku,
+      @Valid @RequestBody RestockRequest request,
+      Authentication authentication) {
+    boolean isAdmin =
+        authentication.getAuthorities().stream()
+            .anyMatch(authority -> authority.getAuthority().equals("ROLE_ADMIN"));
+    return productService.restock(sku, request.quantity(), authentication.getName(), isAdmin);
   }
 }

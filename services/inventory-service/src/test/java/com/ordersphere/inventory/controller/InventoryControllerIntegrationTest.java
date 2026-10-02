@@ -205,6 +205,92 @@ class InventoryControllerIntegrationTest {
         .andExpect(jsonPath("$.expiresAt").value(org.hamcrest.Matchers.nullValue()));
   }
 
+  @Test
+  void quantitiesAndTextBeyondTheLimitsAreRejectedNotStored() throws Exception {
+    createProduct(new CreateProductRequest("SKU-LIM", "Widget", 5, 0, new BigDecimal("2.00")));
+
+    // Two lines whose sum would wrap an int negative: rejected by validation, nothing reserved.
+    mockMvc
+        .perform(
+            post("/inventory/reservations")
+                .header("Authorization", "Bearer " + serviceToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(
+                        new ReserveStockRequest(
+                            300L,
+                            List.of(
+                                new ReserveStockRequest.Item("SKU-LIM", Integer.MAX_VALUE),
+                                new ReserveStockRequest.Item("SKU-LIM", Integer.MAX_VALUE))))))
+        .andExpect(status().isBadRequest());
+    mockMvc
+        .perform(
+            post("/inventory/products/SKU-LIM/restock")
+                .header("Authorization", "Bearer " + adminToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(new RestockRequest(Integer.MAX_VALUE))))
+        .andExpect(status().isBadRequest());
+    mockMvc
+        .perform(
+            get("/inventory/products/SKU-LIM").header("Authorization", "Bearer " + customerToken()))
+        .andExpect(jsonPath("$.quantityOnHand", is(5)))
+        .andExpect(jsonPath("$.quantityReserved", is(0)));
+
+    for (String badSku : List.of("A/B", "A B", "x".repeat(65))) {
+      mockMvc
+          .perform(
+              post("/inventory/products")
+                  .header("Authorization", "Bearer " + adminToken())
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(
+                      objectMapper.writeValueAsString(
+                          new CreateProductRequest(badSku, "Widget", 1, 0, BigDecimal.ONE))))
+          .andExpect(status().isBadRequest());
+    }
+    mockMvc
+        .perform(
+            post("/inventory/products")
+                .header("Authorization", "Bearer " + adminToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(
+                        new CreateProductRequest(
+                            "SKU-LONG", "n".repeat(256), 1, 0, BigDecimal.ONE))))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void vendorsRestockOnlyTheirOwnProducts() throws Exception {
+    String owner = TestJwtIssuer.token("vendor-one", "VENDOR");
+    String other = TestJwtIssuer.token("vendor-two", "VENDOR");
+    mockMvc
+        .perform(
+            post("/inventory/products")
+                .header("Authorization", "Bearer " + owner)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(
+                        new CreateProductRequest("SKU-OWN", "Widget", 1, 0, BigDecimal.ONE))))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.createdBy", is("vendor-one")));
+
+    mockMvc
+        .perform(
+            post("/inventory/products/SKU-OWN/restock")
+                .header("Authorization", "Bearer " + other)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(new RestockRequest(5))))
+        .andExpect(status().isForbidden());
+    mockMvc
+        .perform(
+            post("/inventory/products/SKU-OWN/restock")
+                .header("Authorization", "Bearer " + owner)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(new RestockRequest(5))))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.quantityOnHand", is(6)));
+  }
+
   private void createProduct(CreateProductRequest request) throws Exception {
     mockMvc
         .perform(

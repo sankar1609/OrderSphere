@@ -67,6 +67,7 @@
   - Saga orchestration for distributed order processing
   - Pricing: the order total is always derived from Inventory's catalog unit prices, never from the client
   - Customer order queries and customer-initiated cancellation (idempotent; 409 once delivered)
+  - Requests are validated before anything is reserved or charged: currency must be an ISO 4217 code (`@IsoCurrency`), at most 50 lines of up to 10,000 units, destination up to 255 characters
 - **Database:** PostgreSQL (orders_db)
 - **Key Features:**
   - Orchestrated saga: calls Inventory, Payment and Shipping synchronously over load-balanced REST
@@ -90,7 +91,8 @@
   - Low-stock alerts: when a reservation takes a product's available stock from above its reorder threshold to at/below it, `StockLowEvent` is published once (not again while it stays low; restock/release/expiry re-arm it)
   - Stock level tracking
   - Inventory reservation, confirmation and release for orders (internal: SERVICE/ADMIN only - called by the orders saga over REST)
-  - Restocking (`POST /inventory/products/{sku}/restock`, ADMIN/VENDOR)
+  - Restocking (`POST /inventory/products/{sku}/restock`): ADMIN any product, VENDOR only products they created (403 otherwise)
+  - Input limits (`InventoryLimits`): SKUs are 1-64 of `[A-Za-z0-9._-]` (they travel in URL paths), names up to 255, at most 10,000 units per order line and 50 lines, at most 1,000,000 added per create/restock and 100,000,000 on hand - so stock arithmetic can't overflow
   - All-or-nothing reservation: if any line asks for more than is available, nothing is reserved and the request is rejected (409, "Not enough stock: SKU (N requested, M available)") - there are no backorders
 - **Database:** PostgreSQL (inventory_db)
 - **Key Features:**
