@@ -179,4 +179,17 @@ class ShippingControllerIntegrationTest {
                         new CreateShipmentRequest(901L, "alice", "1 Test Way"))))
         .andExpect(status().isCreated());
   }
+
+  @Test
+  void publishesItsOpenApiSpecWithoutAToken() throws Exception {
+    mockMvc
+        .perform(
+            org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/v3/api-docs"))
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath(
+                    "$.paths['/shipments/{id}/return'].post.summary")
+                .value("Request a return"));
+  }
 }

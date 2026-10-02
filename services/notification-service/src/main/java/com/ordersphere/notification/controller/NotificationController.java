@@ -3,6 +3,7 @@ package com.ordersphere.notification.controller;
 import com.ordersphere.notification.dto.CreateNotificationRequest;
 import com.ordersphere.notification.dto.NotificationResponse;
 import com.ordersphere.notification.service.NotificationService;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.util.List;
 import org.springframework.http.HttpStatus;
@@ -17,6 +18,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+@Tag(name = "Notifications", description = "The caller's notifications")
 @RestController
 @RequestMapping("/notifications")
 public class NotificationController {

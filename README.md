@@ -65,6 +65,7 @@ The Web UI runs on http://localhost:5173 and talks to the API gateway set in `we
 |---|---|
 | Web UI | http://localhost:5173 |
 | API gateway | http://localhost:8080 |
+| API docs (Swagger UI, all services) | http://localhost:8080/swagger-ui.html |
 | Payment page (dummy gateway) | http://localhost:8087 |
 | Eureka dashboard | http://localhost:8761 |
 | RabbitMQ management | http://localhost:15672 |

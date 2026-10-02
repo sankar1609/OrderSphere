@@ -51,6 +51,27 @@ spring:
             allowedHeaders: "*"
             allowCredentials: false
 
+# One Swagger UI for all services (http://localhost:8080/swagger-ui.html). Each spec is fetched
+# through the gateway's own discovery routes, and each declares /{service-id} as its server, so
+# "Try it out" goes through the gateway too. Paste an access token under "Authorize".
+springdoc:
+  swagger-ui:
+    persist-authorization: true
+    urls-primary-name: orders
+    urls:
+      - name: orders
+        url: /ordersphere-orders/v3/api-docs
+      - name: auth
+        url: /auth-service/v3/api-docs
+      - name: inventory
+        url: /inventory-service/v3/api-docs
+      - name: payments
+        url: /payment-service/v3/api-docs
+      - name: shipping
+        url: /shipping-service/v3/api-docs
+      - name: notifications
+        url: /notification-service/v3/api-docs
+
 management:
   endpoints:
     web:

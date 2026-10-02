@@ -6,6 +6,8 @@ import com.ordersphere.auth.dto.RefreshRequest;
 import com.ordersphere.auth.dto.RegisterRequest;
 import com.ordersphere.auth.dto.UserResponse;
 import com.ordersphere.auth.service.AuthService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.security.Principal;
 import org.springframework.http.HttpStatus;
@@ -16,6 +18,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+@Tag(name = "Authentication", description = "Register, log in, refresh and end sessions")
 @RestController
 @RequestMapping("/auth")
 public class AuthController {
@@ -36,6 +39,10 @@ public class AuthController {
     return authService.login(request);
   }
 
+  @Operation(
+      summary = "Exchange a refresh token for a new pair",
+      description =
+          "Refresh tokens are single-use. Reusing a spent one ends the whole session, except within 30s of its rotation while the session is live (two tabs refreshing at once).")
   @PostMapping("/refresh")
   public AuthResponse refresh(@Valid @RequestBody RefreshRequest request) {
     return authService.refresh(request.refreshToken());
@@ -49,6 +56,7 @@ public class AuthController {
   }
 
   /** Ends every session of the logged-in user. */
+  @Operation(summary = "End all of the caller's sessions")
   @PostMapping("/logout-all")
   public ResponseEntity<Void> logoutAll(Principal principal) {
     authService.logoutEverywhere(principal.getName());

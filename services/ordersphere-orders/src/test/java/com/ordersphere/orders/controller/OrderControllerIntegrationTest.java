@@ -578,4 +578,29 @@ class OrderControllerIntegrationTest {
                 .header("Authorization", "Bearer " + tokenFor("frank")))
         .andExpect(status().isNotFound());
   }
+
+  @Test
+  void publishesItsOpenApiSpecWithoutAToken() throws Exception {
+    mockMvc
+        .perform(
+            org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/v3/api-docs"))
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath(
+                    "$.servers[0].url")
+                .value("/ordersphere-orders"))
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath(
+                "$.paths['/orders/admin/compensations'].get.description",
+                org.hamcrest.Matchers.containsString("Requires role: ADMIN")))
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath(
+                    "$.paths['/orders'].post.responses['401'].content['application/json'].schema['$ref']")
+                .value("#/components/schemas/ErrorResponse"))
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath(
+                    "$.components.schemas.ErrorResponse.properties.message")
+                .exists());
+  }
 }

@@ -4574,6 +4574,259 @@
           ]
         }
       ]
+    },
+    {
+      "name": "9. API Documentation",
+      "description": "Each service's OpenAPI spec through the gateway, and the one Swagger UI that lists them.",
+      "item": [
+        {
+          "name": "ordersphere-orders OpenAPI Spec (no token)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayBaseUrl}}/ordersphere-orders/v3/api-docs",
+              "host": [
+                "{{gatewayBaseUrl}}"
+              ],
+              "path": [
+                "ordersphere-orders",
+                "v3",
+                "api-docs"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('OpenAPI 3 spec served through the gateway', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.openapi).to.match(/^3\\./);",
+                  "    pm.expect(b.servers[0].url).to.eql('/ordersphere-orders');",
+                  "    pm.expect(b.paths).to.have.property('/orders/admin/compensations');",
+                  "    pm.expect(b.components.schemas, 'the schema 401/403 responses refer to').to.have.property('ErrorResponse');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "auth-service OpenAPI Spec (no token)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayBaseUrl}}/auth-service/v3/api-docs",
+              "host": [
+                "{{gatewayBaseUrl}}"
+              ],
+              "path": [
+                "auth-service",
+                "v3",
+                "api-docs"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('OpenAPI 3 spec served through the gateway', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.openapi).to.match(/^3\\./);",
+                  "    pm.expect(b.servers[0].url).to.eql('/auth-service');",
+                  "    pm.expect(b.paths).to.have.property('/auth/login');",
+                  "    pm.expect(b.components.schemas, 'the schema 401/403 responses refer to').to.have.property('ErrorResponse');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "inventory-service OpenAPI Spec (no token)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayBaseUrl}}/inventory-service/v3/api-docs",
+              "host": [
+                "{{gatewayBaseUrl}}"
+              ],
+              "path": [
+                "inventory-service",
+                "v3",
+                "api-docs"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('OpenAPI 3 spec served through the gateway', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.openapi).to.match(/^3\\./);",
+                  "    pm.expect(b.servers[0].url).to.eql('/inventory-service');",
+                  "    pm.expect(b.paths).to.have.property('/inventory/products');",
+                  "    pm.expect(b.components.schemas, 'the schema 401/403 responses refer to').to.have.property('ErrorResponse');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "payment-service OpenAPI Spec (no token)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayBaseUrl}}/payment-service/v3/api-docs",
+              "host": [
+                "{{gatewayBaseUrl}}"
+              ],
+              "path": [
+                "payment-service",
+                "v3",
+                "api-docs"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('OpenAPI 3 spec served through the gateway', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.openapi).to.match(/^3\\./);",
+                  "    pm.expect(b.servers[0].url).to.eql('/payment-service');",
+                  "    pm.expect(b.paths).to.have.property('/payments/webhooks/gateway');",
+                  "    pm.expect(b.components.schemas, 'the schema 401/403 responses refer to').to.have.property('ErrorResponse');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "shipping-service OpenAPI Spec (no token)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayBaseUrl}}/shipping-service/v3/api-docs",
+              "host": [
+                "{{gatewayBaseUrl}}"
+              ],
+              "path": [
+                "shipping-service",
+                "v3",
+                "api-docs"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('OpenAPI 3 spec served through the gateway', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.openapi).to.match(/^3\\./);",
+                  "    pm.expect(b.servers[0].url).to.eql('/shipping-service');",
+                  "    pm.expect(b.paths).to.have.property('/shipments/{id}/return');",
+                  "    pm.expect(b.components.schemas, 'the schema 401/403 responses refer to').to.have.property('ErrorResponse');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "notification-service OpenAPI Spec (no token)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayBaseUrl}}/notification-service/v3/api-docs",
+              "host": [
+                "{{gatewayBaseUrl}}"
+              ],
+              "path": [
+                "notification-service",
+                "v3",
+                "api-docs"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('OpenAPI 3 spec served through the gateway', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.openapi).to.match(/^3\\./);",
+                  "    pm.expect(b.servers[0].url).to.eql('/notification-service');",
+                  "    pm.expect(b.paths).to.have.property('/notification-preferences');",
+                  "    pm.expect(b.components.schemas, 'the schema 401/403 responses refer to').to.have.property('ErrorResponse');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Swagger UI Lists Every Service",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayBaseUrl}}/v3/api-docs/swagger-config",
+              "host": [
+                "{{gatewayBaseUrl}}"
+              ],
+              "path": [
+                "v3",
+                "api-docs",
+                "swagger-config"
+              ]
+            },
+            "description": "Open {{gatewayBaseUrl}}/swagger-ui.html in a browser to use it."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('All six service specs are listed', function () { pm.expect(pm.response.json().urls.length).to.eql(6); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
     }
   ]
 }

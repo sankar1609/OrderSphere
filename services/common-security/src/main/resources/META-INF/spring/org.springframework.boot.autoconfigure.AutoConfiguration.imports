@@ -1,1 +1,2 @@
 com.ordersphere.security.JwtAutoConfiguration
+com.ordersphere.security.OpenApiAutoConfiguration

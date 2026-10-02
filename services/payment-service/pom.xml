@@ -18,6 +18,11 @@
     <description>Asynchronous payment processing, payment methods, and refunds</description>
 
     <dependencies>
+        <!-- OpenAPI spec at /v3/api-docs; the Swagger UI lives at the gateway. -->
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webmvc-api</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>

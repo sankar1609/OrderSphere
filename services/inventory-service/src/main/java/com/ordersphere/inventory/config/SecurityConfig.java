@@ -35,7 +35,11 @@ public class SecurityConfig {
             auth ->
                 auth
                     // Liveness/readiness probes (Docker / Kubernetes) run without a token.
-                    .requestMatchers("/actuator/health", "/actuator/health/**")
+                    .requestMatchers(
+                        "/actuator/health",
+                        "/actuator/health/**",
+                        "/v3/api-docs",
+                        "/v3/api-docs/**")
                     .permitAll()
                     .requestMatchers("/error")
                     .permitAll()

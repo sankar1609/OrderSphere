@@ -69,3 +69,8 @@ eureka:
       defaultZone: ${EUREKA_URI:http://localhost:8761/eureka}
   instance:
     prefer-ip-address: true
+
+ordersphere:
+  openapi:
+    # Endpoints that don't need a Bearer token (see SecurityConfig); the spec marks them as open.
+    public-paths: /auth/register,/auth/login,/auth/refresh,/auth/logout,/auth/token,/auth/.well-known/jwks.json

@@ -4,6 +4,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ordersphere.payment.gateway.PaymentGatewayClient.SessionStatus;
 import com.ordersphere.payment.service.PaymentService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.MessageDigest;
@@ -23,6 +25,7 @@ import org.springframework.web.bind.annotation.RestController;
  * OrderSphere identity); instead every request must carry an HMAC-SHA256 signature of the raw body
  * made with the shared webhook secret.
  */
+@Tag(name = "Provider webhooks", description = "Signed callbacks from the payment provider")
 @RestController
 public class GatewayWebhookController {
 
@@ -41,6 +44,10 @@ public class GatewayWebhookController {
     this.webhookSecret = webhookSecret.getBytes(StandardCharsets.UTF_8);
   }
 
+  @Operation(
+      summary = "Payment provider webhook",
+      description =
+          "Called by the provider, not by clients. Authenticated by the X-Dummy-Gateway-Signature header (sha256=HMAC of the body), not a JWT.")
   @PostMapping("/payments/webhooks/gateway")
   public ResponseEntity<Void> receive(
       @RequestBody String body,
