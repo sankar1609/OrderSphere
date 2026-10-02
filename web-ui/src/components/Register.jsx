@@ -38,6 +38,10 @@ export default function Register({ onRegistered, onSwitchToLogin }) {
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               style={{ display: "block", width: "100%" }}
+              minLength={3}
+              maxLength={50}
+              pattern="[A-Za-z0-9._\-]+"
+              title="3-50 letters, digits, '.', '_' or '-'"
               required
             />
           </label>
@@ -51,10 +55,11 @@ export default function Register({ onRegistered, onSwitchToLogin }) {
               onChange={(e) => setPassword(e.target.value)}
               style={{ display: "block", width: "100%" }}
               minLength={8}
+              maxLength={72}
               required
             />
           </label>
-          <small>At least 8 characters.</small>
+          <small>8-72 characters.</small>
         </div>
         <fieldset style={{ marginBottom: 12 }}>
           <legend>Account type</legend>

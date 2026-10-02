@@ -45,11 +45,12 @@
   - The only JWT signer: RS256 with an RSA key generated on first start and stored in `signing_keys` (or supplied via `JWT_PRIVATE_KEY`/`JWT_PUBLIC_KEY`); public keys published at `GET /auth/.well-known/jwks.json`
   - Service identities via OAuth2 client credentials (`POST /auth/token`, HTTP Basic client id/secret) → 5-minute `SERVICE`-role token; clients configured as `auth.clients.<id>.secret` (`orders-service`, secret `ORDERS_CLIENT_SECRET`)
   - Role-based access control (RBAC); ADMIN can list users (`GET /auth/admin/users`) and change anyone's role but their own (`PATCH /auth/admin/users/{id}/role`; 409 for your own, so the last admin can't lock everyone out)
-  - Password hashing with bcrypt
+  - Password hashing with bcrypt; passwords 8-72 characters (bcrypt ignores bytes past 72)
+  - Usernames 3-50 of `[A-Za-z0-9._-]` (no look-alikes with spaces) and unique regardless of case
 - **Database:** PostgreSQL (auth_db)
 - **Key Features:**
   - Access tokens expire after 15 minutes (`JWT_EXPIRATION_MILLIS`); sessions continue via refresh tokens (`POST /auth/refresh`, 30 days, `AUTH_REFRESH_TOKEN_TTL`)
-  - Refresh tokens are stored hashed and single-use: each refresh rotates them, and reusing a spent one revokes the whole session (token family)
+  - Refresh tokens are stored hashed and single-use: each refresh rotates them, and reusing a spent one revokes the whole session (token family). Exception: a token rotated within the last 30s (`auth.refresh-token-reuse-grace`) of a still-live session gets a sibling token instead, so two browser tabs refreshing at once don't log the user out
   - `POST /auth/logout` ends one session, `POST /auth/logout-all` ends all of a user's sessions; an admin role change also ends them
   - Support for multiple user roles (CUSTOMER, VENDOR, ADMIN, AUDITOR)
   - Bootstrapped admin account on startup (`ADMIN_BOOTSTRAP_USERNAME`/`ADMIN_BOOTSTRAP_PASSWORD`, defaults `admin`/`admin123`)

@@ -386,6 +386,45 @@
           ]
         },
         {
+          "name": "Second Tab Refreshes With the Same Token [expect 200]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
+            },
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/refresh",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "refresh"
+              ]
+            },
+            "description": "Two tabs share one refresh token and both refresh when their access token expires. A token rotated moments ago in a live session gets a sibling instead of being treated as theft."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('A new access and refresh token', function () { var b = pm.response.json(); pm.expect(b.token).to.be.a('string'); pm.expect(b.refreshToken).to.be.a('string'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Reusing a Used Refresh Token [expect 401]",
           "request": {
             "method": "POST",
@@ -409,9 +448,19 @@
                 "refresh"
               ]
             },
-            "description": "Refresh tokens are single-use. Reuse means it leaked, so it fails..."
+            "description": "Refresh tokens are single-use. Reuse means it leaked, so it fails... Waits 31s first: within 30s of rotation, a live session's token gets a sibling (two tabs refreshing at once)."
           },
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Past the 30s concurrent-refresh grace window, reuse is treated as theft.",
+                  "setTimeout(function () {}, 31000);"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
@@ -1804,6 +1853,131 @@
                   "    var b = pm.response.json();",
                   "    pm.expect(b.availableQuantity).to.eql(0);",
                   "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Another Vendor Restocks It [expect 403]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{selfVendToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quantity\": 1\n}"
+            },
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/products/{{sku}}/restock",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "inventory",
+                "products",
+                "{{sku}}",
+                "restock"
+              ]
+            },
+            "description": "Vendors may restock only the products they created."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 403', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Order Quantity Over the Limit [expect 400]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [{\"sku\": \"{{sku}}\", \"quantity\": 2147483647}, {\"sku\": \"{{sku}}\", \"quantity\": 2147483647}],\n  \"currency\": \"USD\",\n  \"shippingDestination\": \"x\"\n}"
+            },
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders",
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            },
+            "description": "Two maximal lines would overflow when summed; validation rejects the order before anything is reserved."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unknown Currency [expect 400]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [{\"sku\": \"{{sku}}\", \"quantity\": 1}],\n  \"currency\": \"EURO\",\n  \"shippingDestination\": \"x\"\n}"
+            },
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders",
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400', function () { pm.response.to.have.status(400); });"
                 ]
               }
             }

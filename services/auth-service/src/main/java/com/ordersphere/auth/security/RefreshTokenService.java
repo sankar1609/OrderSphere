@@ -25,6 +25,11 @@ import org.springframework.transaction.annotation.Transactional;
  * Long-lived, single-use refresh tokens. Only a SHA-256 hash is stored. Every refresh rotates the
  * token; presenting one that was already rotated or revoked means it leaked, so the whole family
  * (every token descending from that login) is revoked.
+ *
+ * <p>One exception: a token rotated only moments ago ({@code auth.refresh-token-reuse-grace},
+ * default 30s) by a session that is still live gets a sibling token instead. Two browser tabs
+ * sharing one refresh token both refresh when their access token expires; without the grace window
+ * the slower tab would look like a thief and log the user out everywhere.
  */
 @Service
 public class RefreshTokenService {
@@ -33,18 +38,23 @@ public class RefreshTokenService {
 
   private final RefreshTokenRepository repository;
   private final Duration ttl;
+  private final Duration reuseGrace;
   private final Clock clock;
   private final SecureRandom random = new SecureRandom();
 
   @Autowired
   public RefreshTokenService(
-      RefreshTokenRepository repository, @Value("${auth.refresh-token-ttl:P30D}") Duration ttl) {
-    this(repository, ttl, Clock.systemUTC());
+      RefreshTokenRepository repository,
+      @Value("${auth.refresh-token-ttl:P30D}") Duration ttl,
+      @Value("${auth.refresh-token-reuse-grace:PT30S}") Duration reuseGrace) {
+    this(repository, ttl, reuseGrace, Clock.systemUTC());
   }
 
-  RefreshTokenService(RefreshTokenRepository repository, Duration ttl, Clock clock) {
+  RefreshTokenService(
+      RefreshTokenRepository repository, Duration ttl, Duration reuseGrace, Clock clock) {
     this.repository = repository;
     this.ttl = ttl;
+    this.reuseGrace = reuseGrace;
     this.clock = clock;
   }
 
@@ -65,6 +75,10 @@ public class RefreshTokenService {
             .findByTokenHashForUpdate(hash(rawToken))
             .orElseThrow(InvalidRefreshTokenException::new);
     Instant now = clock.instant();
+    if (current.isRevoked() && isConcurrentRefresh(current, now)) {
+      return new Rotation(
+          current.getUser(), create(current.getUser(), current.getFamilyId()).raw());
+    }
     if (current.isRevoked()) {
       int revoked = repository.revokeFamily(current.getFamilyId(), now);
       log.warn(
@@ -80,6 +94,16 @@ public class RefreshTokenService {
     current.setRevokedAt(now);
     current.setReplacedBy(next.entity().getId());
     return new Rotation(current.getUser(), next.raw());
+  }
+
+  /**
+   * The token was rotated (not revoked by logout or reuse detection) within the grace window, and
+   * its session is still live - another tab refreshing at the same moment, not a thief.
+   */
+  private boolean isConcurrentRefresh(RefreshToken token, Instant now) {
+    return token.getReplacedBy() != null
+        && Duration.between(token.getRevokedAt(), now).compareTo(reuseGrace) < 0
+        && repository.existsByFamilyIdAndRevokedAtIsNull(token.getFamilyId());
   }
 
   /** Logout: ends the session the token belongs to. Unknown tokens are ignored (idempotent). */

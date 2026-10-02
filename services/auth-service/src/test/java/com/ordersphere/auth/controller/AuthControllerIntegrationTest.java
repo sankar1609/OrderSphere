@@ -21,6 +21,7 @@ import io.jsonwebtoken.Claims;
 import java.nio.charset.StandardCharsets;
 import java.security.interfaces.RSAPublicKey;
 import java.util.Base64;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -35,7 +36,9 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 @Testcontainers
-@SpringBootTest(properties = "eureka.client.enabled=false")
+// Grace window off: these tests reuse a token seconds after rotating it and expect reuse
+// detection. The concurrent-refresh grace itself is covered by RefreshTokenServiceTest.
+@SpringBootTest(properties = {"eureka.client.enabled=false", "auth.refresh-token-reuse-grace=PT0S"})
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 @AutoConfigureMockMvc
 class AuthControllerIntegrationTest {
@@ -164,6 +167,29 @@ class AuthControllerIntegrationTest {
                 .content(objectMapper.writeValueAsString(new RoleChangeRequest(Role.VENDOR))))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.role", is("VENDOR")));
+  }
+
+  @Test
+  void usernamesMustBeWellFormedAndUniqueRegardlessOfCase() throws Exception {
+    register("lena");
+    for (String bad : List.of("LENA", " lena", "le na", "x".repeat(51), "ab")) {
+      mockMvc
+          .perform(
+              post("/auth/register")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(
+                      objectMapper.writeValueAsString(
+                          new RegisterRequest(bad, "password123", Role.CUSTOMER))))
+          .andExpect(status().is4xxClientError());
+    }
+    mockMvc
+        .perform(
+            post("/auth/register")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(
+                        new RegisterRequest("longpw", "p".repeat(73), Role.CUSTOMER))))
+        .andExpect(status().isBadRequest());
   }
 
   @Test

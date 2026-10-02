@@ -53,7 +53,8 @@ public class AuthService {
       throw new InvalidRoleSelectionException(
           "Role " + request.role() + " cannot be self-assigned at registration");
     }
-    if (userRepository.existsByUsername(request.username())) {
+    // Case-insensitive, so "Alice" can't register alongside "alice" and pass for them.
+    if (userRepository.existsByUsernameIgnoreCase(request.username())) {
       throw new DuplicateUsernameException(request.username());
     }
 

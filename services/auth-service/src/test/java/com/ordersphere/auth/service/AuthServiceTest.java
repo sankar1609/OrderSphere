@@ -64,7 +64,7 @@ class AuthServiceTest {
   @Test
   void registerRejectsDuplicateUsername() {
     RegisterRequest request = new RegisterRequest("alice", "password123", Role.CUSTOMER);
-    when(userRepository.existsByUsername("alice")).thenReturn(true);
+    when(userRepository.existsByUsernameIgnoreCase("alice")).thenReturn(true);
 
     assertThatThrownBy(() -> authService.register(request))
         .isInstanceOf(DuplicateUsernameException.class);
@@ -73,7 +73,7 @@ class AuthServiceTest {
   @Test
   void registerSavesUserAndPublishesEvent() {
     RegisterRequest request = new RegisterRequest("alice", "password123", Role.CUSTOMER);
-    when(userRepository.existsByUsername("alice")).thenReturn(false);
+    when(userRepository.existsByUsernameIgnoreCase("alice")).thenReturn(false);
     when(passwordEncoder.encode("password123")).thenReturn("hashed");
     when(userRepository.save(any(User.class)))
         .thenAnswer(

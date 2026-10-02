@@ -19,6 +19,9 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, Long
 
   Optional<RefreshToken> findByTokenHash(String tokenHash);
 
+  /** Whether the session is still live - logout and reuse detection revoke every token in it. */
+  boolean existsByFamilyIdAndRevokedAtIsNull(String familyId);
+
   @Modifying
   @Query(
       "update RefreshToken t set t.revokedAt = :now"
