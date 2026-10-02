@@ -1250,10 +1250,23 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
-                  "pm.test('availableQuantity is back where expected', function () {",
-                  "    pm.expect(pm.response.json().availableQuantity).to.eql(Number(pm.collectionVariables.get('stockBeforeAbandon')));",
-                  "});"
+                  "// The stock release is sent right after the order's cancellation commits, so poll briefly.",
+                  "var body = pm.response.code === 200 ? pm.response.json() : null;",
+                  "var expected = Number(pm.collectionVariables.get('stockBeforeAbandon'));",
+                  "var pollKey = 'poll_' + pm.info.requestId;",
+                  "var polls = Number(pm.collectionVariables.get(pollKey) || 0);",
+                  "var done = !!body && body.availableQuantity === expected;",
+                  "if (done || polls >= 10) {",
+                  "    pm.collectionVariables.unset(pollKey);",
+                  "    pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "    pm.test('availableQuantity is back where expected', function () {",
+                  "        pm.expect(body && body.availableQuantity, 'after ' + polls + ' polls').to.eql(expected);",
+                  "    });",
+                  "} else {",
+                  "    pm.collectionVariables.set(pollKey, polls + 1);",
+                  "    setTimeout(function () {}, 1000);",
+                  "    pm.execution.setNextRequest(pm.info.requestId);",
+                  "}"
                 ]
               }
             }
@@ -1671,10 +1684,23 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
-                  "pm.test('availableQuantity is back where expected', function () {",
-                  "    pm.expect(pm.response.json().availableQuantity).to.eql(Number(pm.collectionVariables.get('stockBeforeCancel')));",
-                  "});"
+                  "// The stock release is sent right after the order's cancellation commits, so poll briefly.",
+                  "var body = pm.response.code === 200 ? pm.response.json() : null;",
+                  "var expected = Number(pm.collectionVariables.get('stockBeforeCancel'));",
+                  "var pollKey = 'poll_' + pm.info.requestId;",
+                  "var polls = Number(pm.collectionVariables.get(pollKey) || 0);",
+                  "var done = !!body && body.availableQuantity === expected;",
+                  "if (done || polls >= 10) {",
+                  "    pm.collectionVariables.unset(pollKey);",
+                  "    pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "    pm.test('availableQuantity is back where expected', function () {",
+                  "        pm.expect(body && body.availableQuantity, 'after ' + polls + ' polls').to.eql(expected);",
+                  "    });",
+                  "} else {",
+                  "    pm.collectionVariables.set(pollKey, polls + 1);",
+                  "    setTimeout(function () {}, 1000);",
+                  "    pm.execution.setNextRequest(pm.info.requestId);",
+                  "}"
                 ]
               }
             }
