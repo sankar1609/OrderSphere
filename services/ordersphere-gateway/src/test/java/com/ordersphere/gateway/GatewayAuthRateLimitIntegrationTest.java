@@ -53,6 +53,8 @@ class GatewayAuthRateLimitIntegrationTest {
         });
     backend.start();
     String uri = "http://127.0.0.1:" + backend.getAddress().getPort();
+    // These tests stand in for distinct clients via X-Forwarded-For, i.e. behind one proxy.
+    registry.add("GATEWAY_TRUSTED_PROXY_HOPS", () -> "1");
     registry.add("spring.data.redis.host", redis::getHost);
     registry.add("spring.data.redis.port", () -> redis.getMappedPort(6379));
     // Routes as one list from one property source (lists aren't merged across sources).

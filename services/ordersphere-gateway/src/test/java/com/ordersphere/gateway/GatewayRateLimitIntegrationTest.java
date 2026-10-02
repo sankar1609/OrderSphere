@@ -47,6 +47,8 @@ class GatewayRateLimitIntegrationTest {
           exchange.close();
         });
     backend.start();
+    // These tests stand in for distinct clients via X-Forwarded-For, i.e. behind one proxy.
+    registry.add("GATEWAY_TRUSTED_PROXY_HOPS", () -> "1");
     registry.add("spring.data.redis.host", redis::getHost);
     registry.add("spring.data.redis.port", () -> redis.getMappedPort(6379));
     // The whole route list must come from one property source (lists aren't merged across sources).

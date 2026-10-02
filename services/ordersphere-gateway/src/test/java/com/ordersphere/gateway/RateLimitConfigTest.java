@@ -8,24 +8,38 @@ import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 
 class RateLimitConfigTest {
 
-  @Test
-  void usesTheFirstForwardedForHopWhenPresent() {
-    MockServerHttpRequest request =
-        MockServerHttpRequest.get("/x")
-            .header("X-Forwarded-For", "203.0.113.7, 10.0.0.2")
-            .remoteAddress(new InetSocketAddress("10.0.0.2", 5000))
-            .build();
+  private static MockServerHttpRequest request(String forwardedFor) {
+    MockServerHttpRequest.BaseBuilder<?> builder =
+        MockServerHttpRequest.get("/x").remoteAddress(new InetSocketAddress("198.51.100.4", 5000));
+    if (forwardedFor != null) {
+      builder.header("X-Forwarded-For", forwardedFor);
+    }
+    return builder.build();
+  }
 
-    assertThat(RateLimitConfig.clientIp(request)).isEqualTo("203.0.113.7");
+  @Test
+  void withNoTrustedProxyAClientSuppliedForwardedForIsIgnored() {
+    // A client exposed directly to the gateway could otherwise send a new fake address every
+    // request and never be rate limited.
+    assertThat(RateLimitConfig.clientIp(request("203.0.113.7"), 0)).isEqualTo("198.51.100.4");
+  }
+
+  @Test
+  void behindOneProxyTheAddressThatProxyAppendedIsUsed() {
+    // "1.2.3.4" was supplied by the client; the proxy appended the address it really saw.
+    assertThat(RateLimitConfig.clientIp(request("1.2.3.4, 203.0.113.7"), 1))
+        .isEqualTo("203.0.113.7");
+  }
+
+  @Test
+  void behindTwoProxiesTheOuterProxysEntryIsUsed() {
+    assertThat(RateLimitConfig.clientIp(request("1.2.3.4, 203.0.113.7, 10.0.0.2"), 2))
+        .isEqualTo("203.0.113.7");
   }
 
   @Test
   void fallsBackToThePeerAddress() {
-    MockServerHttpRequest request =
-        MockServerHttpRequest.get("/x")
-            .remoteAddress(new InetSocketAddress("198.51.100.4", 5000))
-            .build();
-
-    assertThat(RateLimitConfig.clientIp(request)).isEqualTo("198.51.100.4");
+    assertThat(RateLimitConfig.clientIp(request(null), 1)).isEqualTo("198.51.100.4");
+    assertThat(RateLimitConfig.clientIp(request("203.0.113.7"), 2)).isEqualTo("198.51.100.4");
   }
 }
