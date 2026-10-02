@@ -284,7 +284,11 @@ Order Placement Flow:
 - **Shipping Service:** `/shipments` (create - ADMIN), `/shipments/{id}`, `/shipments/{id}/tracking`, `/shipments/order/{orderId}`, `/shipments/{id}/return`
 - **Notifications:** `/notifications` (list, get; create - ADMIN), `/notification-preferences` (set, list, delete)
 
-*(No OpenAPI/Swagger docs yet - see the Postman collections in `postman/` for runnable examples)*
+### OpenAPI / Swagger
+- **Swagger UI:** `http://localhost:8080/swagger-ui.html` (served by the gateway) - pick a service in the top-right dropdown. Click **Authorize** and paste an access token from `POST /auth-service/auth/login` (or a SERVICE token from `POST /auth-service/auth/token`); "Try it out" calls go through the gateway.
+- **Specs:** every service serves its own OpenAPI 3 spec at `/v3/api-docs` (through the gateway: `/{service-id}/v3/api-docs`), no token needed. Generated from the code by springdoc: validation limits come from the request annotations, and each operation's description states the role its `@PreAuthorize` requires.
+- **Shared conventions** live in `common-security`'s `OpenApiAutoConfiguration`: server URL `/{spring.application.name}` (the gateway path), Bearer JWT on every operation except `ordersphere.openapi.public-paths`, a shared `ErrorResponse` schema and 401/403 responses.
+- The Postman collections in `postman/` remain the runnable end-to-end examples.
 
 ---
 
@@ -373,6 +377,7 @@ docker compose up -d
 
 # Services will be available at:
 # API Gateway: http://localhost:8080
+# Swagger UI (all services' API docs): http://localhost:8080/swagger-ui.html
 # Service Registry: http://localhost:8761
 # RabbitMQ management: http://localhost:15672 (ordersphere / ordersphere)
 # Dummy payment gateway (hosted checkout): http://localhost:8087
@@ -441,6 +446,7 @@ ordersphere/
 | **Web UI** | React + Vite | Customer front end |
 | **Deployment** | Docker Compose (Kubernetes planned) | Containerization & orchestration |
 | **Audit Trail** | Hyperledger Fabric (planned) | Blockchain-based audit logs |
+| **API Docs** | springdoc-openapi | OpenAPI 3 specs + Swagger UI |
 | **Build Tool** | Maven | Dependency & build management |
 | **CI** | GitHub Actions | Build, test and format check on push/PR |
 
@@ -475,7 +481,7 @@ Service Registry (Eureka) - 8761
 - [ ] Security hardening (later): OAuth2/OIDC, request validation at the gateway
 - [x] Consume `StockLowEvent` - low-stock alerts to the product's vendor
 - [ ] Payment reconciliation
-- [ ] Add comprehensive API documentation (OpenAPI/Swagger)
+- [x] API documentation: OpenAPI specs per service, one Swagger UI at the gateway
 - [ ] Add distributed tracing (Jaeger/Zipkin)
 - [ ] Kubernetes manifests
 - [ ] Add Hyperledger Fabric Ledger Service

@@ -4,6 +4,8 @@ import com.ordersphere.auth.security.ClientCredentialsProperties;
 import com.ordersphere.auth.security.SigningKeyService;
 import com.ordersphere.auth.security.TokenIssuer;
 import com.ordersphere.security.RsaKeys;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Base64;
@@ -23,6 +25,7 @@ import org.springframework.web.bind.annotation.RestController;
  * Token endpoints for other services: the public keys to verify OrderSphere JWTs with, and the
  * OAuth2 client-credentials grant that gives a service its own SERVICE-role token.
  */
+@Tag(name = "Tokens", description = "Public signing keys and service (client-credentials) tokens")
 @RestController
 public class TokenController {
 
@@ -37,6 +40,9 @@ public class TokenController {
     this.clients = clients;
   }
 
+  @Operation(
+      summary = "Public signing keys (JWKS)",
+      description = "RS256 public keys services use to verify tokens.")
   @GetMapping(value = "/auth/.well-known/jwks.json", produces = MediaType.APPLICATION_JSON_VALUE)
   public Map<String, Object> jwks() {
     List<Map<String, Object>> keys =
@@ -50,6 +56,10 @@ public class TokenController {
    * RFC 6749 section 4.4: {@code grant_type=client_credentials}, client authenticated with HTTP
    * Basic (client id / secret).
    */
+  @Operation(
+      summary = "Service token (OAuth2 client credentials)",
+      description =
+          "Form body grant_type=client_credentials; client id and secret as HTTP Basic. Returns a 5-minute SERVICE-role token.")
   @PostMapping(value = "/auth/token", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
   public ResponseEntity<Map<String, Object>> token(
       @RequestParam(value = "grant_type", required = false) String grantType,

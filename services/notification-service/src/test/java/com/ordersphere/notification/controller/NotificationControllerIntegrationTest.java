@@ -209,4 +209,16 @@ class NotificationControllerIntegrationTest {
                 .header("Authorization", "Bearer " + tokenFor("frank", "CUSTOMER")))
         .andExpect(status().isNotFound());
   }
+
+  @Test
+  void publishesItsOpenApiSpecWithoutAToken() throws Exception {
+    mockMvc
+        .perform(
+            org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/v3/api-docs"))
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath(
+                "$.paths['/notification-preferences'].post", org.hamcrest.Matchers.notNullValue()));
+  }
 }

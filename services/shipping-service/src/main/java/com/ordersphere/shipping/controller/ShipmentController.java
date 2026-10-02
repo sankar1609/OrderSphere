@@ -5,6 +5,8 @@ import com.ordersphere.shipping.dto.ReturnShipmentRequest;
 import com.ordersphere.shipping.dto.ShipmentResponse;
 import com.ordersphere.shipping.dto.TrackingEventResponse;
 import com.ordersphere.shipping.service.ShipmentService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.util.List;
 import org.springframework.http.HttpStatus;
@@ -19,6 +21,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+@Tag(name = "Shipments", description = "Shipments, tracking and returns")
 @RestController
 @RequestMapping("/shipments")
 public class ShipmentController {
@@ -54,6 +57,10 @@ public class ShipmentController {
         authentication.getName(), isPrivileged(authentication), orderId);
   }
 
+  @Operation(
+      summary = "Request a return",
+      description =
+          "Only for a DELIVERED outbound shipment (409 otherwise); repeated requests return the same RETURN shipment.")
   @PostMapping("/{id}/return")
   public ShipmentResponse requestReturn(
       @PathVariable Long id,

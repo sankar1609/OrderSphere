@@ -3,6 +3,7 @@ package com.ordersphere.auth.controller;
 import com.ordersphere.auth.dto.RoleChangeRequest;
 import com.ordersphere.auth.dto.UserResponse;
 import com.ordersphere.auth.service.AuthService;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.security.Principal;
 import java.util.List;
@@ -14,6 +15,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+@Tag(name = "Users (admin)", description = "List users and change roles")
 @RestController
 @RequestMapping("/auth/admin/users")
 public class AdminUserController {

@@ -18,6 +18,11 @@
     <description>API Gateway - single entry point for external client requests</description>
 
     <dependencies>
+        <!-- The one Swagger UI, listing every service's spec through the gateway routes. -->
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webflux-ui</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.cloud</groupId>
             <artifactId>spring-cloud-starter-gateway</artifactId>

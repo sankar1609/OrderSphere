@@ -1,5 +1,6 @@
 package com.ordersphere.orders.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -15,7 +16,13 @@ import java.util.List;
  */
 public record CreateOrderRequest(
     @NotEmpty @Size(max = 50) @Valid List<Item> items,
-    @NotBlank @IsoCurrency String currency,
+    @NotBlank
+        @IsoCurrency
+        @Schema(
+            description = "ISO 4217 currency code (upper case)",
+            pattern = "[A-Z]{3}",
+            example = "USD")
+        String currency,
     @NotBlank @Size(max = 255) String shippingDestination) {
 
   public record Item(@NotBlank @Size(max = 64) String sku, @Min(1) @Max(10_000) int quantity) {}

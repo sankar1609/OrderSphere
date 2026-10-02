@@ -445,4 +445,24 @@ class AuthControllerIntegrationTest {
             .getContentAsString();
     return objectMapper.readTree(response).get("token").asText();
   }
+
+  @Test
+  void publishesItsOpenApiSpecWithoutAToken() throws Exception {
+    mockMvc
+        .perform(
+            org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/v3/api-docs"))
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath(
+                    "$.servers[0].url")
+                .value("/auth-service"))
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath(
+                "$.paths['/auth/login'].post.security", org.hamcrest.Matchers.empty()))
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath(
+                "$.paths['/auth/admin/users'].get.description",
+                org.hamcrest.Matchers.containsString("Requires role: ADMIN")));
+  }
 }

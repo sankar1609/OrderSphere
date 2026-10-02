@@ -49,6 +49,8 @@ public class SecurityConfig {
                         "/auth/.well-known/jwks.json",
                         "/actuator/health",
                         "/actuator/health/**",
+                        "/v3/api-docs",
+                        "/v3/api-docs/**",
                         "/error")
                     .permitAll()
                     .anyRequest()

@@ -3,6 +3,8 @@ package com.ordersphere.orders.controller;
 import com.ordersphere.orders.domain.Compensation;
 import com.ordersphere.orders.dto.CompensationResponse;
 import com.ordersphere.orders.service.CompensationService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.List;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -16,6 +18,9 @@ import org.springframework.web.bind.annotation.RestController;
  * Admin view of the refunds and stock releases the saga owes other services. FAILED ones were
  * rejected by the other service or ran out of retries and need a person: fix the cause, then retry.
  */
+@Tag(
+    name = "Compensations (admin)",
+    description = "Refunds and stock releases the saga owes, with retry")
 @RestController
 @RequestMapping("/orders/admin/compensations")
 @PreAuthorize("hasRole('ADMIN')")
@@ -40,6 +45,10 @@ public class CompensationAdminController {
   }
 
   /** Re-queues a FAILED compensation with a fresh retry budget and attempts it right away. */
+  @Operation(
+      summary = "Retry a FAILED compensation",
+      description =
+          "Re-queues it with a fresh retry budget and attempts it now; 409 if it isn't FAILED.")
   @PostMapping("/{id}/retry")
   public CompensationResponse retry(@PathVariable Long id) {
     compensationService.retry(id);
