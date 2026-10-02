@@ -47,17 +47,29 @@ public class JwksKeySource implements Function<String, RSAPublicKey> {
     this.clock = clock;
   }
 
+  /**
+   * Cache misses are serialized: while one request fetches, concurrent ones for the same key wait
+   * for it and then find the key cached. Without this, right after a service starts only the first
+   * of a burst of requests got the keys - the rest saw the fetch "just happened", were throttled,
+   * found nothing cached and were answered 401.
+   */
   @Override
   public RSAPublicKey apply(String kid) {
     RSAPublicKey key = keys.get(kid);
-    if (key == null && refetchAllowed()) {
-      refresh();
-      key = keys.get(kid);
+    if (key != null) {
+      return key;
     }
-    return key;
+    synchronized (this) {
+      key = keys.get(kid); // fetched by the request this one waited for?
+      if (key == null && refetchAllowed()) {
+        refresh();
+        key = keys.get(kid);
+      }
+      return key;
+    }
   }
 
-  private synchronized boolean refetchAllowed() {
+  private boolean refetchAllowed() {
     Instant now = clock.instant();
     if (Duration.between(lastFetch, now).compareTo(MIN_REFETCH_INTERVAL) < 0) {
       return false;

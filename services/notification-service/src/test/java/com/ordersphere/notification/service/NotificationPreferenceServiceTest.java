@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 
 @ExtendWith(MockitoExtension.class)
 class NotificationPreferenceServiceTest {
@@ -49,6 +50,25 @@ class NotificationPreferenceServiceTest {
             "alice", new CreateNotificationPreferenceRequest(NotificationChannel.SMS, false));
 
     assertThat(response.channel()).isEqualTo(NotificationChannel.SMS);
+    assertThat(response.enabled()).isFalse();
+  }
+
+  @Test
+  void aChannelCreatedByAConcurrentRequestIsUpdatedInsteadOfFailing() {
+    NotificationPreference createdMeanwhile =
+        new NotificationPreference("alice", NotificationChannel.SMS, true);
+    createdMeanwhile.setId(7L);
+    when(preferenceRepository.findByUsernameAndChannel("alice", NotificationChannel.SMS))
+        .thenReturn(Optional.empty(), Optional.of(createdMeanwhile));
+    when(preferenceRepository.save(any(NotificationPreference.class)))
+        .thenThrow(new DataIntegrityViolationException("uq_notification_preferences"))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    NotificationPreferenceResponse response =
+        preferenceService.setPreference(
+            "alice", new CreateNotificationPreferenceRequest(NotificationChannel.SMS, false));
+
+    assertThat(response.id()).isEqualTo(7L);
     assertThat(response.enabled()).isFalse();
   }
 

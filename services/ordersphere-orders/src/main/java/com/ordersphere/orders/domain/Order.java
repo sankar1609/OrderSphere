@@ -70,7 +70,7 @@ public class Order {
   @Column(name = "shipping_destination")
   private String shippingDestination;
 
-  @Column(name = "total_amount", precision = 12, scale = 2)
+  @Column(name = "total_amount", precision = 19, scale = 2)
   private BigDecimal totalAmount;
 
   @Column(length = 3)

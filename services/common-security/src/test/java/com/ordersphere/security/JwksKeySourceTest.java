@@ -25,6 +25,7 @@ class JwksKeySourceTest {
 
   private final List<Map<String, Object>> published = new ArrayList<>();
   private final AtomicInteger fetches = new AtomicInteger();
+  private volatile long responseDelayMillis = 0;
   private HttpServer server;
   private String uri;
 
@@ -35,6 +36,11 @@ class JwksKeySourceTest {
         "/jwks",
         exchange -> {
           fetches.incrementAndGet();
+          try {
+            Thread.sleep(responseDelayMillis);
+          } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+          }
           byte[] body =
               new ObjectMapper()
                   .writeValueAsString(Map.of("keys", published))
@@ -50,6 +56,27 @@ class JwksKeySourceTest {
   @AfterEach
   void stopServer() {
     server.stop(0);
+  }
+
+  @Test
+  void concurrentFirstRequestsAllGetTheKeyFromASingleFetch() throws Exception {
+    published.add(
+        RsaKeys.toJwk(TestJwtIssuer.KEY_ID, RsaKeys.parsePublicKey(TestJwtIssuer.PUBLIC_KEY)));
+    responseDelayMillis = 300; // the first fetch is still in flight when the others arrive
+    JwksKeySource source = new JwksKeySource(uri);
+
+    List<Thread> threads = new ArrayList<>();
+    List<RSAPublicKey> found = java.util.Collections.synchronizedList(new ArrayList<>());
+    for (int i = 0; i < 8; i++) {
+      threads.add(new Thread(() -> found.add(source.apply(TestJwtIssuer.KEY_ID))));
+    }
+    threads.forEach(Thread::start);
+    for (Thread thread : threads) {
+      thread.join();
+    }
+
+    assertThat(found).hasSize(8).doesNotContainNull();
+    assertThat(fetches.get()).isEqualTo(1);
   }
 
   @Test

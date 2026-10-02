@@ -19,5 +19,6 @@ public record CreateProductRequest(
     @NotBlank @Size(max = InventoryLimits.MAX_NAME_LENGTH) String name,
     @Min(0) @Max(InventoryLimits.MAX_STOCK_CHANGE) int quantityOnHand,
     @Min(0) @Max(InventoryLimits.MAX_STOCK) int reorderThreshold,
-    @NotNull @DecimalMin(value = "0.00") @Digits(integer = 10, fraction = 2)
+    // At least 0.01: payments can't be for 0.00, so a free product could never be bought.
+    @NotNull @DecimalMin(value = "0.01") @Digits(integer = 10, fraction = 2)
         BigDecimal unitPrice) {}

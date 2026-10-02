@@ -31,6 +31,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Sort;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -65,6 +66,18 @@ class AuthServiceTest {
   void registerRejectsDuplicateUsername() {
     RegisterRequest request = new RegisterRequest("alice", "password123", Role.CUSTOMER);
     when(userRepository.existsByUsernameIgnoreCase("alice")).thenReturn(true);
+
+    assertThatThrownBy(() -> authService.register(request))
+        .isInstanceOf(DuplicateUsernameException.class);
+  }
+
+  @Test
+  void aUsernameTakenByAConcurrentRegistrationIsADuplicateNotAnError() {
+    RegisterRequest request = new RegisterRequest("alice", "password123", Role.CUSTOMER);
+    when(userRepository.existsByUsernameIgnoreCase("alice")).thenReturn(false);
+    when(passwordEncoder.encode("password123")).thenReturn("hashed");
+    when(userRepository.save(any(User.class)))
+        .thenThrow(new DataIntegrityViolationException("uq_users_username"));
 
     assertThatThrownBy(() -> authService.register(request))
         .isInstanceOf(DuplicateUsernameException.class);

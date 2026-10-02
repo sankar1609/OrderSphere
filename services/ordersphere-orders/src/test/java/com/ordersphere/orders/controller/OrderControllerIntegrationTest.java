@@ -139,6 +139,35 @@ class OrderControllerIntegrationTest {
   }
 
   @Test
+  void anOrderTotalBeyondTenBillionIsStoredAndCharged() throws Exception {
+    // Two units at the highest price a product may have used to overflow orders.total_amount.
+    org.mockito.Mockito.doReturn(
+            new InventoryClient.ReserveResponse(
+                List.of(
+                    new InventoryClient.ReserveResponse.LineItem(
+                        "SKU-BIG", 2, new BigDecimal("9999999999.99")))))
+        .when(inventoryClient)
+        .reserve(any(), any(), anyString());
+    when(paymentClient.initiate(any(), anyString(), any(), any(), anyString()))
+        .thenReturn(new PaymentClient.InitiatedPayment(61L, "http://gw/checkout/cs_61"));
+
+    mockMvc
+        .perform(
+            post("/orders")
+                .header("Authorization", "Bearer " + tokenFor("jill"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(
+                        new CreateOrderRequest(
+                            List.of(new CreateOrderRequest.Item("SKU-BIG", 2)), "USD", "x"))))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.status", is("AWAITING_PAYMENT")))
+        .andExpect(jsonPath("$.totalAmount").value(19999999999.98));
+    verify(paymentClient)
+        .initiate(any(), eq("jill"), eq(new BigDecimal("19999999999.98")), eq("USD"), anyString());
+  }
+
+  @Test
   void invalidOrdersAreRejectedBeforeAnythingIsReservedOrCharged() throws Exception {
     List<CreateOrderRequest> invalid =
         List.of(

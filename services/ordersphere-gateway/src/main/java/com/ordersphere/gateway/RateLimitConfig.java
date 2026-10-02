@@ -40,11 +40,23 @@ public class RateLimitConfig {
     return new RedisRateLimiter(perSecond, burst);
   }
 
+  /**
+   * How many reverse proxies / load balancers sit in front of the gateway and append to
+   * X-Forwarded-For. 0 (the default, as in docker-compose where the gateway is exposed directly):
+   * the header is ignored, since any client can send one with a fresh fake address on every request
+   * and never hit the limit.
+   */
+  private final int trustedProxyHops;
+
+  public RateLimitConfig(@Value("${GATEWAY_TRUSTED_PROXY_HOPS:0}") int trustedProxyHops) {
+    this.trustedProxyHops = trustedProxyHops;
+  }
+
   /** The default for RequestRateLimiter filters that don't name a key resolver. */
   @Bean
   @Primary
   public KeyResolver clientIpKeyResolver() {
-    return exchange -> Mono.just(clientIp(exchange.getRequest()));
+    return exchange -> Mono.just(clientIp(exchange.getRequest(), trustedProxyHops));
   }
 
   /**
@@ -54,18 +66,22 @@ public class RateLimitConfig {
    */
   @Bean
   public KeyResolver authClientIpKeyResolver() {
-    return exchange -> Mono.just("auth:" + clientIp(exchange.getRequest()));
+    return exchange -> Mono.just("auth:" + clientIp(exchange.getRequest(), trustedProxyHops));
   }
 
   /**
-   * First hop of X-Forwarded-For when a proxy/load balancer sits in front of the gateway, otherwise
-   * the TCP peer. Only trust X-Forwarded-For if such a proxy sets it; directly exposed, a client
-   * could spoof it to dodge the limit.
+   * The client address as seen by the outermost trusted proxy. Each proxy appends the address it
+   * received the request from, so with N trusted proxies that's the N-th entry from the right of
+   * X-Forwarded-For - anything further left was supplied by the client and can't be trusted. With
+   * no trusted proxies (or too short a header) it's the TCP peer.
    */
-  static String clientIp(ServerHttpRequest request) {
+  static String clientIp(ServerHttpRequest request, int trustedProxyHops) {
     String forwarded = request.getHeaders().getFirst("X-Forwarded-For");
-    if (forwarded != null && !forwarded.isBlank()) {
-      return forwarded.split(",")[0].trim();
+    if (trustedProxyHops > 0 && forwarded != null && !forwarded.isBlank()) {
+      String[] hops = forwarded.split(",");
+      if (hops.length >= trustedProxyHops) {
+        return hops[hops.length - trustedProxyHops].trim();
+      }
     }
     return Optional.ofNullable(request.getRemoteAddress())
         .map(InetSocketAddress::getAddress)
