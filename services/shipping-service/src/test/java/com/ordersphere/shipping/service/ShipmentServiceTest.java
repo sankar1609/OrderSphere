@@ -20,8 +20,10 @@ import com.ordersphere.shipping.dto.CreateShipmentRequest;
 import com.ordersphere.shipping.dto.ReturnShipmentRequest;
 import com.ordersphere.shipping.dto.ShipmentResponse;
 import com.ordersphere.shipping.exception.InvalidShipmentStateException;
+import com.ordersphere.shipping.exception.ShipmentNotFoundException;
 import com.ordersphere.shipping.repository.ShipmentRepository;
 import com.ordersphere.shipping.repository.ShipmentTrackingEventRepository;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -96,10 +98,13 @@ class ShipmentServiceTest {
   void requestReturnRequiresDeliveredShipment() {
     Shipment shipment = new Shipment(100L, "alice", ShipmentType.OUTBOUND, "123 Main St", null);
     shipment.setId(5L);
-    when(shipmentRepository.findById(5L)).thenReturn(Optional.of(shipment));
+    when(shipmentRepository.findByIdAndCustomerUsername(5L, "alice"))
+        .thenReturn(Optional.of(shipment));
 
     assertThatThrownBy(
-            () -> shipmentService.requestReturn(5L, new ReturnShipmentRequest("wrong size")))
+            () ->
+                shipmentService.requestReturn(
+                    "alice", false, 5L, new ReturnShipmentRequest("wrong size")))
         .isInstanceOf(InvalidShipmentStateException.class);
   }
 
@@ -111,12 +116,13 @@ class ShipmentServiceTest {
     shipment.advanceTo(ShipmentStatus.IN_TRANSIT);
     shipment.advanceTo(ShipmentStatus.DELIVERED);
     Shipment existingReturn = new Shipment(100L, "alice", ShipmentType.RETURN, "123 Main St", 5L);
-    when(shipmentRepository.findById(5L)).thenReturn(Optional.of(shipment));
+    when(shipmentRepository.findByIdAndCustomerUsername(5L, "alice"))
+        .thenReturn(Optional.of(shipment));
     when(shipmentRepository.findByOrderIdAndType(100L, ShipmentType.RETURN))
         .thenReturn(Optional.of(existingReturn));
 
     ShipmentResponse response =
-        shipmentService.requestReturn(5L, new ReturnShipmentRequest("wrong size"));
+        shipmentService.requestReturn("alice", false, 5L, new ReturnShipmentRequest("wrong size"));
 
     assertThat(response.type()).isEqualTo(ShipmentType.RETURN);
     verify(eventPublisher, never()).publishEvent(any(ShipmentCreatedEvent.class));
@@ -130,7 +136,8 @@ class ShipmentServiceTest {
     shipment.advanceTo(ShipmentStatus.IN_TRANSIT);
     shipment.advanceTo(ShipmentStatus.DELIVERED);
     Shipment winnerReturn = new Shipment(100L, "alice", ShipmentType.RETURN, "123 Main St", 5L);
-    when(shipmentRepository.findById(5L)).thenReturn(Optional.of(shipment));
+    when(shipmentRepository.findByIdAndCustomerUsername(5L, "alice"))
+        .thenReturn(Optional.of(shipment));
     when(shipmentRepository.findByOrderIdAndType(100L, ShipmentType.RETURN))
         .thenReturn(Optional.empty(), Optional.of(winnerReturn));
     when(shipmentRepository.save(any(Shipment.class)))
@@ -138,10 +145,45 @@ class ShipmentServiceTest {
             new DataIntegrityViolationException("duplicate key: uq_shipments_order_id_type"));
 
     ShipmentResponse response =
-        shipmentService.requestReturn(5L, new ReturnShipmentRequest("wrong size"));
+        shipmentService.requestReturn("alice", false, 5L, new ReturnShipmentRequest("wrong size"));
 
     assertThat(response.type()).isEqualTo(ShipmentType.RETURN);
     verify(eventPublisher, never()).publishEvent(any(ShipmentCreatedEvent.class));
+  }
+
+  @Test
+  void customerCannotSeeAnotherCustomersShipment() {
+    when(shipmentRepository.findByIdAndCustomerUsername(5L, "mallory"))
+        .thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> shipmentService.getShipment("mallory", false, 5L))
+        .isInstanceOf(ShipmentNotFoundException.class);
+    assertThatThrownBy(() -> shipmentService.getTracking("mallory", false, 5L))
+        .isInstanceOf(ShipmentNotFoundException.class);
+    assertThatThrownBy(
+            () ->
+                shipmentService.requestReturn(
+                    "mallory", false, 5L, new ReturnShipmentRequest("not mine")))
+        .isInstanceOf(ShipmentNotFoundException.class);
+    verify(shipmentRepository, never()).findById(any());
+  }
+
+  @Test
+  void adminCanSeeAnyShipment() {
+    Shipment shipment = new Shipment(100L, "alice", ShipmentType.OUTBOUND, "123 Main St", null);
+    shipment.setId(5L);
+    when(shipmentRepository.findById(5L)).thenReturn(Optional.of(shipment));
+
+    assertThat(shipmentService.getShipment("admin", true, 5L).orderId()).isEqualTo(100L);
+  }
+
+  @Test
+  void listByOrderOnlyReturnsTheCallersShipments() {
+    when(shipmentRepository.findByOrderIdAndCustomerUsername(100L, "mallory"))
+        .thenReturn(List.of());
+
+    assertThat(shipmentService.listByOrder("mallory", false, 100L)).isEmpty();
+    verify(shipmentRepository, never()).findByOrderId(any());
   }
 
   @Test

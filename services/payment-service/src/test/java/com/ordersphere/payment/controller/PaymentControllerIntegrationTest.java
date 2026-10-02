@@ -1,24 +1,35 @@
 package com.ordersphere.payment.controller;
 
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.nullValue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.ordersphere.payment.domain.PaymentMethodType;
-import com.ordersphere.payment.dto.CreatePaymentMethodRequest;
 import com.ordersphere.payment.dto.CreatePaymentRequest;
 import com.ordersphere.payment.dto.RefundRequest;
+import com.ordersphere.payment.gateway.PaymentGatewayClient;
+import com.ordersphere.payment.gateway.PaymentGatewayClient.CheckoutSession;
+import com.ordersphere.payment.gateway.PaymentGatewayClient.SessionStatus;
+import com.ordersphere.payment.gateway.PaymentGatewayException;
 import com.ordersphere.payment.service.PaymentProcessingJob;
-import com.ordersphere.security.JwtTokenProvider;
+import com.ordersphere.security.testing.TestJwtIssuer;
 import java.math.BigDecimal;
-import java.util.Map;
+import java.nio.charset.StandardCharsets;
+import java.util.HexFormat;
+import java.util.Optional;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.http.MediaType;
 import org.springframework.test.annotation.DirtiesContext;
@@ -29,7 +40,8 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 @Testcontainers
-@SpringBootTest(properties = "eureka.client.enabled=false")
+@SpringBootTest(
+    properties = {"eureka.client.enabled=false", "payment.gateway.webhook-secret=test-secret"})
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 @AutoConfigureMockMvc
 class PaymentControllerIntegrationTest {
@@ -42,28 +54,66 @@ class PaymentControllerIntegrationTest {
 
   @Autowired private MockMvc mockMvc;
   @Autowired private ObjectMapper objectMapper;
-  @Autowired private JwtTokenProvider jwtTokenProvider;
   @Autowired private PaymentProcessingJob paymentProcessingJob;
+  @MockBean private PaymentGatewayClient gatewayClient;
 
   private String tokenFor(String username) {
-    return jwtTokenProvider.generateToken(username, Map.of("role", "CUSTOMER"));
+    return "Bearer " + TestJwtIssuer.token(username, "CUSTOMER");
   }
 
-  private Long createPaymentMethod(String username, String token) throws Exception {
+  /** The identity ordersphere-orders calls payment-service with. */
+  private String serviceToken() {
+    return "Bearer " + TestJwtIssuer.token("orders-service", "SERVICE");
+  }
+
+  /** Initiates a payment whose checkout session is {@code sessionId}; returns the payment id. */
+  private Long initiate(String username, long orderId, String sessionId) throws Exception {
+    // doReturn, not when(): the mock may currently be stubbed to throw.
+    doReturn(
+            new CheckoutSession(
+                sessionId, "http://gw/checkout/" + sessionId, SessionStatus.OPEN, null))
+        .when(gatewayClient)
+        .createCheckoutSession(any());
     String body =
         mockMvc
             .perform(
-                post("/payment-methods")
-                    .header("Authorization", "Bearer " + tokenFor(username))
+                post("/payments")
+                    .header("Authorization", serviceToken())
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(
                         objectMapper.writeValueAsString(
-                            new CreatePaymentMethodRequest(PaymentMethodType.CARD, token))))
-            .andExpect(status().isCreated())
+                            new CreatePaymentRequest(
+                                orderId, username, new BigDecimal("30.00"), "USD"))))
+            .andExpect(status().isAccepted())
+            .andExpect(jsonPath("$.status", is("PENDING")))
+            .andExpect(jsonPath("$.checkoutUrl", is("http://gw/checkout/" + sessionId)))
             .andReturn()
             .getResponse()
             .getContentAsString();
     return objectMapper.readTree(body).get("id").asLong();
+  }
+
+  private void sendWebhook(String body, String signature, int expectedStatus) throws Exception {
+    mockMvc
+        .perform(
+            post("/payments/webhooks/gateway")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header(GatewayWebhookController.SIGNATURE_HEADER, signature)
+                .content(body))
+        .andExpect(status().is(expectedStatus));
+  }
+
+  private static String sign(String body) throws Exception {
+    Mac mac = Mac.getInstance("HmacSHA256");
+    mac.init(new SecretKeySpec("test-secret".getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+    return "sha256=" + HexFormat.of().formatHex(mac.doFinal(body.getBytes(StandardCharsets.UTF_8)));
+  }
+
+  private void expectStatus(String username, Long paymentId, String status) throws Exception {
+    mockMvc
+        .perform(get("/payments/" + paymentId).header("Authorization", tokenFor(username)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status", is(status)));
   }
 
   @Test
@@ -72,115 +122,148 @@ class PaymentControllerIntegrationTest {
   }
 
   @Test
-  void fullInitiateSettleAndRefundFlow() throws Exception {
-    Long methodId = createPaymentMethod("alice", "tok-good");
+  void signedWebhookCompletesPaymentThenRefundSettles() throws Exception {
+    Long paymentId = initiate("alice", 500L, "cs_alice");
 
-    String createdBody =
-        mockMvc
-            .perform(
-                post("/payments")
-                    .header("Authorization", "Bearer " + tokenFor("alice"))
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .content(
-                        objectMapper.writeValueAsString(
-                            new CreatePaymentRequest(
-                                500L, methodId, new BigDecimal("30.00"), "USD"))))
-            .andExpect(status().isAccepted())
-            .andExpect(jsonPath("$.status", is("PENDING")))
-            .andReturn()
-            .getResponse()
-            .getContentAsString();
-    Long paymentId = objectMapper.readTree(createdBody).get("id").asLong();
-
-    // Re-initiating for the same orderId is idempotent.
+    // Re-initiating for the same orderId is idempotent and returns the same checkout.
     mockMvc
         .perform(
             post("/payments")
-                .header("Authorization", "Bearer " + tokenFor("alice"))
+                .header("Authorization", serviceToken())
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(
                     objectMapper.writeValueAsString(
-                        new CreatePaymentRequest(500L, methodId, new BigDecimal("30.00"), "USD"))))
+                        new CreatePaymentRequest(500L, "alice", new BigDecimal("30.00"), "USD"))))
         .andExpect(status().isAccepted())
-        .andExpect(jsonPath("$.id", is(paymentId.intValue())));
+        .andExpect(jsonPath("$.id", is(paymentId.intValue())))
+        .andExpect(jsonPath("$.checkoutUrl", is("http://gw/checkout/cs_alice")));
 
-    paymentProcessingJob.processPendingPayments();
+    String event =
+        """
+        {"type":"checkout.session.completed","sessionId":"cs_alice","chargeReference":"ch_1"}""";
+    sendWebhook(event, "sha256=forged", 401);
+    expectStatus("alice", paymentId, "PENDING");
 
+    sendWebhook(event, sign(event), 204);
     mockMvc
-        .perform(
-            get("/payments/" + paymentId).header("Authorization", "Bearer " + tokenFor("alice")))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.status", is("COMPLETED")));
+        .perform(get("/payments/" + paymentId).header("Authorization", tokenFor("alice")))
+        .andExpect(jsonPath("$.status", is("COMPLETED")))
+        .andExpect(jsonPath("$.checkoutUrl", nullValue()));
 
+    // A duplicate or late outcome for a settled payment is ignored.
+    String cancelled = """
+        {"type":"checkout.session.cancelled","sessionId":"cs_alice"}""";
+    sendWebhook(cancelled, sign(cancelled), 204);
+    expectStatus("alice", paymentId, "COMPLETED");
+
+    when(gatewayClient.refund("ch_1")).thenReturn(Optional.of("re_1"));
     mockMvc
         .perform(
             post("/payments/" + paymentId + "/refund")
-                .header("Authorization", "Bearer " + tokenFor("alice"))
+                .header("Authorization", serviceToken())
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(new RefundRequest("changed my mind"))))
         .andExpect(status().isAccepted())
         .andExpect(jsonPath("$.status", is("PENDING")));
-
     paymentProcessingJob.processPendingRefunds();
-
-    mockMvc
-        .perform(
-            get("/payments/" + paymentId).header("Authorization", "Bearer " + tokenFor("alice")))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.status", is("REFUNDED")));
+    expectStatus("alice", paymentId, "REFUNDED");
   }
 
   @Test
-  void paymentDeclinedByGatewayEndsFailed() throws Exception {
-    Long methodId = createPaymentMethod("bob", "FAIL-DECLINE");
-
-    String createdBody =
-        mockMvc
-            .perform(
-                post("/payments")
-                    .header("Authorization", "Bearer " + tokenFor("bob"))
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .content(
-                        objectMapper.writeValueAsString(
-                            new CreatePaymentRequest(
-                                600L, methodId, new BigDecimal("10.00"), "USD"))))
-            .andExpect(status().isAccepted())
-            .andReturn()
-            .getResponse()
-            .getContentAsString();
-    Long paymentId = objectMapper.readTree(createdBody).get("id").asLong();
+  void sweepFailsPaymentWhoseCheckoutWasCancelledOrExpired() throws Exception {
+    Long cancelledId = initiate("bob", 600L, "cs_bob_cancel");
+    Long expiredId = initiate("bob", 601L, "cs_bob_expire");
+    Long openId = initiate("bob", 602L, "cs_bob_open");
+    when(gatewayClient.getCheckoutSession("cs_bob_cancel"))
+        .thenReturn(
+            Optional.of(new CheckoutSession("cs_bob_cancel", null, SessionStatus.CANCELLED, null)));
+    when(gatewayClient.getCheckoutSession("cs_bob_expire"))
+        .thenReturn(
+            Optional.of(new CheckoutSession("cs_bob_expire", null, SessionStatus.EXPIRED, null)));
+    when(gatewayClient.getCheckoutSession("cs_bob_open"))
+        .thenReturn(
+            Optional.of(new CheckoutSession("cs_bob_open", null, SessionStatus.OPEN, null)));
 
     paymentProcessingJob.processPendingPayments();
 
     mockMvc
-        .perform(get("/payments/" + paymentId).header("Authorization", "Bearer " + tokenFor("bob")))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.status", is("FAILED")));
+        .perform(get("/payments/" + cancelledId).header("Authorization", tokenFor("bob")))
+        .andExpect(jsonPath("$.status", is("FAILED")))
+        .andExpect(jsonPath("$.failureReason", is("Payment cancelled by customer")));
+    mockMvc
+        .perform(get("/payments/" + expiredId).header("Authorization", tokenFor("bob")))
+        .andExpect(jsonPath("$.status", is("FAILED")))
+        .andExpect(jsonPath("$.failureReason", is("Payment window expired")));
+    expectStatus("bob", openId, "PENDING");
+  }
+
+  @Test
+  void gatewayOutageAtInitiationReturns502AndLeavesNoPayment() throws Exception {
+    when(gatewayClient.createCheckoutSession(any()))
+        .thenThrow(new PaymentGatewayException("down", new RuntimeException()));
+
+    mockMvc
+        .perform(
+            post("/payments")
+                .header("Authorization", serviceToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(
+                        new CreatePaymentRequest(800L, "erin", new BigDecimal("5.00"), "USD"))))
+        .andExpect(status().isBadGateway());
+
+    // Rolled back: a retry for the same order opens a fresh checkout instead of a dead payment.
+    initiate("erin", 800L, "cs_erin");
+  }
+
+  @Test
+  void customersCannotInitiateOrRefundPaymentsDirectly() throws Exception {
+    Long paymentId = initiate("frank", 900L, "cs_frank");
+
+    mockMvc
+        .perform(
+            post("/payments")
+                .header("Authorization", tokenFor("frank"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(
+                        new CreatePaymentRequest(901L, "frank", new BigDecimal("0.01"), "USD"))))
+        .andExpect(status().isForbidden());
+    mockMvc
+        .perform(
+            post("/payments/" + paymentId + "/refund")
+                .header("Authorization", tokenFor("frank"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(new RefundRequest("keep the goods"))))
+        .andExpect(status().isForbidden());
+  }
+
+  @Test
+  void aDifferentPaymentForAnExistingOrderIdIsRejected() throws Exception {
+    initiate("grace", 950L, "cs_grace");
+
+    // Same order id, different price or customer: e.g. a payment pre-created at 0.01 for an
+    // order that is later placed at full price must not be reused.
+    for (CreatePaymentRequest mismatch :
+        java.util.List.of(
+            new CreatePaymentRequest(950L, "grace", new BigDecimal("0.01"), "USD"),
+            new CreatePaymentRequest(950L, "mallory", new BigDecimal("30.00"), "USD"))) {
+      mockMvc
+          .perform(
+              post("/payments")
+                  .header("Authorization", serviceToken())
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(objectMapper.writeValueAsString(mismatch)))
+          .andExpect(status().isConflict());
+    }
   }
 
   @Test
   void aUserCannotSeeAnotherUsersPayment() throws Exception {
-    Long methodId = createPaymentMethod("carol", "tok-good");
-
-    String createdBody =
-        mockMvc
-            .perform(
-                post("/payments")
-                    .header("Authorization", "Bearer " + tokenFor("carol"))
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .content(
-                        objectMapper.writeValueAsString(
-                            new CreatePaymentRequest(
-                                700L, methodId, new BigDecimal("15.00"), "USD"))))
-            .andExpect(status().isAccepted())
-            .andReturn()
-            .getResponse()
-            .getContentAsString();
-    Long paymentId = objectMapper.readTree(createdBody).get("id").asLong();
+    Long paymentId = initiate("carol", 700L, "cs_carol");
 
     mockMvc
-        .perform(
-            get("/payments/" + paymentId).header("Authorization", "Bearer " + tokenFor("dave")))
+        .perform(get("/payments/" + paymentId).header("Authorization", tokenFor("dave")))
         .andExpect(status().isNotFound());
   }
 }

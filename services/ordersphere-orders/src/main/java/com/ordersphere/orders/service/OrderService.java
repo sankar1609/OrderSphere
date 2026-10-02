@@ -7,6 +7,7 @@ import com.ordersphere.orders.client.InventoryClient;
 import com.ordersphere.orders.client.PaymentClient;
 import com.ordersphere.orders.client.ServiceTokenProvider;
 import com.ordersphere.orders.client.ShippingClient;
+import com.ordersphere.orders.config.DownstreamClientErrorPredicate;
 import com.ordersphere.orders.domain.Order;
 import com.ordersphere.orders.domain.OrderItem;
 import com.ordersphere.orders.domain.OrderStatus;
@@ -16,9 +17,9 @@ import com.ordersphere.orders.exception.InventoryReservationException;
 import com.ordersphere.orders.exception.OrderCancellationNotAllowedException;
 import com.ordersphere.orders.exception.OrderNotFoundException;
 import com.ordersphere.orders.exception.PaymentInitiationException;
-import com.ordersphere.orders.exception.ShipmentCreationException;
 import com.ordersphere.orders.exception.ShipmentLookupException;
 import com.ordersphere.orders.repository.OrderRepository;
+import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -32,6 +33,9 @@ import org.springframework.transaction.annotation.Transactional;
 public class OrderService {
 
   private static final Logger log = LoggerFactory.getLogger(OrderService.class);
+  private static final DownstreamClientErrorPredicate DOWNSTREAM_CLIENT_ERROR =
+      new DownstreamClientErrorPredicate();
+  private static final String ITEMS_UNAVAILABLE = "Some items are unavailable";
 
   private final OrderRepository orderRepository;
   private final InventoryClient inventoryClient;
@@ -39,6 +43,8 @@ public class OrderService {
   private final ShippingClient shippingClient;
   private final ServiceTokenProvider serviceTokenProvider;
   private final ApplicationEventPublisher eventPublisher;
+  private final CompensationService compensations;
+  private final OrderShipmentService shipments;
 
   public OrderService(
       OrderRepository orderRepository,
@@ -46,18 +52,24 @@ public class OrderService {
       PaymentClient paymentClient,
       ShippingClient shippingClient,
       ServiceTokenProvider serviceTokenProvider,
-      ApplicationEventPublisher eventPublisher) {
+      ApplicationEventPublisher eventPublisher,
+      CompensationService compensations,
+      OrderShipmentService shipments) {
     this.orderRepository = orderRepository;
     this.inventoryClient = inventoryClient;
     this.paymentClient = paymentClient;
     this.shippingClient = shippingClient;
     this.serviceTokenProvider = serviceTokenProvider;
     this.eventPublisher = eventPublisher;
+    this.compensations = compensations;
+    this.shipments = shipments;
   }
 
   @Transactional
-  public OrderResponse createOrder(
-      String username, CreateOrderRequest request, String bearerToken) {
+  public OrderResponse createOrder(String username, CreateOrderRequest request) {
+    // Downstream calls use orders' own service identity, never the customer's token: the
+    // reservation and payment endpoints are service-only, so a customer can't call them directly.
+    String bearerToken = serviceTokenProvider.bearerToken();
     Order order = new Order(username);
     order.setShippingDestination(request.shippingDestination());
     for (CreateOrderRequest.Item item : request.items()) {
@@ -73,26 +85,37 @@ public class OrderService {
             .map(item -> new InventoryClient.ReserveRequest.Item(item.sku(), item.quantity()))
             .toList();
 
+    InventoryClient.ReserveResponse reservation;
     try {
-      inventoryClient.reserve(order.getId(), reserveItems, bearerToken);
+      reservation = inventoryClient.reserve(order.getId(), reserveItems, bearerToken);
     } catch (InventoryReservationException ex) {
-      cancelWithReason(order, OrderCancelledEvent.Reason.INVENTORY_UNAVAILABLE);
+      // Nothing was reserved (Inventory reserves all lines or none), so there's nothing to release.
+      cancelWithReason(
+          order,
+          OrderCancelledEvent.Reason.INVENTORY_UNAVAILABLE,
+          ex.getDetail() != null ? ex.getDetail() : ITEMS_UNAVAILABLE);
       return OrderResponse.from(order);
     }
 
+    // The total is always derived from Inventory's prices, never supplied by the client.
+    if (!applyPricing(order, reservation)) {
+      compensations.releaseInventory(order.getId());
+      cancelWithReason(order, OrderCancelledEvent.Reason.INVENTORY_UNAVAILABLE);
+      return OrderResponse.from(order);
+    }
+    order.setCurrency(request.currency());
+    orderRepository.save(order);
+
     try {
-      Long paymentId =
+      PaymentClient.InitiatedPayment payment =
           paymentClient.initiate(
-              order.getId(),
-              request.paymentMethodId(),
-              request.amount(),
-              request.currency(),
-              bearerToken);
-      order.setPaymentId(paymentId);
+              order.getId(), username, order.getTotalAmount(), order.getCurrency(), bearerToken);
+      order.setPaymentId(payment.id());
+      order.setCheckoutUrl(payment.checkoutUrl());
       order.markStatus(OrderStatus.AWAITING_PAYMENT);
       orderRepository.save(order);
     } catch (PaymentInitiationException ex) {
-      inventoryClient.release(order.getId(), bearerToken);
+      compensations.releaseInventory(order.getId());
       cancelWithReason(order, OrderCancelledEvent.Reason.PAYMENT_FAILED);
     }
 
@@ -117,9 +140,9 @@ public class OrderService {
    * first wins, and the loser re-reads the post-lock status instead of acting on a stale one.
    */
   @Transactional
-  public OrderResponse cancelOrder(
-      String username, boolean isAdmin, Long orderId, String bearerToken) {
+  public OrderResponse cancelOrder(String username, boolean isAdmin, Long orderId) {
     Order order = findOrderForUpdateOrThrow(username, isAdmin, orderId);
+    String bearerToken = serviceTokenProvider.bearerToken();
 
     if (order.getStatus() == OrderStatus.CANCELLED) {
       return OrderResponse.from(order);
@@ -129,9 +152,10 @@ public class OrderService {
     }
     if (order.getStatus() == OrderStatus.AWAITING_PAYMENT
         || order.getStatus() == OrderStatus.CONFIRMED) {
-      inventoryClient.release(order.getId(), bearerToken);
+      compensations.releaseInventory(order.getId());
       if (order.getStatus() == OrderStatus.CONFIRMED) {
-        paymentClient.refund(order.getPaymentId(), "Order cancelled by customer", bearerToken);
+        compensations.refundPayment(
+            order.getId(), order.getPaymentId(), "Order cancelled by customer");
       }
     }
 
@@ -193,45 +217,85 @@ public class OrderService {
    */
   @Transactional
   public void onPaymentEvent(Long orderId, boolean succeeded) {
-    orderRepository
-        .findByIdForUpdate(orderId)
-        .filter(order -> order.getStatus() == OrderStatus.AWAITING_PAYMENT)
-        .ifPresentOrElse(
-            order -> {
-              if (succeeded) {
-                handlePaymentCompleted(order);
-              } else {
-                handlePaymentFailed(order);
-              }
-            },
-            () ->
-                log.debug("Ignoring payment event for orderId {}: not AWAITING_PAYMENT", orderId));
+    Order order = orderRepository.findByIdForUpdate(orderId).orElse(null);
+    if (order == null) {
+      log.debug("Ignoring payment event for unknown orderId {}", orderId);
+      return;
+    }
+    if (order.getStatus() == OrderStatus.AWAITING_PAYMENT) {
+      if (succeeded) {
+        handlePaymentCompleted(order);
+      } else {
+        handlePaymentFailed(order);
+      }
+    } else if (succeeded && order.getStatus() == OrderStatus.CANCELLED) {
+      // The customer paid on the still-open checkout page after the order was cancelled (e.g.
+      // they cancelled in another tab). Don't keep money for an order we won't fulfil.
+      log.warn("Payment completed for already-cancelled orderId {}; refunding", orderId);
+      compensations.refundPayment(
+          order.getId(), order.getPaymentId(), "Order was cancelled before payment completed");
+    } else {
+      log.debug("Ignoring payment event for orderId {} in status {}", orderId, order.getStatus());
+    }
   }
 
   private void handlePaymentCompleted(Order order) {
+    // Commit the reservation before confirming the order: an unconfirmed reservation is expired by
+    // Inventory's sweep, which would put this paid order's stock back on sale.
     try {
-      Long shipmentId =
-          shippingClient.createShipment(
-              order.getId(),
-              order.getCustomerUsername(),
-              order.getShippingDestination(),
-              serviceTokenProvider.bearerToken());
-      order.setShipmentId(shipmentId);
-    } catch (ShipmentCreationException ex) {
-      log.warn("Shipment creation failed for orderId {}: {}", order.getId(), ex.getMessage());
+      inventoryClient.confirm(order.getId(), serviceTokenProvider.bearerToken());
+    } catch (InventoryReservationException ex) {
+      if (DOWNSTREAM_CLIENT_ERROR.test(ex)) {
+        // Inventory rejected it: the reservation already expired or was released, so the stock is
+        // no longer held. Don't ship what we don't have - refund and cancel.
+        log.error(
+            "Reservation for paid orderId {} can no longer be confirmed ({}); refunding and"
+                + " cancelling",
+            order.getId(),
+            ex.getMessage());
+        compensations.refundPayment(
+            order.getId(), order.getPaymentId(), "Reserved stock was no longer available");
+        cancelWithReason(
+            order,
+            OrderCancelledEvent.Reason.INVENTORY_UNAVAILABLE,
+            "The reserved stock was no longer available - your payment has been refunded");
+        return;
+      }
+      // Inventory unavailable: stay AWAITING_PAYMENT so the next saga sweep retries.
+      log.warn(
+          "Could not confirm reservation for orderId {}, will retry: {}",
+          order.getId(),
+          ex.getMessage());
+      return;
     }
+
+    // The order is paid, so it's confirmed either way; a shipment that can't be created now is
+    // retried by the saga sweep.
     order.markStatus(OrderStatus.CONFIRMED);
+    shipments.createShipment(order);
     orderRepository.save(order);
     eventPublisher.publishEvent(
         new OrderConfirmedEvent(order.getId(), order.getCustomerUsername()));
   }
 
   private void handlePaymentFailed(Order order) {
-    inventoryClient.release(order.getId(), serviceTokenProvider.bearerToken());
+    compensations.releaseInventory(order.getId());
     cancelWithReason(order, OrderCancelledEvent.Reason.PAYMENT_FAILED);
   }
 
   private void cancelWithReason(Order order, OrderCancelledEvent.Reason reason) {
+    cancelWithReason(
+        order,
+        reason,
+        switch (reason) {
+          case INVENTORY_UNAVAILABLE -> ITEMS_UNAVAILABLE;
+          case PAYMENT_FAILED -> "Payment wasn't completed";
+          case CUSTOMER_REQUESTED -> "Cancelled at your request";
+        });
+  }
+
+  private void cancelWithReason(Order order, OrderCancelledEvent.Reason reason, String text) {
+    order.setCancellationReason(text);
     order.markStatus(OrderStatus.CANCELLED);
     orderRepository.save(order);
     eventPublisher.publishEvent(
@@ -266,5 +330,34 @@ public class OrderService {
       quantities.merge(item.sku(), item.quantity(), Integer::sum);
     }
     return quantities;
+  }
+
+  /**
+   * Stamps each item with Inventory's unit price and sets the order total. Returns false if any
+   * item came back unpriced, in which case the order must not be charged.
+   */
+  private boolean applyPricing(Order order, InventoryClient.ReserveResponse reservation) {
+    Map<String, BigDecimal> unitPriceBySku = new HashMap<>();
+    if (reservation != null && reservation.reserved() != null) {
+      reservation.reserved().stream()
+          .filter(line -> line.unitPrice() != null)
+          .forEach(line -> unitPriceBySku.put(line.sku(), line.unitPrice()));
+    }
+
+    BigDecimal total = BigDecimal.ZERO;
+    for (OrderItem item : order.getItems()) {
+      BigDecimal unitPrice = unitPriceBySku.get(item.getSku());
+      if (unitPrice == null) {
+        log.error(
+            "Inventory returned no unit price for sku {} on orderId {}",
+            item.getSku(),
+            order.getId());
+        return false;
+      }
+      item.setUnitPrice(unitPrice);
+      total = total.add(unitPrice.multiply(BigDecimal.valueOf(item.getQuantity())));
+    }
+    order.setTotalAmount(total);
+    return true;
   }
 }

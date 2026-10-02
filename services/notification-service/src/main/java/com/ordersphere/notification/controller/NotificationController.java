@@ -28,7 +28,7 @@ public class NotificationController {
   }
 
   @PostMapping
-  @PreAuthorize("hasRole('ADMIN')")
+  @PreAuthorize("hasAnyRole('SERVICE', 'ADMIN')")
   public ResponseEntity<NotificationResponse> createNotification(
       @Valid @RequestBody CreateNotificationRequest request) {
     return ResponseEntity.status(HttpStatus.CREATED)

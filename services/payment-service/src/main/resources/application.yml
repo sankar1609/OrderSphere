@@ -27,13 +27,34 @@ spring:
           initial-interval: 1000ms
 
 jwt:
-  secret: ${JWT_SECRET:dev-only-secret-key-change-me-before-any-real-deployment}
-  expiration-millis: ${JWT_EXPIRATION_MILLIS:3600000}
+  # Tokens are verified with auth-service's public keys (RS256); nothing here can sign one.
+  jwks-uri: ${JWT_JWKS_URI:http://localhost:8081/auth/.well-known/jwks.json}
 
 payment:
   processing:
-    max-retries: ${PAYMENT_MAX_RETRIES:3}
+    # How often PENDING payments are reconciled with the provider and refunds are settled.
     sweep-interval-ms: ${PAYMENT_SWEEP_INTERVAL_MS:5000}
+  gateway:
+    # Merchant API of the payment provider (the dummy-payment-gateway in development).
+    base-url: ${PAYMENT_GATEWAY_URL:http://localhost:8087}
+    api-key: ${PAYMENT_GATEWAY_API_KEY:dpg_test_secret_key}
+    webhook-secret: ${PAYMENT_GATEWAY_WEBHOOK_SECRET:dpg_test_webhook_secret}
+  checkout:
+    # Where the provider sends the customer's browser after paying/cancelling (the Web UI).
+    return-url: ${PAYMENT_RETURN_URL:http://localhost:5173/}
+    # Where the provider POSTs checkout outcomes (must be reachable from the provider).
+    webhook-url: ${PAYMENT_WEBHOOK_URL:http://localhost:8084/payments/webhooks/gateway}
+
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      probes:
+        enabled: true
 
 eureka:
   client:

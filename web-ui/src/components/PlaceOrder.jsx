@@ -1,43 +1,27 @@
 import { useEffect, useState } from "react";
-import {
-  listProducts,
-  listPaymentMethods,
-  createPaymentMethod,
-  createOrder,
-} from "../api";
+import { listProducts, createOrder } from "../api";
 import { cellStyle, linkButtonStyle } from "../styles";
+import { formatMoney } from "../format";
 
-async function resolvePaymentMethodId(token) {
-  const existing = await listPaymentMethods(token);
-  if (existing.length > 0) {
-    return existing[0].id;
-  }
-  const created = await createPaymentMethod(token, {
-    type: "CARD",
-    token: `web-ui-${Date.now()}`,
-  });
-  return created.id;
-}
-
-export default function PlaceOrder({ token, onOrderPlaced, onUnauthorized }) {
+export default function PlaceOrder({ token, onUnauthorized }) {
   const [products, setProducts] = useState(null);
   const [productsError, setProductsError] = useState(null);
   const [selectedSku, setSelectedSku] = useState("");
   const [quantity, setQuantity] = useState(1);
   const [items, setItems] = useState([]);
-  const [amount, setAmount] = useState("");
   const [currency, setCurrency] = useState("USD");
   const [shippingDestination, setShippingDestination] = useState("");
   const [error, setError] = useState(null);
-  const [success, setSuccess] = useState(null);
+  const [itemNotice, setItemNotice] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     listProducts(token)
       .then((data) => {
         setProducts(data);
-        if (data.length > 0) {
-          setSelectedSku(data[0].sku);
+        const firstInStock = data.find((product) => product.availableQuantity > 0);
+        if (firstInStock) {
+          setSelectedSku(firstInStock.sku);
         }
       })
       .catch((err) => {
@@ -49,8 +33,38 @@ export default function PlaceOrder({ token, onOrderPlaced, onUnauthorized }) {
       });
   }, [token]);
 
+  // Display-only estimate from the catalog; the backend recalculates the charged total itself.
+  function unitPriceFor(sku) {
+    return products?.find((product) => product.sku === sku)?.unitPrice ?? 0;
+  }
+
+  const estimatedTotal = items.reduce(
+    (sum, item) => sum + unitPriceFor(item.sku) * item.quantity,
+    0
+  );
+
+  // How many more of a product fit in this order: what's available minus what's already in the
+  // cart. Inventory has the final say (it rejects the whole order if stock ran out meanwhile).
+  function remainingFor(sku) {
+    const available = products?.find((product) => product.sku === sku)?.availableQuantity ?? 0;
+    const inCart = items
+      .filter((item) => item.sku === sku)
+      .reduce((sum, item) => sum + item.quantity, 0);
+    return Math.max(available - inCart, 0);
+  }
+
   function addItem() {
+    setItemNotice(null);
     if (!selectedSku || quantity < 1) {
+      return;
+    }
+    const remaining = remainingFor(selectedSku);
+    if (Number(quantity) > remaining) {
+      setItemNotice(
+        remaining === 0
+          ? `No more ${selectedSku} available.`
+          : `Only ${remaining} more ${selectedSku} available.`
+      );
       return;
     }
     setItems([...items, { sku: selectedSku, quantity: Number(quantity) }]);
@@ -64,7 +78,6 @@ export default function PlaceOrder({ token, onOrderPlaced, onUnauthorized }) {
   async function handleSubmit(event) {
     event.preventDefault();
     setError(null);
-    setSuccess(null);
 
     if (items.length === 0) {
       setError("Add at least one item before placing the order.");
@@ -73,26 +86,25 @@ export default function PlaceOrder({ token, onOrderPlaced, onUnauthorized }) {
 
     setSubmitting(true);
     try {
-      const paymentMethodId = await resolvePaymentMethodId(token);
-      const order = await createOrder(token, {
-        items,
-        paymentMethodId,
-        amount: Number(amount),
-        currency,
-        shippingDestination,
-      });
-      setSuccess(`Order #${order.id} placed (status: ${order.status}).`);
-      setItems([]);
-      setAmount("");
-      setShippingDestination("");
-      onOrderPlaced?.(order);
+      const order = await createOrder(token, { items, currency, shippingDestination });
+      if (order.status === "AWAITING_PAYMENT" && order.checkoutUrl) {
+        // Hand over to the payment provider's hosted checkout page. It sends the browser back to
+        // this app (?payment=success|cancelled&orderId=...) when the customer is done.
+        window.location.assign(order.checkoutUrl);
+        return;
+      }
+      setError(
+        `Order #${order.id} couldn't be placed: ${
+          order.cancellationReason ?? "some items may be unavailable"
+        }. Check the catalog and try again.`
+      );
+      setSubmitting(false);
     } catch (err) {
       if (err.status === 401) {
         onUnauthorized();
       } else {
         setError(err.message);
       }
-    } finally {
       setSubmitting(false);
     }
   }
@@ -110,8 +122,16 @@ export default function PlaceOrder({ token, onOrderPlaced, onUnauthorized }) {
             Product
             <select value={selectedSku} onChange={(e) => setSelectedSku(e.target.value)}>
               {products.map((product) => (
-                <option key={product.id} value={product.sku}>
-                  {product.sku} — {product.name} ({product.availableQuantity} available)
+                <option
+                  key={product.id}
+                  value={product.sku}
+                  disabled={product.availableQuantity <= 0}
+                >
+                  {`${product.sku} — ${product.name} — ${formatMoney(product.unitPrice)} (${
+                    product.availableQuantity > 0
+                      ? `${product.availableQuantity} available`
+                      : "out of stock"
+                  })`}
                 </option>
               ))}
             </select>
@@ -121,14 +141,16 @@ export default function PlaceOrder({ token, onOrderPlaced, onUnauthorized }) {
             <input
               type="number"
               min={1}
+              max={Math.max(remainingFor(selectedSku), 1)}
               value={quantity}
               onChange={(e) => setQuantity(e.target.value)}
               style={{ width: 60 }}
             />
           </label>{" "}
-          <button type="button" onClick={addItem}>
+          <button type="button" onClick={addItem} disabled={remainingFor(selectedSku) === 0}>
             Add item
           </button>
+          {itemNotice && <p style={{ color: "crimson" }}>{itemNotice}</p>}
         </div>
       )}
 
@@ -138,6 +160,8 @@ export default function PlaceOrder({ token, onOrderPlaced, onUnauthorized }) {
             <tr>
               <th style={cellStyle}>SKU</th>
               <th style={cellStyle}>Quantity</th>
+              <th style={cellStyle}>Unit price</th>
+              <th style={cellStyle}>Subtotal</th>
               <th style={cellStyle}></th>
             </tr>
           </thead>
@@ -146,6 +170,8 @@ export default function PlaceOrder({ token, onOrderPlaced, onUnauthorized }) {
               <tr key={`${item.sku}-${index}`}>
                 <td style={cellStyle}>{item.sku}</td>
                 <td style={cellStyle}>{item.quantity}</td>
+                <td style={cellStyle}>{formatMoney(unitPriceFor(item.sku))}</td>
+                <td style={cellStyle}>{formatMoney(unitPriceFor(item.sku) * item.quantity)}</td>
                 <td style={cellStyle}>
                   <button type="button" onClick={() => removeItem(index)} style={linkButtonStyle}>
                     Remove
@@ -154,28 +180,21 @@ export default function PlaceOrder({ token, onOrderPlaced, onUnauthorized }) {
               </tr>
             ))}
           </tbody>
+          <tfoot>
+            <tr>
+              <td style={cellStyle} colSpan={3}>
+                <strong>Estimated total</strong>
+              </td>
+              <td style={cellStyle}>
+                <strong>{formatMoney(estimatedTotal, currency)}</strong>
+              </td>
+              <td style={cellStyle}></td>
+            </tr>
+          </tfoot>
         </table>
       )}
 
       <form onSubmit={handleSubmit}>
-        <div style={{ marginBottom: 12 }}>
-          <label>
-            Amount
-            <input
-              type="number"
-              step="0.01"
-              min="0.01"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              style={{ display: "block" }}
-              required
-            />
-          </label>
-          <small>
-            Not calculated from items — pricing isn't modeled in the backend yet, so enter the
-            total to charge.
-          </small>
-        </div>
         <div style={{ marginBottom: 12 }}>
           <label>
             Currency
@@ -201,12 +220,11 @@ export default function PlaceOrder({ token, onOrderPlaced, onUnauthorized }) {
           </label>
         </div>
         <button type="submit" disabled={submitting}>
-          {submitting ? "Placing order..." : "Place order"}
+          {submitting ? "Redirecting to payment..." : "Place order and pay"}
         </button>
       </form>
 
       {error && <p style={{ color: "crimson" }}>{error}</p>}
-      {success && <p style={{ color: "green" }}>{success}</p>}
     </div>
   );
 }

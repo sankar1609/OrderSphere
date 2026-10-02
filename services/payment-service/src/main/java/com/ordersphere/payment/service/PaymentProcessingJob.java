@@ -1,5 +1,6 @@
 package com.ordersphere.payment.service;
 
+import com.ordersphere.payment.domain.Payment;
 import com.ordersphere.payment.domain.PaymentStatus;
 import com.ordersphere.payment.domain.RefundStatus;
 import com.ordersphere.payment.repository.PaymentRepository;
@@ -29,8 +30,14 @@ public class PaymentProcessingJob {
     processPendingRefunds();
   }
 
+  /**
+   * Reconciles PENDING payments with the provider: catches outcomes whose webhook was lost and
+   * payments whose checkout expired unpaid.
+   */
   public void processPendingPayments() {
-    paymentRepository.findByStatus(PaymentStatus.PENDING).forEach(paymentService::settlePayment);
+    paymentRepository.findByStatus(PaymentStatus.PENDING).stream()
+        .map(Payment::getId)
+        .forEach(paymentService::reconcile);
   }
 
   public void processPendingRefunds() {

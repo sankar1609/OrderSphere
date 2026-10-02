@@ -3,11 +3,9 @@ package com.ordersphere.orders.controller;
 import com.ordersphere.orders.dto.CreateOrderRequest;
 import com.ordersphere.orders.dto.OrderResponse;
 import com.ordersphere.orders.service.OrderService;
-import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import java.security.Principal;
 import java.util.List;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -31,11 +29,8 @@ public class OrderController {
 
   @PostMapping
   public ResponseEntity<OrderResponse> createOrder(
-      @Valid @RequestBody CreateOrderRequest request,
-      Principal principal,
-      HttpServletRequest httpRequest) {
-    OrderResponse response =
-        orderService.createOrder(principal.getName(), request, bearerToken(httpRequest));
+      @Valid @RequestBody CreateOrderRequest request, Principal principal) {
+    OrderResponse response = orderService.createOrder(principal.getName(), request);
     return ResponseEntity.status(HttpStatus.CREATED).body(response);
   }
 
@@ -50,17 +45,11 @@ public class OrderController {
   }
 
   @PostMapping("/{orderId}/cancel")
-  public OrderResponse cancelOrder(
-      @PathVariable Long orderId, Authentication authentication, HttpServletRequest httpRequest) {
-    return orderService.cancelOrder(
-        authentication.getName(), isAdmin(authentication), orderId, bearerToken(httpRequest));
+  public OrderResponse cancelOrder(@PathVariable Long orderId, Authentication authentication) {
+    return orderService.cancelOrder(authentication.getName(), isAdmin(authentication), orderId);
   }
 
   private boolean isAdmin(Authentication authentication) {
     return authentication.getAuthorities().contains(new SimpleGrantedAuthority("ROLE_ADMIN"));
-  }
-
-  private String bearerToken(HttpServletRequest request) {
-    return request.getHeader(HttpHeaders.AUTHORIZATION);
   }
 }

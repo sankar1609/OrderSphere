@@ -19,7 +19,9 @@ public class NotificationTemplateRenderer {
           TemplateKey.SHIPMENT_PICKED,
               "Your shipment for order #{orderId} has been picked up and is on its way.",
           TemplateKey.SHIPMENT_IN_TRANSIT, "Your shipment for order #{orderId} is in transit.",
-          TemplateKey.DELIVERY_CONFIRMED, "Your order #{orderId} has been delivered.");
+          TemplateKey.DELIVERY_CONFIRMED, "Your order #{orderId} has been delivered.",
+          TemplateKey.STOCK_LOW,
+              "Low stock: {sku} ({name}) has {available} left - reorder threshold is {threshold}.");
 
   public String render(TemplateKey templateKey, Map<String, String> variables) {
     String template = TEMPLATES.get(templateKey);

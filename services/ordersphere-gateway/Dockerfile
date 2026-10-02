@@ -13,6 +13,7 @@ COPY services/ordersphere-orders/pom.xml services/ordersphere-orders/pom.xml
 COPY services/payment-service/pom.xml services/payment-service/pom.xml
 COPY services/shipping-service/pom.xml services/shipping-service/pom.xml
 COPY services/notification-service/pom.xml services/notification-service/pom.xml
+COPY services/dummy-payment-gateway/pom.xml services/dummy-payment-gateway/pom.xml
 COPY services/common-events/src services/common-events/src
 COPY services/common-security/src services/common-security/src
 COPY services/ordersphere-gateway/src services/ordersphere-gateway/src

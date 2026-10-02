@@ -18,6 +18,8 @@ class OrderSagaProgressJobTest {
 
   @Mock private OrderRepository orderRepository;
   @Mock private OrderService orderService;
+  @Mock private CompensationService compensations;
+  @Mock private OrderShipmentService shipments;
 
   @Test
   void progressAwaitingPaymentOrdersDelegatesEachAwaitingPaymentOrder() {
@@ -26,7 +28,8 @@ class OrderSagaProgressJobTest {
     order.markStatus(OrderStatus.AWAITING_PAYMENT);
     when(orderRepository.findByStatus(OrderStatus.AWAITING_PAYMENT)).thenReturn(List.of(order));
 
-    OrderSagaProgressJob job = new OrderSagaProgressJob(orderRepository, orderService);
+    OrderSagaProgressJob job =
+        new OrderSagaProgressJob(orderRepository, orderService, compensations, shipments);
     job.progressAwaitingPaymentOrders();
 
     verify(orderService).progressAwaitingPayment(10L);
@@ -36,9 +39,20 @@ class OrderSagaProgressJobTest {
   void progressAwaitingPaymentOrdersDoesNothingWhenNonePending() {
     when(orderRepository.findByStatus(OrderStatus.AWAITING_PAYMENT)).thenReturn(List.of());
 
-    OrderSagaProgressJob job = new OrderSagaProgressJob(orderRepository, orderService);
+    OrderSagaProgressJob job =
+        new OrderSagaProgressJob(orderRepository, orderService, compensations, shipments);
     job.progressAwaitingPaymentOrders();
 
     verifyNoInteractions(orderService);
+  }
+
+  @Test
+  void sweepAlsoRetriesDueCompensationsAndShipments() {
+    when(orderRepository.findByStatus(OrderStatus.AWAITING_PAYMENT)).thenReturn(List.of());
+
+    new OrderSagaProgressJob(orderRepository, orderService, compensations, shipments).sweep();
+
+    verify(compensations).processDue();
+    verify(shipments).processDue();
   }
 }

@@ -1,19 +1,25 @@
 package com.ordersphere.orders.client;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withServerError;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
+import com.ordersphere.orders.exception.CompensationCallException;
 import com.ordersphere.orders.exception.InventoryReservationException;
+import java.math.BigDecimal;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 
 class InventoryClientTest {
@@ -30,12 +36,51 @@ class InventoryClientTest {
         .andExpect(header("Authorization", "Bearer token"))
         .andExpect(jsonPath("$.orderId").value(1))
         .andExpect(jsonPath("$.items[0].sku").value("SKU-1"))
-        .andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
+        .andRespond(
+            withSuccess(
+                """
+                {"orderId": 1, "status": "ACTIVE",
+                 "reserved": [{"sku": "SKU-1", "quantity": 2, "unitPrice": 9.99}]}
+                """,
+                MediaType.APPLICATION_JSON));
 
-    client.reserve(
-        1L, List.of(new InventoryClient.ReserveRequest.Item("SKU-1", 2)), "Bearer token");
+    InventoryClient.ReserveResponse response =
+        client.reserve(
+            1L, List.of(new InventoryClient.ReserveRequest.Item("SKU-1", 2)), "Bearer token");
 
     server.verify();
+    assertThat(response.reserved())
+        .containsExactly(
+            new InventoryClient.ReserveResponse.LineItem("SKU-1", 2, new BigDecimal("9.99")));
+  }
+
+  @Test
+  void reserveRejectedByInventoryCarriesItsExplanation() {
+    RestClient.Builder builder = RestClient.builder();
+    MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+    InventoryClient client = new InventoryClient(builder);
+
+    server
+        .expect(requestTo("http://inventory-service/inventory/reservations"))
+        .andRespond(
+            withStatus(HttpStatus.CONFLICT)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(
+                    """
+                    {"status": 409, "message": "Not enough stock: SKU-1 (2 requested, 0 available)"}
+                    """));
+
+    assertThatThrownBy(
+            () ->
+                client.reserve(
+                    1L,
+                    List.of(new InventoryClient.ReserveRequest.Item("SKU-1", 2)),
+                    "Bearer token"))
+        .isInstanceOfSatisfying(
+            InventoryReservationException.class,
+            ex ->
+                assertThat(ex.getDetail())
+                    .isEqualTo("Not enough stock: SKU-1 (2 requested, 0 available)"));
   }
 
   @Test
@@ -58,7 +103,39 @@ class InventoryClientTest {
   }
 
   @Test
-  void releaseSendsExpectedRequestAndSwallowsFailures() {
+  void confirmSendsExpectedRequestAndForwardsToken() {
+    RestClient.Builder builder = RestClient.builder();
+    MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+    InventoryClient client = new InventoryClient(builder);
+
+    server
+        .expect(requestTo("http://inventory-service/inventory/reservations/1/confirm"))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(header("Authorization", "Bearer token"))
+        .andRespond(withSuccess());
+
+    client.confirm(1L, "Bearer token");
+
+    server.verify();
+  }
+
+  @Test
+  void confirmDoesNotSwallowFailures() {
+    RestClient.Builder builder = RestClient.builder();
+    MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+    InventoryClient client = new InventoryClient(builder);
+
+    server
+        .expect(requestTo("http://inventory-service/inventory/reservations/1/confirm"))
+        .andRespond(withStatus(HttpStatus.CONFLICT));
+
+    assertThatThrownBy(() -> client.confirm(1L, "Bearer token"))
+        .isInstanceOf(InventoryReservationException.class)
+        .hasCauseInstanceOf(HttpClientErrorException.class);
+  }
+
+  @Test
+  void releaseSendsExpectedRequestAndReportsRetryableFailures() {
     RestClient.Builder builder = RestClient.builder();
     MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
     InventoryClient client = new InventoryClient(builder);
@@ -69,9 +146,28 @@ class InventoryClientTest {
         .andExpect(header("Authorization", "Bearer token"))
         .andRespond(withServerError());
 
-    client.release(1L, "Bearer token");
-
+    assertThatThrownBy(() -> client.release(1L, "Bearer token"))
+        .isInstanceOfSatisfying(
+            CompensationCallException.class, ex -> assertThat(ex.isRetryable()).isTrue());
     server.verify();
+  }
+
+  @Test
+  void releaseRejectionIsNotRetryable() {
+    RestClient.Builder builder = RestClient.builder();
+    MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+    InventoryClient client = new InventoryClient(builder);
+    server
+        .expect(requestTo("http://inventory-service/inventory/reservations/1/release"))
+        .andRespond(withStatus(HttpStatus.CONFLICT));
+
+    assertThatThrownBy(() -> client.release(1L, "Bearer token"))
+        .isInstanceOfSatisfying(
+            CompensationCallException.class,
+            ex -> {
+              assertThat(ex.isRetryable()).isFalse();
+              assertThat(ex.getStatus()).isEqualTo(409);
+            });
   }
 
   @Test
@@ -104,9 +200,14 @@ class InventoryClientTest {
   }
 
   @Test
-  void releaseFallbackLogsAndDoesNotThrow() {
+  void releaseFallbackReportsAnOpenBreakerAsRetryable() {
     InventoryClient client = new InventoryClient(RestClient.builder());
 
-    client.releaseFallback(1L, "Bearer token", new RuntimeException("circuit breaker open"));
+    assertThatThrownBy(
+            () ->
+                client.releaseFallback(
+                    1L, "Bearer token", new RuntimeException("circuit breaker open")))
+        .isInstanceOfSatisfying(
+            CompensationCallException.class, ex -> assertThat(ex.isRetryable()).isTrue());
   }
 }

@@ -1,0 +1,16 @@
+server:
+  port: 8087
+
+spring:
+  application:
+    name: dummy-payment-gateway
+
+gateway:
+  # Base URL browsers use to reach the hosted checkout page.
+  public-url: ${GATEWAY_PUBLIC_URL:http://localhost:8087}
+  # Merchant secret key payment-service must send as "Authorization: Bearer <key>".
+  api-key: ${GATEWAY_API_KEY:dpg_test_secret_key}
+  # Shared secret used to HMAC-sign webhook bodies.
+  webhook-secret: ${GATEWAY_WEBHOOK_SECRET:dpg_test_webhook_secret}
+  # How long a checkout session stays payable. Keep it below inventory's reservation hold.
+  session-ttl: ${GATEWAY_SESSION_TTL:10m}

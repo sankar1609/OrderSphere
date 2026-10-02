@@ -7,8 +7,6 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
-import jakarta.persistence.JoinColumn;
-import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -33,10 +31,6 @@ public class Payment {
   @Column(name = "customer_username", nullable = false)
   private String customerUsername;
 
-  @ManyToOne
-  @JoinColumn(name = "payment_method_id", nullable = false)
-  private PaymentMethod paymentMethod;
-
   @Column(nullable = false)
   private BigDecimal amount;
 
@@ -50,8 +44,15 @@ public class Payment {
   @Column(name = "gateway_reference")
   private String gatewayReference;
 
-  @Column(name = "retry_count", nullable = false)
-  private int retryCount;
+  /** The provider's hosted checkout session the customer pays on. */
+  @Column(name = "checkout_session_id", unique = true)
+  private String checkoutSessionId;
+
+  @Column(name = "checkout_url")
+  private String checkoutUrl;
+
+  @Column(name = "failure_reason")
+  private String failureReason;
 
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
@@ -59,19 +60,12 @@ public class Payment {
   @Column(name = "updated_at", nullable = false)
   private Instant updatedAt;
 
-  public Payment(
-      Long orderId,
-      String customerUsername,
-      PaymentMethod paymentMethod,
-      BigDecimal amount,
-      String currency) {
+  public Payment(Long orderId, String customerUsername, BigDecimal amount, String currency) {
     this.orderId = orderId;
     this.customerUsername = customerUsername;
-    this.paymentMethod = paymentMethod;
     this.amount = amount;
     this.currency = currency;
     this.status = PaymentStatus.PENDING;
-    this.retryCount = 0;
     this.createdAt = Instant.now();
     this.updatedAt = this.createdAt;
   }

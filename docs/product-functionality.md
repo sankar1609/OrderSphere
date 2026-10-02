@@ -12,29 +12,34 @@ This document describes what OrderSphere can do today, from a business and user 
 
 ## Product Catalog & Inventory
 
-- Admins and vendors can add new products to the catalog, each with a unique SKU, name, and starting stock level.
-- Any signed-in user can browse the catalog or look up a specific product to check its current availability.
+- Admins and vendors can add new products to the catalog, each with a unique SKU, name, unit price, and starting stock level.
+- Any signed-in user can browse the catalog or look up a specific product to check its current price and availability.
 - Admins and vendors can restock a product, increasing the quantity on hand.
 - When a customer places an order, the required stock is automatically set aside so the same inventory can't be sold to two customers at once.
+- An order can only be placed for stock that's actually available: if any item is short (or out of stock), the whole order is declined before payment and the customer is told which item and how many are left. The store shows out-of-stock products as unavailable and won't let a customer add more than is in stock.
 - That set-aside stock is automatically confirmed once the order's payment succeeds, or automatically released back to available inventory if the order doesn't go through.
 - Stock that's set aside but never confirmed or released is automatically freed up again after a period of time, so abandoned orders don't permanently tie up inventory.
 
 ## Payments
 
-- Customers can save one or more payment methods to their account (currently card-based payments).
-- Customers can remove a saved payment method.
-- When an order is placed, payment is processed in the background — the customer doesn't have to wait for it to complete before their order is created.
-- If a payment is declined, the system automatically undoes the order: the order is cancelled and any reserved inventory is put back.
+- After placing an order, the customer is taken to a secure payment page run by the payment provider, where they enter their card details. OrderSphere itself never sees or stores card details.
+- If a card is declined, the payment page says so and the customer can try another card; the order waits for them.
+- Once the payment goes through, the customer is brought back to OrderSphere and the order is confirmed automatically.
+- If the customer cancels on the payment page, or doesn't pay within 10 minutes, the order is cancelled automatically and the reserved stock is put back.
+- An unpaid order can be paid later from the order list ("Pay now"), as long as the payment window hasn't expired.
+- If a customer cancels an order but then pays on a payment page they still had open, the payment is refunded automatically.
 - A completed payment can be refunded, crediting the customer.
+- For development and testing, payments go through a dummy payment provider with test cards (4242 4242 4242 4242 succeeds, 4000 0000 0000 0002 is declined); no real money moves.
 
 ## Ordering
 
-- Customers can place an order for one or more products, specifying a delivery address and which saved payment method to use.
-- Placing an order automatically reserves the needed inventory and starts payment processing — no separate steps required.
+- Customers can place an order for one or more products, specifying a delivery address, and then pay for it on the payment page.
+- Placing an order automatically reserves the needed inventory and opens the payment — no separate steps required.
+- The order total is always calculated by the system from each product's catalog price; customers never enter or influence the amount charged. Each order records the unit price it was placed at, so later catalog price changes don't alter past orders.
 - Customers can view their full order history and check the current status of any order at any time.
 - Customers can cancel their own order; cancelling is safe to do more than once without causing problems.
 - Every order automatically moves through its lifecycle on its own — from awaiting payment, to confirmed, to shipped, to delivered — without needing manual updates.
-- If anything goes wrong along the way (for example, a declined payment), the order is automatically rolled back rather than being left in a broken or inconsistent state: inventory is released and the order is marked cancelled.
+- If anything goes wrong along the way (for example, the customer abandons payment), the order is automatically rolled back rather than being left in a broken or inconsistent state: inventory is released and the order is marked cancelled.
 
 ## Shipping & Delivery
 

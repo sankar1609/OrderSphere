@@ -11,6 +11,7 @@ import com.ordersphere.events.PaymentFailedEvent;
 import com.ordersphere.events.ShipmentCreatedEvent;
 import com.ordersphere.events.ShipmentInTransitEvent;
 import com.ordersphere.events.ShipmentPickedEvent;
+import com.ordersphere.events.StockLowEvent;
 import com.ordersphere.notification.domain.NotificationChannel;
 import com.ordersphere.notification.domain.TemplateKey;
 import com.ordersphere.notification.dto.CreateNotificationRequest;
@@ -30,7 +31,7 @@ class DomainEventListenerTest {
 
   @Test
   void onOrderConfirmedCreatesEmailNotificationForCustomer() {
-    DomainEventListener listener = new DomainEventListener(notificationService);
+    DomainEventListener listener = new DomainEventListener(notificationService, "admin");
 
     listener.onOrderConfirmed(new OrderConfirmedEvent(10L, "alice"));
 
@@ -46,7 +47,7 @@ class DomainEventListenerTest {
 
   @Test
   void onOrderCancelledCreatesEmailNotificationForCustomer() {
-    DomainEventListener listener = new DomainEventListener(notificationService);
+    DomainEventListener listener = new DomainEventListener(notificationService, "admin");
 
     listener.onOrderCancelled(
         new OrderCancelledEvent(10L, OrderCancelledEvent.Reason.CUSTOMER_REQUESTED, "alice"));
@@ -63,7 +64,7 @@ class DomainEventListenerTest {
 
   @Test
   void onPaymentCompletedCreatesEmailNotificationForCustomer() {
-    DomainEventListener listener = new DomainEventListener(notificationService);
+    DomainEventListener listener = new DomainEventListener(notificationService, "admin");
 
     listener.onPaymentCompleted(
         new PaymentCompletedEvent(1L, 10L, "alice", new BigDecimal("39.98"), "USD"));
@@ -80,7 +81,7 @@ class DomainEventListenerTest {
 
   @Test
   void onPaymentFailedCreatesEmailNotificationWithReason() {
-    DomainEventListener listener = new DomainEventListener(notificationService);
+    DomainEventListener listener = new DomainEventListener(notificationService, "admin");
 
     listener.onPaymentFailed(new PaymentFailedEvent(1L, 10L, "declined", "alice"));
 
@@ -96,7 +97,7 @@ class DomainEventListenerTest {
 
   @Test
   void onShipmentCreatedCreatesEmailNotificationForCustomer() {
-    DomainEventListener listener = new DomainEventListener(notificationService);
+    DomainEventListener listener = new DomainEventListener(notificationService, "admin");
 
     listener.onShipmentCreated(
         new ShipmentCreatedEvent(7L, 10L, "alice", "123 Main St, Springfield"));
@@ -113,7 +114,7 @@ class DomainEventListenerTest {
 
   @Test
   void onShipmentPickedCreatesEmailNotificationForCustomer() {
-    DomainEventListener listener = new DomainEventListener(notificationService);
+    DomainEventListener listener = new DomainEventListener(notificationService, "admin");
 
     listener.onShipmentPicked(new ShipmentPickedEvent(7L, 10L, "alice"));
 
@@ -129,7 +130,7 @@ class DomainEventListenerTest {
 
   @Test
   void onShipmentInTransitCreatesEmailNotificationForCustomer() {
-    DomainEventListener listener = new DomainEventListener(notificationService);
+    DomainEventListener listener = new DomainEventListener(notificationService, "admin");
 
     listener.onShipmentInTransit(new ShipmentInTransitEvent(7L, 10L, "alice"));
 
@@ -145,7 +146,7 @@ class DomainEventListenerTest {
 
   @Test
   void onDeliveryConfirmedCreatesEmailNotificationForCustomer() {
-    DomainEventListener listener = new DomainEventListener(notificationService);
+    DomainEventListener listener = new DomainEventListener(notificationService, "admin");
 
     listener.onDeliveryConfirmed(new DeliveryConfirmedEvent(7L, 10L, "alice", Instant.now()));
 
@@ -157,5 +158,37 @@ class DomainEventListenerTest {
                     NotificationChannel.EMAIL,
                     TemplateKey.DELIVERY_CONFIRMED,
                     Map.of("orderId", "10"))));
+  }
+
+  @Test
+  void stockLowAlertsTheProductOwnerInApp() {
+    DomainEventListener listener = new DomainEventListener(notificationService, "admin");
+
+    listener.onStockLow(new StockLowEvent("SKU-1", "Widget", 2, 5, "vendor1"));
+
+    verify(notificationService)
+        .createNotification(
+            eq(
+                new CreateNotificationRequest(
+                    "vendor1",
+                    NotificationChannel.IN_APP,
+                    TemplateKey.STOCK_LOW,
+                    Map.of("sku", "SKU-1", "name", "Widget", "available", "2", "threshold", "5"))));
+  }
+
+  @Test
+  void stockLowForAProductWithNoOwnerGoesToTheFallbackRecipient() {
+    DomainEventListener listener = new DomainEventListener(notificationService, "ops-admin");
+
+    listener.onStockLow(new StockLowEvent("SKU-1", "Widget", 0, 5, null));
+
+    verify(notificationService)
+        .createNotification(
+            eq(
+                new CreateNotificationRequest(
+                    "ops-admin",
+                    NotificationChannel.IN_APP,
+                    TemplateKey.STOCK_LOW,
+                    Map.of("sku", "SKU-1", "name", "Widget", "available", "0", "threshold", "5"))));
   }
 }

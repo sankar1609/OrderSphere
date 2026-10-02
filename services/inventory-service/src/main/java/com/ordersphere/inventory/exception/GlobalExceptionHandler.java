@@ -32,6 +32,21 @@ public class GlobalExceptionHandler {
     return errorResponse(HttpStatus.CONFLICT, ex.getMessage());
   }
 
+  @ExceptionHandler(InsufficientStockException.class)
+  public ResponseEntity<Object> handleInsufficientStock(InsufficientStockException ex) {
+    return errorResponse(HttpStatus.CONFLICT, ex.getMessage());
+  }
+
+  @ExceptionHandler(StockLimitExceededException.class)
+  public ResponseEntity<Object> handleStockLimitExceeded(StockLimitExceededException ex) {
+    return errorResponse(HttpStatus.BAD_REQUEST, ex.getMessage());
+  }
+
+  @ExceptionHandler(ProductOwnershipException.class)
+  public ResponseEntity<Object> handleProductOwnership(ProductOwnershipException ex) {
+    return errorResponse(HttpStatus.FORBIDDEN, ex.getMessage());
+  }
+
   @ExceptionHandler(MethodArgumentNotValidException.class)
   public ResponseEntity<Object> handleValidation(MethodArgumentNotValidException ex) {
     String message =

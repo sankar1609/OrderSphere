@@ -39,6 +39,7 @@
         <module>services/payment-service</module>
         <module>services/shipping-service</module>
         <module>services/notification-service</module>
+        <module>services/dummy-payment-gateway</module>
     </modules>
 
     <dependencyManagement>

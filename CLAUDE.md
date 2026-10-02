@@ -5,7 +5,7 @@
 **OrderSphere** is a cloud-native, microservices-based order and inventory management platform designed for enterprise environments where trust, auditability, and clear service boundaries are critical. The system supports reliable order processing, inventory control, and transparent auditability across multiple trusted organizations.
 
 **Version:** 1.0.0-SNAPSHOT  
-**Tech Stack:** Java 17 | Spring Boot 3.2.1 | Spring Cloud | PostgreSQL | Kubernetes | Docker
+**Tech Stack:** Java 17 | Spring Boot 3.2.1 | Spring Cloud | PostgreSQL | RabbitMQ | Docker | React
 
 ---
 
@@ -14,10 +14,9 @@
 ### Architectural Principles
 
 - **Microservices Pattern**: Each service is independently deployable with its own database
-- **Event-Driven Communication**: Services communicate primarily via asynchronous events
-- **Saga Pattern**: Distributed transactions use saga-based compensation for consistency
-- **Blockchain for Audit**: Immutable audit trails using Hyperledger Fabric (trust layer, not transaction layer)
-- **Cloud-Native**: Containerized services, Kubernetes-ready deployment
+- **Orchestrated Saga + Events**: the order saga is orchestrated over synchronous REST with compensation; domain events on RabbitMQ drive everything that doesn't block the request (notifications, shipment cancellation, payment progress)
+- **Blockchain for Audit (planned)**: Immutable audit trails using Hyperledger Fabric (trust layer, not transaction layer)
+- **Cloud-Native**: Containerized services (Docker Compose today; Kubernetes planned)
 - **Service Discovery**: Eureka-based service registry for dynamic service location
 
 ---
@@ -28,10 +27,11 @@
 - **Port:** 8080
 - **Purpose:** Single entry point for all external client requests
 - **Responsibilities:**
-  - Request routing to appropriate microservices
-  - Cross-cutting concerns (logging, metrics)
-  - Rate limiting and basic request validation
-  - Load balancing across services
+  - Request routing via Eureka discovery locator: `/{service-id}/**` → that service (e.g. `/ordersphere-orders/orders`)
+  - Client-side load balancing across registered instances
+  - CORS for the Web UI dev server (`http://localhost:5173`; GET/POST/PUT/PATCH/DELETE/OPTIONS)
+  - Rate limiting (`RequestRateLimiter`, token buckets in Redis, per client IP): 50 req/s burst 100 on every route; login/register/refresh/token 5 req/s burst 30 (`GATEWAY_*RATE_LIMIT*` env vars). Over the limit → 429 with `X-RateLimit-*` headers; if Redis is down requests are let through
+- **Not implemented yet:** request validation, centralized logging/metrics
 - **Technology:** Spring Cloud Gateway
 - **Interacts With:** All downstream services
 
@@ -41,16 +41,19 @@
 - **Port:** 8081
 - **Purpose:** Centralized authentication and authorization
 - **Responsibilities:**
-  - User registration and login
-  - JWT token generation and validation
-  - Role-based access control (RBAC)
-  - Token refresh and revocation
-  - Password hashing with bcrypt
+  - User registration and login (`POST /auth/register`, `POST /auth/login`, `GET /auth/me`)
+  - The only JWT signer: RS256 with an RSA key generated on first start and stored in `signing_keys` (or supplied via `JWT_PRIVATE_KEY`/`JWT_PUBLIC_KEY`); public keys published at `GET /auth/.well-known/jwks.json`
+  - Service identities via OAuth2 client credentials (`POST /auth/token`, HTTP Basic client id/secret) → 5-minute `SERVICE`-role token; clients configured as `auth.clients.<id>.secret` (`orders-service`, secret `ORDERS_CLIENT_SECRET`)
+  - Role-based access control (RBAC); ADMIN can list users (`GET /auth/admin/users`) and change anyone's role but their own (`PATCH /auth/admin/users/{id}/role`; 409 for your own, so the last admin can't lock everyone out)
+  - Password hashing with bcrypt; passwords 8-72 characters (bcrypt ignores bytes past 72)
+  - Usernames 3-50 of `[A-Za-z0-9._-]` (no look-alikes with spaces) and unique regardless of case
 - **Database:** PostgreSQL (auth_db)
 - **Key Features:**
-  - JWT token expiration: 1 hour
+  - Access tokens expire after 15 minutes (`JWT_EXPIRATION_MILLIS`); sessions continue via refresh tokens (`POST /auth/refresh`, 30 days, `AUTH_REFRESH_TOKEN_TTL`)
+  - Refresh tokens are stored hashed and single-use: each refresh rotates them, and reusing a spent one revokes the whole session (token family). Exception: a token rotated within the last 30s (`auth.refresh-token-reuse-grace`) of a still-live session gets a sibling token instead, so two browser tabs refreshing at once don't log the user out
+  - `POST /auth/logout` ends one session, `POST /auth/logout-all` ends all of a user's sessions; an admin role change also ends them
   - Support for multiple user roles (CUSTOMER, VENDOR, ADMIN, AUDITOR)
-  - Session management with Eureka registration
+  - Bootstrapped admin account on startup (`ADMIN_BOOTSTRAP_USERNAME`/`ADMIN_BOOTSTRAP_PASSWORD`, defaults `admin`/`admin123`)
 - **Events Produced:** UserRegisteredEvent, UserAuthenticatedEvent
 - **Events Consumed:** None
 
@@ -61,17 +64,23 @@
 - **Purpose:** Order lifecycle management and saga orchestration
 - **Responsibilities:**
   - Order placement and creation
-  - Order status tracking (PENDING, CONFIRMED, SHIPPED, DELIVERED, CANCELLED)
+  - Order status tracking (PENDING, AWAITING_PAYMENT, CONFIRMED, CANCELLED) - delivery progress lives on the shipment, not the order
   - Saga orchestration for distributed order processing
-  - Order history and audit trail
-  - Customer order queries
+  - Pricing: the order total is always derived from Inventory's catalog unit prices, never from the client
+  - Customer order queries and customer-initiated cancellation (idempotent; 409 once delivered)
+  - Requests are validated before anything is reserved or charged: currency must be an ISO 4217 code (`@IsoCurrency`), at most 50 lines of up to 10,000 units, destination up to 255 characters
 - **Database:** PostgreSQL (orders_db)
 - **Key Features:**
-  - Implements Order Saga pattern
-  - Coordinates across Inventory, Payment, and Shipping services
-  - Compensation logic for order cancellation
-- **Events Produced:** OrderCreatedEvent, OrderConfirmedEvent, OrderShippedEvent, OrderCancelledEvent
-- **Events Consumed:** PaymentCompletedEvent, InventoryReservedEvent, ShipmentCreatedEvent
+  - Orchestrated saga: calls Inventory, Payment and Shipping synchronously over load-balanced REST
+  - `OrderSagaProgressJob` (~5s sweep) polls payment status, then confirms the order and creates the shipment
+  - Compensation: releases inventory on payment failure/cancellation; refunds if already CONFIRMED
+  - Compensations are durable (`order_compensations` outbox, `CompensationService`): recorded in the same transaction as the order change, attempted right after commit, retried by the saga sweep with exponential back-off (5s doubling to 10 min, 20 attempts). Outages, timeouts, 401/403/408/429 are retried; outright rejections (e.g. 409) and exhausted retries are marked FAILED and logged as needing attention
+  - Shipment creation is retried the same way: a paid order whose shipment can't be created is still CONFIRMED, and the saga sweep retries (`OrderShipmentService`, `shipment_*` columns on `orders`) with the same back-off until shipping accepts, rejects (4xx) or 20 attempts run out. Shipping returns the existing shipment for a repeated request, so a retry can't ship twice
+  - Admin endpoints for paid orders without a shipment (ADMIN only): `GET /orders/admin/unshipped` (`retrying: false` = given up), `POST /orders/admin/unshipped/{orderId}/retry` - tries again now with a fresh retry budget (409 if the order isn't CONFIRMED or already has a shipment)
+  - Admin endpoints for the outbox (ADMIN only): `GET /orders/admin/compensations?status=FAILED` (default FAILED; also PENDING/DONE), `GET /orders/admin/compensations/{id}`, `POST /orders/admin/compensations/{id}/retry` - re-queues a FAILED compensation with a fresh retry budget and attempts it immediately (409 if it isn't FAILED)
+  - Resilience4j circuit breakers on all outbound clients; a downstream 4xx is ignored (see `DownstreamClientErrorPredicate`), only 5xx/408/429/connection failures count
+- **Events Produced:** OrderCreatedEvent, OrderConfirmedEvent, OrderCancelledEvent
+- **Events Consumed:** PaymentCompletedEvent, PaymentFailedEvent
 
 ---
 
@@ -79,40 +88,53 @@
 - **Port:** 8083
 - **Purpose:** Stock reservation, release, and inventory tracking
 - **Responsibilities:**
-  - Product catalog management
+  - Product catalog management with unit prices (create is ADMIN/VENDOR only; the creator is recorded as the product's `createdBy` owner)
+  - Low-stock alerts: when a reservation takes a product's available stock from above its reorder threshold to at/below it, `StockLowEvent` is published once (not again while it stays low; restock/release/expiry re-arm it)
   - Stock level tracking
-  - Inventory reservation for orders
-  - Inventory release on order cancellation
-  - Stock updates from suppliers
-  - Backorder management
+  - Inventory reservation, confirmation and release for orders (internal: SERVICE/ADMIN only - called by the orders saga over REST)
+  - Restocking (`POST /inventory/products/{sku}/restock`): ADMIN any product, VENDOR only products they created (403 otherwise)
+  - Input limits (`InventoryLimits`): SKUs are 1-64 of `[A-Za-z0-9._-]` (they travel in URL paths), names up to 255, at most 10,000 units per order line and 50 lines, at most 1,000,000 added per create/restock and 100,000,000 on hand - so stock arithmetic can't overflow
+  - All-or-nothing reservation: if any line asks for more than is available, nothing is reserved and the request is rejected (409, "Not enough stock: SKU (N requested, M available)") - there are no backorders
 - **Database:** PostgreSQL (inventory_db)
 - **Key Features:**
   - Real-time stock availability checks
-  - Distributed transaction support (saga compensation)
-  - Inventory hold management with expiration
-- **Events Produced:** InventoryReservedEvent, InventoryReleasedEvent, StockLowEvent, BackorderCreatedEvent
-- **Events Consumed:** OrderCreatedEvent, OrderCancelledEvent
+  - Saga compensation via reservation release
+  - Reservation holds expire after 15 minutes (`ReservationExpiryJob`, 60s sweep)
+- **Events Produced:** InventoryReservedEvent, InventoryReleasedEvent, StockLowEvent
+- **Events Consumed:** None (driven by REST calls from Orders)
 
 ---
 
 ### 5. **Payment Service** (`payment-service`)
 - **Port:** 8084
-- **Purpose:** Asynchronous payment processing
+- **Purpose:** Collects payments through a hosted-checkout payment provider
 - **Responsibilities:**
-  - Payment authorization and processing
-  - Transaction status tracking
-  - Payment method management
-  - Refund processing
-  - Payment reconciliation
-  - PCI compliance handling (abstracted)
+  - Payment initiation (`POST /payments`, 202, internal: SERVICE/ADMIN only, customer named in the body): opens a checkout session with the provider and returns its `checkoutUrl`; the payment stays PENDING until the customer pays there
+  - An existing payment for an orderId is reused only if customer, amount and currency match (409 otherwise)
+  - Receiving the provider's outcome via a signed webhook (`POST /payments/webhooks/gateway`, HMAC-SHA256, no JWT)
+  - Transaction status tracking (with `failureReason` for FAILED payments)
+  - Refund processing (COMPLETED payments only, SERVICE/ADMIN only - customers get refunds by cancelling the order), executed through the provider
 - **Database:** PostgreSQL (payment_db)
 - **Key Features:**
-  - Async payment processing (eventual consistency)
-  - Multiple payment gateway integration (stub)
-  - Transaction idempotency
-  - Failure recovery and retry logic
+  - Card details never reach OrderSphere - customers pay on the provider's page
+  - `PaymentGatewayClient` abstraction; `DummyPaymentGatewayClient` talks to the dummy gateway (swap for a real provider)
+  - `PaymentProcessingJob` (~5s sweep) reconciles PENDING payments with the provider (covers lost webhooks and expired checkouts) and settles refunds
+  - Idempotent initiation per orderId; webhook and sweep serialized by a row lock
+- **Not implemented yet:** real payment provider / PCI handling, saved cards
 - **Events Produced:** PaymentInitiatedEvent, PaymentCompletedEvent, PaymentFailedEvent, RefundIssuedEvent
-- **Events Consumed:** OrderCreatedEvent, OrderCancelledEvent
+- **Events Consumed:** None (driven by REST calls from Orders)
+
+---
+
+### 5a. **Dummy Payment Gateway** (`dummy-payment-gateway`)
+- **Port:** 8087 (not registered in Eureka, not behind the API gateway - it stands in for an external provider)
+- **Purpose:** Development stand-in for a hosted-checkout card provider (Stripe Checkout-style)
+- **Provides:**
+  - Merchant API (`/api/checkout-sessions`, `/api/refunds`), authenticated with `Authorization: Bearer <GATEWAY_API_KEY>`
+  - Hosted checkout page (`/checkout/{sessionId}`) with Pay and Cancel; redirects back to the Web UI (`?payment=success|cancelled&orderId=N`)
+  - Signed webhooks (`X-Dummy-Gateway-Signature: sha256=<HMAC>`) to payment-service
+- **Test cards:** `4242 4242 4242 4242` succeeds; `4000 0000 0000 0002` is declined (the customer can retry on the same page); any name, a future `MM/YY` expiry, any 3-4 digit CVC
+- **Sessions:** kept in memory (lost on restart → payment-service fails those payments); expire after `GATEWAY_SESSION_TTL` (10 min, below inventory's 15-min hold)
 
 ---
 
@@ -120,19 +142,17 @@
 - **Port:** 8085
 - **Purpose:** Shipment creation, tracking, and logistics management
 - **Responsibilities:**
-  - Shipment creation from confirmed orders
-  - Carrier integration and label generation
-  - Real-time tracking updates
+  - Shipment creation for confirmed orders (SERVICE/ADMIN only - called by the orders saga with its service token)
+  - Tracking: `ShipmentProgressJob` advances CREATED → PICKED → IN_TRANSIT → DELIVERED one stage per ~5s sweep
   - Delivery confirmation
-  - Return shipment handling
-  - Logistics partner coordination
+  - Return shipments for delivered OUTBOUND shipments (`POST /shipments/{id}/return`)
+  - Cancels an undelivered shipment when its order is cancelled
 - **Database:** PostgreSQL (shipping_db)
 - **Key Features:**
-  - Carrier APIs integration (stub)
-  - Automatic tracking notifications
-  - Multiple shipment destination support
+  - Carrier integration (stub)
+  - Ownership checks: customers only see/return their own shipments (others get 404); ADMIN sees all
 - **Events Produced:** ShipmentCreatedEvent, ShipmentPickedEvent, ShipmentInTransitEvent, DeliveryConfirmedEvent
-- **Events Consumed:** OrderConfirmedEvent, OrderCancelledEvent
+- **Events Consumed:** OrderCancelledEvent
 
 ---
 
@@ -140,20 +160,17 @@
 - **Port:** 8086
 - **Purpose:** Event-driven customer and organizational notifications
 - **Responsibilities:**
-  - Order status notifications (email, SMS, in-app)
-  - Payment confirmations
-  - Shipment tracking alerts
-  - Account notifications
-  - Notification preference management
-  - Multi-channel delivery (email, SMS, push)
+  - Order, payment and shipment notifications, triggered by domain events
+  - Notification preference management per channel (EMAIL, SMS, IN_APP, PUSH); a disabled channel marks notifications SKIPPED
+  - Notifications sent directly (`POST /notifications`, SERVICE/ADMIN only)
 - **Database:** PostgreSQL (notification_db)
 - **Key Features:**
-  - Event-driven triggered notifications
-  - Delivery retry logic
-  - Template-based message composition
-  - Notification audit trail
+  - Template-based message composition (`NotificationTemplateRenderer`)
+  - Low-stock alerts (IN_APP) to the product's owner; products with no recorded owner alert `LOW_STOCK_FALLBACK_RECIPIENT` (default `admin`)
+  - Async delivery via `NotificationDeliveryJob` (~5s sweep, PENDING → SENT), retried up to 3 times
+  - Customers only see their own notifications
 - **Events Produced:** NotificationSentEvent, NotificationFailedEvent
-- **Events Consumed:** All major events (OrderCreatedEvent, PaymentCompletedEvent, ShipmentCreatedEvent, etc.)
+- **Events Consumed:** OrderConfirmedEvent, OrderCancelledEvent, PaymentCompletedEvent, PaymentFailedEvent, ShipmentCreatedEvent, ShipmentPickedEvent, ShipmentInTransitEvent, DeliveryConfirmedEvent, StockLowEvent
 
 ---
 
@@ -175,10 +192,9 @@
 ### 9. **Common Libraries** (Shared Code)
 
 #### `common-security`
-- JWT token utilities
-- Authentication filters
-- RBAC annotations and interceptors
-- Security configuration templates
+- JWT verification only (`JwtVerifier`): RS256 public keys from auth-service's JWKS (`jwt.jwks-uri`, fetched lazily, cached, re-fetched for unknown key ids) or a fixed `jwt.public-key`
+- `JwtAuthenticationFilter` mapping the `role` claim to `ROLE_*` authorities
+- Test-jar with `TestJwtIssuer`, auto-configured so every service's tests can mint tokens without auth-service
 
 #### `common-events`
 - Event definitions (POJOs)
@@ -190,18 +206,25 @@
 
 ## 📊 Data & Communication Flow
 
-### Event-Driven Communication
-Services communicate via asynchronous events using a message broker (RabbitMQ/Kafka pattern):
+### Orchestration + Events
+The order saga is **orchestrated** by the Orders service over synchronous, load-balanced REST (resolved through Eureka, wrapped in Resilience4j circuit breakers). Domain events are published to RabbitMQ for everything that doesn't need to block the request.
+
+- **Broker:** RabbitMQ, topic exchange `ordersphere.events` (routing keys like `payment.completed`), dead-letter exchange `ordersphere.events.dlx`
+- **Queues:** `notification-service.events`, `ordersphere-orders.payment-events`, `shipping-service.order-events` - each with a `.dlq`
+- **Publishing:** services raise Spring application events; `DomainEventRelay` (common-events) forwards them to the exchange
 
 ```
 Order Placement Flow:
-1. Client → API Gateway → Orders Service (create order)
-2. Orders Service → Emit OrderCreatedEvent
-3. Inventory Service → Consume OrderCreatedEvent → Reserve Stock → Emit InventoryReservedEvent
-4. Payment Service → Consume OrderCreatedEvent → Process Payment → Emit PaymentCompletedEvent
-5. Shipping Service → Consume PaymentCompletedEvent → Create Shipment → Emit ShipmentCreatedEvent
-6. Notification Service → Consume all events → Send notifications
-7. Orders Service → Consume InventoryReservedEvent + PaymentCompletedEvent → Update status
+1. Client → API Gateway → Orders Service (create order, status PENDING)
+2. Orders → Inventory (REST): reserve stock; response prices each line → order total computed
+3. Orders → Payment (REST): initiate payment → checkout session opened → order AWAITING_PAYMENT with `checkoutUrl`; payment is PENDING
+4. Web UI redirects the browser to the payment provider's hosted checkout page; the customer pays (or cancels)
+   → provider webhook → payment-service → PaymentCompletedEvent / PaymentFailedEvent
+   (payment-service's ~5s sweep also polls the provider, so a lost webhook or an expired checkout is still picked up)
+5. Orders consumes the payment event (or its ~5s saga job polls payment status) → confirms the reservation with Inventory → creates shipment via Shipping (REST) → CONFIRMED
+   (on FAILED → releases inventory → CANCELLED)
+6. Shipping job (~5s per stage) → PICKED → IN_TRANSIT → DELIVERED, emitting an event per stage
+7. Notification Service consumes order/payment/shipment events → queues notifications → delivery job sends them
 ```
 
 ### Database Strategy
@@ -216,66 +239,66 @@ Order Placement Flow:
 ### PostgreSQL
 - **Host:** `postgres` (containerized service)
 - **Port:** 5432
-- **Databases:** One per service (auth_db, orders_db, inventory_db, payment_db, shipping_db, notification_db)
-- **Deployment:** Kubernetes StatefulSet with persistent volumes
+- **Databases:** One per service (auth_db, orders_db, inventory_db, payment_db, shipping_db, notification_db), created by `docker/postgres-init`
+- **Migrations:** Flyway, per service (`src/main/resources/db/migration`)
 
 ---
 
 ## 🚀 Deployment Architecture
 
-### Kubernetes Deployment
-- **Container Registry:** Docker images for each service
-- **Orchestration:** Kubernetes (K8s)
-- **Configuration:** K8s manifests + environment variables
-- **Networking:** K8s Services for internal/external exposure
+### Docker Compose (Development - the only deployment in the repo today)
+- `docker-compose.yml` - PostgreSQL, RabbitMQ, Redis (gateway rate limits) (management UI on `:15672`, `ordersphere`/`ordersphere`), Eureka, the gateway, all six services and the dummy payment gateway (`:8087`)
+- Each service has its own `Dockerfile` under `services/<name>/`; rebuild one with `docker compose up -d --build <service>`
 
-### Kubernetes Resources
-- `auth-service.yaml` - Auth service deployment
-- `postgres-deployment.yaml` - PostgreSQL StatefulSet
-- `postgres-service.yaml` - PostgreSQL Service
-- `postgres-secret.yaml` - Database credentials
-
-### Docker Compose (Development)
-- `docker-compose.yml` - Local development environment
-- Containerizes all services and PostgreSQL for quick setup
+### Kubernetes (Planned)
+- No Kubernetes manifests are checked in yet. Target: one Deployment per service, PostgreSQL as a StatefulSet with persistent volumes, credentials in Secrets.
+- Every service and the gateway expose `/actuator/health` plus `/liveness` and `/readiness` probes without authentication; docker-compose health checks use `/actuator/health/readiness`. Orders' circuit-breaker actuator endpoints are ADMIN-only.
 
 ---
 
 ## 🔐 Security Features
 
-- **JWT Authentication:** Token-based stateless auth
-- **Role-Based Access Control (RBAC):** Multiple user roles with permission levels
+- **JWT Authentication:** stateless RS256 tokens signed only by auth-service; every other service verifies them with the public keys from auth-service's JWKS (`common-security`), so no service can mint or forge a token. Tokens carry `iss=ordersphere-auth`, `kid`, `role`, `typ` (`access`/`service`)
+- **Role-Based Access Control (RBAC):** `@PreAuthorize` role checks per endpoint
+- **Resource ownership:** customers only see their own orders, payments, shipments and notifications (404 otherwise); ADMIN (and the SERVICE identity for payments/shipments) sees all
+- **Internal endpoints:** stock reservations, payment initiation/refund, shipment creation and direct notifications require the `SERVICE` or `ADMIN` role - customers get 403
+- **Payments:** card details are entered only on the payment provider's hosted page; the provider's webhook is authenticated by HMAC signature and its merchant API by secret key
 - **Password Security:** Bcrypt hashing with salt
-- **Token Expiration:** 1-hour JWT expiration with refresh mechanism
-- **Service-to-Service Auth:** Inter-service communication security (TBD)
-- **Audit Trail:** Blockchain-based immutable audit logs via Hyperledger Fabric
+- **Token Expiration & Revocation:** 15-minute access tokens plus rotating, revocable refresh tokens. Logout/role changes stop a session from refreshing; an access token already issued stays valid until it expires (at most 15 minutes)
+- **Service-to-Service Auth:** the orders saga calls every downstream service with its own `SERVICE`-role token, never the customer's. `ServiceTokenProvider` obtains it from auth-service via client credentials (`POST /auth/token`) and caches it until shortly before expiry
+- **Audit Trail (Planned):** Blockchain-based immutable audit logs via Hyperledger Fabric
 
 ---
 
 ## 📝 API Documentation
 
 ### Gateway API Endpoints
-- **Base URL:** `http://localhost:8080`
+- **Base URL:** `http://localhost:8080/{service-id}` (e.g. `http://localhost:8080/ordersphere-orders/orders`)
 
 ### Key Service Endpoints
-- **Auth Service:** `/auth/*` (login, register, refresh)
-- **Orders Service:** `/orders/*` (create, list, track)
-- **Inventory Service:** `/inventory/*` (products, stock)
-- **Payment Service:** `/payments/*` (process, status)
-- **Shipping Service:** `/shipments/*` (create, track)
-- **Notifications:** `/notifications/*` (preferences, history)
+- **Auth Service:** `/auth/register`, `/auth/login`, `/auth/me`, `/auth/admin/users` (ADMIN: list), `/auth/admin/users/{id}/role`
+- **Orders Service:** `/orders` (create, list), `/orders/{id}`, `/orders/{id}/cancel`, `/orders/admin/compensations` (ADMIN: list, get, retry failed), `/orders/admin/unshipped` (ADMIN: list, retry)
+- **Inventory Service:** `/inventory/products` (create, list, get, restock), `/inventory/reservations` (reserve, confirm, release - internal, SERVICE/ADMIN)
+- **Payment Service:** `/payments` (initiate, status, refund), `/payments/webhooks/gateway` (provider webhook)
+- **Dummy Payment Gateway (:8087, direct):** `/checkout/{sessionId}` (hosted page), `/api/checkout-sessions`, `/api/refunds`
+- **Shipping Service:** `/shipments` (create - ADMIN), `/shipments/{id}`, `/shipments/{id}/tracking`, `/shipments/order/{orderId}`, `/shipments/{id}/return`
+- **Notifications:** `/notifications` (list, get; create - ADMIN), `/notification-preferences` (set, list, delete)
 
-*(Detailed API specs available in OpenAPI/Swagger documentation)*
+*(No OpenAPI/Swagger docs yet - see the Postman collections in `postman/` for runnable examples)*
 
 ---
 
 ## 🧪 Testing & Quality Assurance
 
-- **Unit Tests:** Per-service test suites
-- **Integration Tests:** Service-to-service event communication tests
-- **Contract Tests:** API contract verification
-- **Load Testing:** Performance validation under concurrent load
-- **End-to-End Tests:** Complete order flow scenarios
+- **Unit Tests:** Per-service JUnit 5 + Mockito suites
+- **Integration Tests:** `@SpringBootTest` + MockMvc against real PostgreSQL and RabbitMQ via Testcontainers (Docker required)
+- **Formatting:** Spotless (google-java-format) runs `check` in the `verify` phase - fix with `mvn spotless:apply`
+- **End-to-End Tests:** Postman collections run against the docker-compose stack with newman:
+  - `postman/full-order-flow.postman_collection.json` - happy path, payment decline, cancellation with refund, negative checks
+  - `postman/feature-coverage.postman_collection.json` - auth/RBAC, inventory, payments, returns, notifications, Eureka, RabbitMQ, circuit breakers
+  - `postman/api-reference.postman_collection.json` - one example request per endpoint (no assertions)
+- **CI:** GitHub Actions (`.github/workflows/ci.yml`) runs `mvn verify` and the Web UI build on pushes and PRs to `master`/`develop`
+- **Not yet:** contract tests, load tests
 
 ---
 
@@ -286,31 +309,31 @@ The system uses the Saga pattern to maintain consistency across distributed serv
 
 **Happy Path:**
 1. Order Service creates order → PENDING
-2. Inventory Service reserves stock → Order → CONFIRMED
-3. Payment Service processes payment → Payment confirmed
-4. Shipping Service creates shipment → Order → SHIPPED
+2. Inventory reserves stock and prices the lines → checkout session opened → Order AWAITING_PAYMENT (customer is sent to the payment page)
+3. Customer pays on the hosted page → inventory reservation confirmed (so it can't expire) → shipment created → Order CONFIRMED
+4. Shipment progresses to DELIVERED (the order stays CONFIRMED; delivery is tracked on the shipment)
 
 **Failure & Compensation:**
-- Payment fails → Inventory compensation (release stock)
-- Inventory unavailable → Order cancellation, payment reversal
-- Shipping fails → Payment refund, inventory release
+- Not enough stock for any line, unknown SKU, or no price → order CANCELLED immediately with a `cancellationReason` the customer sees (e.g. "Not enough stock: SKU-1 (2 requested, 0 available)"), nothing reserved or charged
+- Payment initiation fails → inventory released → CANCELLED
+- Card declined → shown on the payment page; the customer can retry, the order keeps waiting
+- Customer cancels on the payment page, or the checkout expires (10 min) → payment FAILED → inventory released → CANCELLED
+- Customer cancels the order but then pays on the still-open page → the late payment is refunded automatically
+- Reservation confirm fails: Inventory unavailable → order stays AWAITING_PAYMENT and the next saga sweep retries; Inventory rejects it (reservation already expired/released) → payment refunded → CANCELLED
+- Customer cancels → inventory released; payment refunded if already CONFIRMED; undelivered shipment cancelled; 409 once delivered
+- A refund or stock release that fails (payment/inventory down, token not yet verifiable) is kept in `order_compensations` and retried until it succeeds - it is never silently dropped
+- Shipment creation fails (shipping down) → the order is still CONFIRMED (it's paid) and the saga sweep retries creating the shipment with back-off; if shipping rejects it or the retries run out it's listed for an admin at `/orders/admin/unshipped`
 
 ---
 
-## 📚 Additional Components (Planned)
+## 📚 Additional Components
 
-### Web UI (Upcoming)
-- **Technology Stack:** React/Vue.js (TBD)
-- **Responsibilities:**
-  - Customer dashboard for order tracking
-  - Inventory search and browsing
-  - Order placement UI
-  - Payment processing flows
-  - Account management
-  - Admin dashboard
-- **Integration:** REST API calls to API Gateway
-- **Authentication:** JWT token-based with Auth Service
-- **Deployment:** CDN + static hosting or Node.js reverse proxy
+### Web UI (`web-ui/` - customer, vendor and admin screens done)
+- **Technology Stack:** React 18 + Vite (no router, no server of its own); see `web-ui/README.md`
+- **Done:** login/register as Customer or Vendor (tokens kept in `localStorage`, silent refresh, 401 → back to login), order list with totals and cancellation reasons, product catalog with prices and stock, order placement (out-of-stock products disabled, quantities capped at what's available) with redirect to the hosted payment page and back (with a "Pay now" link for unpaid orders), **order detail** (cancel with refund notice, shipment tracking timeline refreshed while in transit, return requests once delivered), **notifications** inbox with per-channel preferences, **Manage Products** for ADMIN/VENDOR (create a product, restock, low-stock highlighting; tab shown based on the token's `role` claim), **Admin** for ADMIN (users & roles with your own role locked, failed refunds/stock releases with Retry, unshipped paid orders with Retry)
+- **Not yet:** URL routing (pages aren't addressable by URL), automated UI tests
+- **Integration:** REST calls to the API Gateway (`VITE_GATEWAY_URL`, default `http://localhost:8080`); dev server on `http://localhost:5173`
+- **Deployment:** not decided (static hosting behind a CDN is the likely fit)
 
 ### Mobile App (Future)
 - Native iOS/Android applications
@@ -334,28 +357,42 @@ The system uses the Saga pattern to maintain consistency across distributed serv
 ### Prerequisites
 - Java 17+
 - Maven 3.8+
-- Docker & Docker Compose
-- Kubernetes (optional, for K8s deployment)
+- Docker & Docker Compose (also needed by the Testcontainers integration tests)
+- Node.js 20+ (Web UI, newman)
 
 ### Local Development
 ```bash
-# Build all services
-mvn clean package
+# Build and run all tests + the Spotless format check (what CI runs)
+mvn verify
 
-# Start services with Docker Compose
-docker-compose up
+# Fix formatting before committing
+mvn spotless:apply
+
+# Start the full stack
+docker compose up -d
 
 # Services will be available at:
 # API Gateway: http://localhost:8080
 # Service Registry: http://localhost:8761
+# RabbitMQ management: http://localhost:15672 (ordersphere / ordersphere)
+# Dummy payment gateway (hosted checkout): http://localhost:8087
 # PostgreSQL: localhost:5432
+
+# Rebuild one service after a change
+docker compose up -d --build ordersphere-orders
+
+# End-to-end tests against the running stack
+npx newman run postman/full-order-flow.postman_collection.json
+npx newman run postman/feature-coverage.postman_collection.json
+
+# Web UI
+cd web-ui && npm install && npm run dev
 ```
 
 ### Build Individual Service
 ```bash
-cd services/auth-service
-mvn clean package
-mvn spring-boot:run
+# -am also builds common-events/common-security; without it a stale copy in ~/.m2 can be used
+mvn verify -pl services/shipping-service -am
 ```
 
 ---
@@ -371,17 +408,20 @@ ordersphere/
 │   ├── payment-service/              # Payment processing
 │   ├── shipping-service/             # Shipment & logistics
 │   ├── notification-service/         # Event-driven notifications
+│   ├── dummy-payment-gateway/        # Stand-in hosted-checkout payment provider (dev/test)
 │   ├── ordersphere-gateway/          # API Gateway
 │   ├── service-registry/             # Eureka Service Registry
 │   ├── common-events/                # Shared event definitions
 │   └── common-security/              # Shared security utilities
-├── docs/
-│   └── architecture/                 # Architecture documentation
-├── k8sSteps/                         # Kubernetes deployment guides
-├── pom.xml                           # Parent Maven configuration
+├── web-ui/                           # React + Vite customer Web UI
+├── postman/                          # Postman collections (flow, feature coverage, API reference)
+├── docs/                             # product-functionality.md, technical-architecture.md
+├── docker/postgres-init/             # Creates the per-service databases
+├── .github/workflows/ci.yml          # CI: mvn verify + Web UI build
+├── pom.xml                           # Parent Maven configuration (incl. Spotless)
 ├── docker-compose.yml                # Local development environment
 ├── README.md                         # Project overview
-└── AGENT.md                          # This file
+└── CLAUDE.md                         # This file
 ```
 
 ---
@@ -395,20 +435,24 @@ ordersphere/
 | **Database** | PostgreSQL | Primary data store |
 | **API Gateway** | Spring Cloud Gateway | Request routing |
 | **Authentication** | JWT + Spring Security | Auth & authorization |
-| **Events** | RabbitMQ/Kafka (abstracted) | Async messaging |
-| **Deployment** | Docker + Kubernetes | Containerization & orchestration |
-| **Audit Trail** | Hyperledger Fabric | Blockchain-based audit logs |
+| **Events** | RabbitMQ | Async messaging |
+| **Resilience** | Resilience4j | Circuit breakers on the saga's outbound calls |
+| **Migrations** | Flyway | Per-service schema management |
+| **Web UI** | React + Vite | Customer front end |
+| **Deployment** | Docker Compose (Kubernetes planned) | Containerization & orchestration |
+| **Audit Trail** | Hyperledger Fabric (planned) | Blockchain-based audit logs |
 | **Build Tool** | Maven | Dependency & build management |
+| **CI** | GitHub Actions | Build, test and format check on push/PR |
 
 ---
 
 ## 📞 Service Communication Map
 
 ```
-External Clients
-       ↓
-  API Gateway (8080)
-   ↙ ↓ ↙ ↓ ↙ ↓ ↙ ↓
+External Clients (browser / Web UI)
+       ↓                                        ↘ redirect to pay
+  API Gateway (8080)                      Dummy Payment Gateway (8087)
+   ↙ ↓ ↙ ↓ ↙ ↓ ↙ ↓                         ↑ merchant API   ↓ signed webhook
 Auth  Orders  Inventory  Payment  Shipping  Notification
 (8081) (8082)  (8083)    (8084)   (8085)    (8086)
    ↓    ↓       ↓        ↓        ↓          ↓
@@ -421,16 +465,23 @@ Service Registry (Eureka) - 8761
 
 ## 🎯 Next Steps & Roadmap
 
-- [ ] Implement React/Vue.js Web UI
+- [x] Implement message broker (RabbitMQ)
+- [x] Implement circuit breakers (Resilience4j)
+- [x] CI pipeline (GitHub Actions)
+- [x] Web UI - customer screens (orders, tracking, cancellation, returns, notifications), product management and admin screens
+- [x] Fix: retry shipment creation for CONFIRMED orders left without a shipment
+- [x] Security hardening: internal endpoints limited to SERVICE/ADMIN, RS256 tokens signed only by auth-service (JWKS), service identity via client credentials, refresh tokens with rotation/revocation
+- [x] Gateway rate limiting (Redis), unauthenticated health probes, PATCH in gateway CORS
+- [ ] Security hardening (later): OAuth2/OIDC, request validation at the gateway
+- [x] Consume `StockLowEvent` - low-stock alerts to the product's vendor
+- [ ] Payment reconciliation
 - [ ] Add comprehensive API documentation (OpenAPI/Swagger)
-- [x] Implement message broker (RabbitMQ/Kafka)
+- [ ] Add distributed tracing (Jaeger/Zipkin)
+- [ ] Kubernetes manifests
 - [ ] Add Hyperledger Fabric Ledger Service
 - [ ] Implement CQRS for analytics/reporting
-- [ ] Add distributed tracing (Jaeger/Zipkin)
-- [x] Implement circuit breakers (Resilience4j)
 - [ ] Add comprehensive logging (ELK stack)
 - [ ] Performance optimization and caching (Redis)
-- [ ] Security hardening and OAuth2/OIDC integration
 
 ---
 
@@ -440,7 +491,7 @@ OrderSphere is developed as an enterprise order management platform.
 
 ---
 
-**Last Updated:** July 2026  
+**Last Updated:** September 2026  
 **Maintainer:** Sankar  
 **Repository:** sankar1609/OrderSphere
 

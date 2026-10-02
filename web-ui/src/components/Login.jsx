@@ -13,8 +13,7 @@ export default function Login({ onLoggedIn, onSwitchToRegister, message }) {
     setError(null);
     setSubmitting(true);
     try {
-      const { token } = await login(username, password);
-      onLoggedIn(token);
+      onLoggedIn(await login(username, password));
     } catch (err) {
       setError(err.message);
     } finally {

@@ -2,10 +2,11 @@ package com.ordersphere.auth.dto;
 
 import com.ordersphere.auth.domain.Role;
 import com.ordersphere.auth.domain.User;
+import java.time.Instant;
 
-public record UserResponse(Long id, String username, Role role) {
+public record UserResponse(Long id, String username, Role role, Instant createdAt) {
 
   public static UserResponse from(User user) {
-    return new UserResponse(user.getId(), user.getUsername(), user.getRole());
+    return new UserResponse(user.getId(), user.getUsername(), user.getRole(), user.getCreatedAt());
   }
 }

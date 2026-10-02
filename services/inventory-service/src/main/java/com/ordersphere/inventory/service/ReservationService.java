@@ -1,28 +1,27 @@
 package com.ordersphere.inventory.service;
 
-import com.ordersphere.events.BackorderCreatedEvent;
 import com.ordersphere.events.InventoryReleasedEvent;
 import com.ordersphere.events.InventoryReservedEvent;
 import com.ordersphere.events.StockLowEvent;
-import com.ordersphere.inventory.domain.Backorder;
-import com.ordersphere.inventory.domain.BackorderStatus;
 import com.ordersphere.inventory.domain.Product;
 import com.ordersphere.inventory.domain.Reservation;
 import com.ordersphere.inventory.domain.ReservationItem;
 import com.ordersphere.inventory.domain.ReservationStatus;
 import com.ordersphere.inventory.dto.ReservationResponse;
 import com.ordersphere.inventory.dto.ReserveStockRequest;
+import com.ordersphere.inventory.exception.InsufficientStockException;
 import com.ordersphere.inventory.exception.InvalidReservationStateException;
 import com.ordersphere.inventory.exception.ProductNotFoundException;
 import com.ordersphere.inventory.exception.ReservationNotFoundException;
-import com.ordersphere.inventory.repository.BackorderRepository;
 import com.ordersphere.inventory.repository.ProductRepository;
 import com.ordersphere.inventory.repository.ReservationRepository;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.HashMap;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
@@ -33,19 +32,16 @@ public class ReservationService {
 
   private final ReservationRepository reservationRepository;
   private final ProductRepository productRepository;
-  private final BackorderRepository backorderRepository;
   private final ApplicationEventPublisher eventPublisher;
   private final long holdTtlMinutes;
 
   public ReservationService(
       ReservationRepository reservationRepository,
       ProductRepository productRepository,
-      BackorderRepository backorderRepository,
       ApplicationEventPublisher eventPublisher,
       @Value("${inventory.reservation.hold-ttl-minutes}") long holdTtlMinutes) {
     this.reservationRepository = reservationRepository;
     this.productRepository = productRepository;
-    this.backorderRepository = backorderRepository;
     this.eventPublisher = eventPublisher;
     this.holdTtlMinutes = holdTtlMinutes;
   }
@@ -54,54 +50,62 @@ public class ReservationService {
   public ReservationResponse reserve(ReserveStockRequest request) {
     var existing = reservationRepository.findByOrderId(request.orderId());
     if (existing.isPresent()) {
-      return buildResponseForExisting(existing.get());
+      return ReservationResponse.from(existing.get());
+    }
+
+    // All or nothing: lock every product first (in SKU order, so two orders for overlapping
+    // products can't deadlock), and only reserve once each one has enough available.
+    Map<String, Integer> requested = new TreeMap<>();
+    for (ReserveStockRequest.Item item : request.items()) {
+      // addExact: request validation caps quantities, but a sum that wrapped negative would
+      // reserve negative stock - creating it out of nothing - so fail loudly instead.
+      requested.merge(item.sku(), item.quantity(), Math::addExact);
+    }
+    Map<String, Product> products = new LinkedHashMap<>();
+    List<InsufficientStockException.Shortage> shortages = new ArrayList<>();
+    for (Map.Entry<String, Integer> line : requested.entrySet()) {
+      Product product =
+          productRepository
+              .findWithLockBySku(line.getKey())
+              .orElseThrow(() -> new ProductNotFoundException(line.getKey()));
+      products.put(line.getKey(), product);
+      if (product.getAvailableQuantity() < line.getValue()) {
+        shortages.add(
+            new InsufficientStockException.Shortage(
+                line.getKey(), line.getValue(), product.getAvailableQuantity()));
+      }
+    }
+    if (!shortages.isEmpty()) {
+      throw new InsufficientStockException(shortages);
     }
 
     Reservation reservation =
         new Reservation(request.orderId(), Instant.now().plus(holdTtlMinutes, ChronoUnit.MINUTES));
+    for (Map.Entry<String, Integer> line : requested.entrySet()) {
+      Product product = products.get(line.getKey());
+      int availableBefore = product.getAvailableQuantity();
+      reservation.addItem(new ReservationItem(product, line.getValue()));
+      product.setQuantityReserved(product.getQuantityReserved() + line.getValue());
+      productRepository.save(product);
 
-    Map<String, Integer> reservedQuantities = new HashMap<>();
-    Map<String, Integer> backorderedQuantities = new HashMap<>();
-
-    for (ReserveStockRequest.Item item : request.items()) {
-      Product product =
-          productRepository
-              .findWithLockBySku(item.sku())
-              .orElseThrow(() -> new ProductNotFoundException(item.sku()));
-
-      int available = product.getAvailableQuantity();
-      int reserveQuantity = Math.min(available, item.quantity());
-      int shortfall = item.quantity() - reserveQuantity;
-
-      if (reserveQuantity > 0) {
-        reservation.addItem(new ReservationItem(product, reserveQuantity));
-        product.setQuantityReserved(product.getQuantityReserved() + reserveQuantity);
-        productRepository.save(product);
-        reservedQuantities.merge(item.sku(), reserveQuantity, Integer::sum);
-
-        if (product.getAvailableQuantity() <= product.getReorderThreshold()) {
-          eventPublisher.publishEvent(
-              new StockLowEvent(
-                  product.getSku(), product.getAvailableQuantity(), product.getReorderThreshold()));
-        }
-      }
-
-      if (shortfall > 0) {
-        backorderRepository.save(new Backorder(product, request.orderId(), shortfall));
-        backorderedQuantities.merge(item.sku(), shortfall, Integer::sum);
+      // Alert once, as stock crosses the threshold - not on every order while it stays low.
+      // Releases, expiries and restocks raise it back above, which re-arms the alert.
+      if (availableBefore > product.getReorderThreshold()
+          && product.getAvailableQuantity() <= product.getReorderThreshold()) {
         eventPublisher.publishEvent(
-            new BackorderCreatedEvent(request.orderId(), item.sku(), shortfall));
+            new StockLowEvent(
+                product.getSku(),
+                product.getName(),
+                product.getAvailableQuantity(),
+                product.getReorderThreshold(),
+                product.getCreatedBy()));
       }
     }
-
     reservationRepository.save(reservation);
 
-    if (!reservedQuantities.isEmpty()) {
-      eventPublisher.publishEvent(
-          new InventoryReservedEvent(request.orderId(), reservedQuantities));
-    }
+    eventPublisher.publishEvent(new InventoryReservedEvent(request.orderId(), requested));
 
-    return ReservationResponse.of(reservation, backorderedQuantities);
+    return ReservationResponse.from(reservation);
   }
 
   @Transactional
@@ -109,7 +113,7 @@ public class ReservationService {
     Reservation reservation = findReservationOrThrow(orderId);
 
     if (reservation.getStatus() == ReservationStatus.CONFIRMED) {
-      return ReservationResponse.of(reservation, Map.of());
+      return ReservationResponse.from(reservation);
     }
     if (reservation.getStatus() != ReservationStatus.ACTIVE) {
       throw new InvalidReservationStateException(
@@ -123,7 +127,7 @@ public class ReservationService {
     reservation.setExpiresAt(null);
     reservationRepository.save(reservation);
 
-    return ReservationResponse.of(reservation, Map.of());
+    return ReservationResponse.from(reservation);
   }
 
   @Transactional
@@ -132,7 +136,7 @@ public class ReservationService {
 
     if (reservation.getStatus() == ReservationStatus.RELEASED
         || reservation.getStatus() == ReservationStatus.EXPIRED) {
-      return ReservationResponse.of(reservation, Map.of());
+      return ReservationResponse.from(reservation);
     }
 
     restoreStock(reservation);
@@ -143,7 +147,7 @@ public class ReservationService {
     eventPublisher.publishEvent(
         new InventoryReleasedEvent(orderId, InventoryReleasedEvent.Reason.MANUAL));
 
-    return ReservationResponse.of(reservation, Map.of());
+    return ReservationResponse.from(reservation);
   }
 
   @Transactional
@@ -167,17 +171,6 @@ public class ReservationService {
       product.setQuantityReserved(product.getQuantityReserved() - item.getQuantityReserved());
       productRepository.save(product);
     }
-  }
-
-  private ReservationResponse buildResponseForExisting(Reservation reservation) {
-    List<Backorder> openBackorders =
-        backorderRepository.findByOrderIdAndStatus(reservation.getOrderId(), BackorderStatus.OPEN);
-    Map<String, Integer> backorderedQuantities = new HashMap<>();
-    for (Backorder backorder : openBackorders) {
-      backorderedQuantities.merge(
-          backorder.getProduct().getSku(), backorder.getQuantity(), Integer::sum);
-    }
-    return ReservationResponse.of(reservation, backorderedQuantities);
   }
 
   private Reservation findReservationOrThrow(Long orderId) {

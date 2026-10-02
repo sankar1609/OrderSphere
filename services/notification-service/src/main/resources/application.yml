@@ -27,13 +27,28 @@ spring:
           initial-interval: 1000ms
 
 jwt:
-  secret: ${JWT_SECRET:dev-only-secret-key-change-me-before-any-real-deployment}
-  expiration-millis: ${JWT_EXPIRATION_MILLIS:3600000}
+  # Tokens are verified with auth-service's public keys (RS256); nothing here can sign one.
+  jwks-uri: ${JWT_JWKS_URI:http://localhost:8081/auth/.well-known/jwks.json}
 
 notification:
   delivery:
     max-retries: ${NOTIFICATION_MAX_RETRIES:3}
     sweep-interval-ms: ${NOTIFICATION_SWEEP_INTERVAL_MS:5000}
+  low-stock:
+    # Who gets low-stock alerts for products with no recorded creator (created before V3 in
+    # inventory-service).
+    fallback-recipient: ${LOW_STOCK_FALLBACK_RECIPIENT:admin}
+
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      probes:
+        enabled: true
 
 eureka:
   client:

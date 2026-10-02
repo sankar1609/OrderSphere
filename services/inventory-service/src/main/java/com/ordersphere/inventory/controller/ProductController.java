@@ -5,10 +5,12 @@ import com.ordersphere.inventory.dto.ProductResponse;
 import com.ordersphere.inventory.dto.RestockRequest;
 import com.ordersphere.inventory.service.ProductService;
 import jakarta.validation.Valid;
+import java.security.Principal;
 import java.util.List;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -29,8 +31,9 @@ public class ProductController {
   @PostMapping
   @PreAuthorize("hasAnyRole('ADMIN', 'VENDOR')")
   public ResponseEntity<ProductResponse> createProduct(
-      @Valid @RequestBody CreateProductRequest request) {
-    return ResponseEntity.status(HttpStatus.CREATED).body(productService.createProduct(request));
+      @Valid @RequestBody CreateProductRequest request, Principal principal) {
+    return ResponseEntity.status(HttpStatus.CREATED)
+        .body(productService.createProduct(request, principal.getName()));
   }
 
   @GetMapping
@@ -46,7 +49,12 @@ public class ProductController {
   @PostMapping("/{sku}/restock")
   @PreAuthorize("hasAnyRole('ADMIN', 'VENDOR')")
   public ProductResponse restock(
-      @PathVariable String sku, @Valid @RequestBody RestockRequest request) {
-    return productService.restock(sku, request.quantity());
+      @PathVariable String sku,
+      @Valid @RequestBody RestockRequest request,
+      Authentication authentication) {
+    boolean isAdmin =
+        authentication.getAuthorities().stream()
+            .anyMatch(authority -> authority.getAuthority().equals("ROLE_ADMIN"));
+    return productService.restock(sku, request.quantity(), authentication.getName(), isAdmin);
   }
 }

@@ -8,6 +8,7 @@ import com.ordersphere.events.PaymentFailedEvent;
 import com.ordersphere.events.ShipmentCreatedEvent;
 import com.ordersphere.events.ShipmentInTransitEvent;
 import com.ordersphere.events.ShipmentPickedEvent;
+import com.ordersphere.events.StockLowEvent;
 import com.ordersphere.events.messaging.RoutingKeys;
 import org.springframework.amqp.core.Binding;
 import org.springframework.amqp.core.BindingBuilder;
@@ -72,7 +73,8 @@ public class RabbitConfig {
         bindingFor(domainEventsExchange, notificationEventsQueue, ShipmentCreatedEvent.class),
         bindingFor(domainEventsExchange, notificationEventsQueue, ShipmentPickedEvent.class),
         bindingFor(domainEventsExchange, notificationEventsQueue, ShipmentInTransitEvent.class),
-        bindingFor(domainEventsExchange, notificationEventsQueue, DeliveryConfirmedEvent.class));
+        bindingFor(domainEventsExchange, notificationEventsQueue, DeliveryConfirmedEvent.class),
+        bindingFor(domainEventsExchange, notificationEventsQueue, StockLowEvent.class));
   }
 
   private static Binding bindingFor(TopicExchange exchange, Queue queue, Class<?> eventType) {

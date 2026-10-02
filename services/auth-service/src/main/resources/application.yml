@@ -27,13 +27,41 @@ spring:
           initial-interval: 1000ms
 
 jwt:
-  secret: ${JWT_SECRET:dev-only-secret-key-change-me-before-any-real-deployment}
-  expiration-millis: ${JWT_EXPIRATION_MILLIS:3600000}
+  # Access-token lifetime: short, because an issued access token stays valid until it expires.
+  # Sessions continue via refresh tokens (auth.refresh-token-ttl).
+  expiration-millis: ${JWT_EXPIRATION_MILLIS:900000}
+  signing:
+    # Optional RSA key pair (PEM or base64 DER). If unset, a key pair is generated on first start
+    # and stored in the signing_keys table.
+    private-key: ${JWT_PRIVATE_KEY:}
+    public-key: ${JWT_PUBLIC_KEY:}
+    key-id: ${JWT_KEY_ID:configured}
+
+auth:
+  # Lifetime of a refresh token (a session idle this long must log in again).
+  refresh-token-ttl: ${AUTH_REFRESH_TOKEN_TTL:P30D}
+  # Lifetime of SERVICE-role tokens issued via client credentials (POST /auth/token).
+  service-token-ttl: ${AUTH_SERVICE_TOKEN_TTL:PT5M}
+  # Services allowed to obtain a SERVICE token: auth.clients.<client-id>.secret
+  clients:
+    orders-service:
+      secret: ${ORDERS_CLIENT_SECRET:dev-orders-client-secret}
 
 admin:
   bootstrap:
     username: ${ADMIN_BOOTSTRAP_USERNAME:admin}
     password: ${ADMIN_BOOTSTRAP_PASSWORD:admin123}
+
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      probes:
+        enabled: true
 
 eureka:
   client:

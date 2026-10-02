@@ -21,6 +21,16 @@ services:
       - "5672:5672"
       - "15672:15672"
 
+  # Rate-limit counters for the API gateway (RequestRateLimiter). Not published to the host.
+  redis:
+    image: redis:7-alpine
+    container_name: ordersphere-redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
   service-registry:
     build:
       context: .
@@ -38,8 +48,16 @@ services:
       - "8080:8080"
     environment:
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://service-registry:8761/eureka
+      REDIS_HOST: redis
     depends_on:
       - service-registry
+      - redis
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:8080/actuator/health/readiness"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 60s
 
   auth-service:
     build:
@@ -54,7 +72,7 @@ services:
       DB_NAME: auth_db
       DB_USERNAME: ordersphere
       DB_PASSWORD: ordersphere
-      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-key-change-me-before-any-real-deployment}
+      ORDERS_CLIENT_SECRET: ${ORDERS_CLIENT_SECRET:-dev-orders-client-secret}
       EUREKA_URI: http://service-registry:8761/eureka
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USERNAME: ordersphere
@@ -64,6 +82,12 @@ services:
       - postgres
       - service-registry
       - rabbitmq
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:8081/actuator/health/readiness"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 60s
 
   inventory-service:
     build:
@@ -78,7 +102,7 @@ services:
       DB_NAME: inventory_db
       DB_USERNAME: ordersphere
       DB_PASSWORD: ordersphere
-      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-key-change-me-before-any-real-deployment}
+      JWT_JWKS_URI: http://auth-service:8081/auth/.well-known/jwks.json
       EUREKA_URI: http://service-registry:8761/eureka
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USERNAME: ordersphere
@@ -88,6 +112,12 @@ services:
       - postgres
       - service-registry
       - rabbitmq
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:8083/actuator/health/readiness"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 60s
 
   ordersphere-orders:
     build:
@@ -102,7 +132,8 @@ services:
       DB_NAME: orders_db
       DB_USERNAME: ordersphere
       DB_PASSWORD: ordersphere
-      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-key-change-me-before-any-real-deployment}
+      JWT_JWKS_URI: http://auth-service:8081/auth/.well-known/jwks.json
+      ORDERS_CLIENT_SECRET: ${ORDERS_CLIENT_SECRET:-dev-orders-client-secret}
       EUREKA_URI: http://service-registry:8761/eureka
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USERNAME: ordersphere
@@ -112,6 +143,12 @@ services:
       - postgres
       - service-registry
       - rabbitmq
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:8082/actuator/health/readiness"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 60s
 
   payment-service:
     build:
@@ -126,16 +163,44 @@ services:
       DB_NAME: payment_db
       DB_USERNAME: ordersphere
       DB_PASSWORD: ordersphere
-      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-key-change-me-before-any-real-deployment}
+      JWT_JWKS_URI: http://auth-service:8081/auth/.well-known/jwks.json
       EUREKA_URI: http://service-registry:8761/eureka
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USERNAME: ordersphere
       RABBITMQ_PASSWORD: ordersphere
+      PAYMENT_GATEWAY_URL: http://dummy-payment-gateway:8087
+      PAYMENT_GATEWAY_API_KEY: ${PAYMENT_GATEWAY_API_KEY:-dpg_test_secret_key}
+      PAYMENT_GATEWAY_WEBHOOK_SECRET: ${PAYMENT_GATEWAY_WEBHOOK_SECRET:-dpg_test_webhook_secret}
+      PAYMENT_WEBHOOK_URL: http://payment-service:8084/payments/webhooks/gateway
+      PAYMENT_RETURN_URL: ${WEB_UI_URL:-http://localhost:5173/}
       JAVA_TOOL_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5008"
     depends_on:
       - postgres
       - service-registry
       - rabbitmq
+      - dummy-payment-gateway
+
+  # Stand-in for an external card payment provider: hosted checkout page + merchant API.
+  # Not registered in Eureka and not behind the API gateway - browsers and payment-service
+  # reach it directly, as they would a real provider.
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:8084/actuator/health/readiness"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 60s
+
+  dummy-payment-gateway:
+    build:
+      context: .
+      dockerfile: services/dummy-payment-gateway/Dockerfile
+    container_name: ordersphere-dummy-payment-gateway
+    ports:
+      - "8087:8087"
+    environment:
+      GATEWAY_PUBLIC_URL: http://localhost:8087
+      GATEWAY_API_KEY: ${PAYMENT_GATEWAY_API_KEY:-dpg_test_secret_key}
+      GATEWAY_WEBHOOK_SECRET: ${PAYMENT_GATEWAY_WEBHOOK_SECRET:-dpg_test_webhook_secret}
 
   shipping-service:
     build:
@@ -150,7 +215,7 @@ services:
       DB_NAME: shipping_db
       DB_USERNAME: ordersphere
       DB_PASSWORD: ordersphere
-      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-key-change-me-before-any-real-deployment}
+      JWT_JWKS_URI: http://auth-service:8081/auth/.well-known/jwks.json
       EUREKA_URI: http://service-registry:8761/eureka
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USERNAME: ordersphere
@@ -160,6 +225,12 @@ services:
       - postgres
       - service-registry
       - rabbitmq
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:8085/actuator/health/readiness"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 60s
 
   notification-service:
     build:
@@ -174,7 +245,7 @@ services:
       DB_NAME: notification_db
       DB_USERNAME: ordersphere
       DB_PASSWORD: ordersphere
-      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-key-change-me-before-any-real-deployment}
+      JWT_JWKS_URI: http://auth-service:8081/auth/.well-known/jwks.json
       EUREKA_URI: http://service-registry:8761/eureka
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USERNAME: ordersphere
@@ -184,6 +255,12 @@ services:
       - postgres
       - service-registry
       - rabbitmq
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:8086/actuator/health/readiness"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 60s
 
 volumes:
   postgres-data:

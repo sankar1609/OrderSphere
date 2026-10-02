@@ -3,6 +3,7 @@ package com.ordersphere.payment.config;
 import com.ordersphere.security.JwtAuthenticationFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -32,7 +33,18 @@ public class SecurityConfig {
                 exceptions.authenticationEntryPoint(
                     new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
         .authorizeHttpRequests(
-            auth -> auth.requestMatchers("/error").permitAll().anyRequest().authenticated())
+            auth ->
+                auth
+                    // The provider's webhook authenticates by HMAC signature, not JWT.
+                    .requestMatchers(HttpMethod.POST, "/payments/webhooks/gateway")
+                    .permitAll()
+                    // Liveness/readiness probes (Docker / Kubernetes) run without a token.
+                    .requestMatchers("/actuator/health", "/actuator/health/**")
+                    .permitAll()
+                    .requestMatchers("/error")
+                    .permitAll()
+                    .anyRequest()
+                    .authenticated())
         .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
         .build();
   }

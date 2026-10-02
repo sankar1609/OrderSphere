@@ -1,11 +1,62 @@
 const GATEWAY_URL = import.meta.env.VITE_GATEWAY_URL ?? "http://localhost:8080";
 
 /**
+ * Session renewal. Access tokens live 15 minutes; when an authenticated call comes back 401, the
+ * refresh token is exchanged once for a new pair (POST /auth/refresh) and the call is retried with
+ * the new access token. Refresh tokens are single-use and reusing one revokes the whole session,
+ * so concurrent 401s share a single in-flight refresh instead of each spending the token.
+ */
+const auth = { refreshToken: null, onTokens: null, inFlight: null };
+
+/** Called by App whenever its tokens change; onTokens receives each refreshed {token, refreshToken}. */
+export function configureAuth({ refreshToken, onTokens }) {
+  auth.refreshToken = refreshToken;
+  auth.onTokens = onTokens;
+}
+
+function refreshSession() {
+  if (!auth.refreshToken) {
+    return Promise.resolve(null);
+  }
+  if (!auth.inFlight) {
+    auth.inFlight = send("/auth-service/auth/refresh", {
+      method: "POST",
+      body: { refreshToken: auth.refreshToken },
+    })
+      .then((tokens) => {
+        auth.refreshToken = tokens.refreshToken;
+        auth.onTokens?.(tokens);
+        return tokens.token;
+      })
+      .catch(() => null)
+      .finally(() => {
+        auth.inFlight = null;
+      });
+  }
+  return auth.inFlight;
+}
+
+async function request(path, options = {}) {
+  try {
+    return await send(path, options);
+  } catch (error) {
+    if (error.status !== 401 || !options.token) {
+      throw error;
+    }
+    const renewed = await refreshSession();
+    if (!renewed) {
+      throw error;
+    }
+    return send(path, { ...options, token: renewed });
+  }
+}
+
+/**
  * Thin fetch wrapper: builds the gateway URL, attaches the bearer token when
  * given, and turns a non-2xx response into a thrown Error carrying the
  * backend's own error message (see GlobalExceptionHandler's {message} shape).
  */
-async function request(path, { method = "GET", token, body } = {}) {
+async function send(path, { method = "GET", token, body } = {}) {
   const headers = { "Content-Type": "application/json" };
   if (token) {
     headers.Authorization = `Bearer ${token}`;
@@ -36,10 +87,16 @@ export function login(username, password) {
   });
 }
 
-export function register(username, password) {
+/** Ends this session server-side (best effort - the client forgets its tokens either way). */
+export function logout(refreshToken) {
+  return send("/auth-service/auth/logout", { method: "POST", body: { refreshToken } });
+}
+
+/** Self-registration allows CUSTOMER or VENDOR; other roles are granted by an admin. */
+export function register(username, password, role = "CUSTOMER") {
   return request("/auth-service/auth/register", {
     method: "POST",
-    body: { username, password, role: "CUSTOMER" },
+    body: { username, password, role },
   });
 }
 
@@ -47,22 +104,111 @@ export function listMyOrders(token) {
   return request("/ordersphere-orders/orders", { token });
 }
 
+export function getOrder(token, id) {
+  return request(`/ordersphere-orders/orders/${id}`, { token });
+}
+
 export function listProducts(token) {
   return request("/inventory-service/inventory/products", { token });
 }
 
-export function listPaymentMethods(token) {
-  return request("/payment-service/payment-methods", { token });
+/** ADMIN/VENDOR only. body: {sku, name, unitPrice, quantityOnHand, reorderThreshold}. */
+export function createProduct(token, body) {
+  return request("/inventory-service/inventory/products", { method: "POST", token, body });
 }
 
-export function createPaymentMethod(token, body) {
-  return request("/payment-service/payment-methods", { method: "POST", token, body });
-}
-
-export function deletePaymentMethod(token, id) {
-  return request(`/payment-service/payment-methods/${id}`, { method: "DELETE", token });
+/** ADMIN/VENDOR only. Adds quantity (at least 1) to the product's stock on hand. */
+export function restockProduct(token, sku, quantity) {
+  return request(`/inventory-service/inventory/products/${encodeURIComponent(sku)}/restock`, {
+    method: "POST",
+    token,
+    body: { quantity },
+  });
 }
 
 export function createOrder(token, body) {
   return request("/ordersphere-orders/orders", { method: "POST", token, body });
+}
+
+/** Idempotent; refunds a paid order. 409 once the order has been delivered. */
+export function cancelOrder(token, id) {
+  return request(`/ordersphere-orders/orders/${id}/cancel`, { method: "POST", token });
+}
+
+export function listShipmentsForOrder(token, orderId) {
+  return request(`/shipping-service/shipments/order/${orderId}`, { token });
+}
+
+export function getTracking(token, shipmentId) {
+  return request(`/shipping-service/shipments/${shipmentId}/tracking`, { token });
+}
+
+/** Only for a DELIVERED outbound shipment (409 otherwise); creates a RETURN shipment. */
+export function requestReturn(token, shipmentId, reason) {
+  return request(`/shipping-service/shipments/${shipmentId}/return`, {
+    method: "POST",
+    token,
+    body: { reason },
+  });
+}
+
+export function listNotifications(token) {
+  return request("/notification-service/notifications", { token });
+}
+
+export function listPreferences(token) {
+  return request("/notification-service/notification-preferences", { token });
+}
+
+/** Upsert per channel; a channel with no saved preference is enabled. */
+export function setPreference(token, channel, enabled) {
+  return request("/notification-service/notification-preferences", {
+    method: "POST",
+    token,
+    body: { channel, enabled },
+  });
+}
+
+// --- Admin (ADMIN role only; the backend enforces it) ---
+
+export function listUsers(token) {
+  return request("/auth-service/auth/admin/users", { token });
+}
+
+/** Ends that user's sessions; the new role applies from their next login. 409 for your own role. */
+export function changeUserRole(token, id, role) {
+  return request(`/auth-service/auth/admin/users/${id}/role`, {
+    method: "PATCH",
+    token,
+    body: { role },
+  });
+}
+
+/** Refunds / stock releases the saga owes; status FAILED (default), PENDING or DONE. */
+export function listCompensations(token, status = "FAILED") {
+  return request(
+    `/ordersphere-orders/orders/admin/compensations?status=${encodeURIComponent(status)}`,
+    { token }
+  );
+}
+
+/** Re-queues a FAILED compensation and tries it right away; returns its new state. */
+export function retryCompensation(token, id) {
+  return request(`/ordersphere-orders/orders/admin/compensations/${id}/retry`, {
+    method: "POST",
+    token,
+  });
+}
+
+/** Paid orders that have no shipment yet. */
+export function listUnshipped(token) {
+  return request("/ordersphere-orders/orders/admin/unshipped", { token });
+}
+
+/** Tries to create the order's shipment now; returns the order's shipment state. */
+export function retryUnshipped(token, orderId) {
+  return request(`/ordersphere-orders/orders/admin/unshipped/${orderId}/retry`, {
+    method: "POST",
+    token,
+  });
 }

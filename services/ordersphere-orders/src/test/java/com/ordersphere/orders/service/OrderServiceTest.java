@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -31,6 +32,7 @@ import com.ordersphere.orders.exception.ShipmentCreationException;
 import com.ordersphere.orders.exception.ShipmentLookupException;
 import com.ordersphere.orders.repository.OrderRepository;
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -39,6 +41,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.http.HttpStatus;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
 
 @ExtendWith(MockitoExtension.class)
 class OrderServiceTest {
@@ -49,6 +55,7 @@ class OrderServiceTest {
   @Mock private ShippingClient shippingClient;
   @Mock private ServiceTokenProvider serviceTokenProvider;
   @Mock private ApplicationEventPublisher eventPublisher;
+  @Mock private CompensationService compensations;
 
   private OrderService orderService;
 
@@ -61,7 +68,16 @@ class OrderServiceTest {
             paymentClient,
             shippingClient,
             serviceTokenProvider,
-            eventPublisher);
+            eventPublisher,
+            compensations,
+            new OrderShipmentService(
+                orderRepository,
+                shippingClient,
+                serviceTokenProvider,
+                mock(PlatformTransactionManager.class),
+                20,
+                Duration.ofSeconds(5),
+                Duration.ofMinutes(10)));
     lenient().when(serviceTokenProvider.bearerToken()).thenReturn("Bearer service-token");
     lenient()
         .when(orderRepository.save(any(Order.class)))
@@ -73,31 +89,103 @@ class OrderServiceTest {
               }
               return order;
             });
+    // By default Inventory reserves everything requested at 10.00 per unit.
+    lenient()
+        .when(inventoryClient.reserve(any(), anyList(), anyString()))
+        .thenAnswer(
+            invocation -> {
+              List<InventoryClient.ReserveRequest.Item> items = invocation.getArgument(1);
+              return new InventoryClient.ReserveResponse(
+                  items.stream()
+                      .map(item -> priced(item.sku(), item.quantity(), "10.00"))
+                      .toList());
+            });
+  }
+
+  private static InventoryClient.ReserveResponse.LineItem priced(
+      String sku, int quantity, String unitPrice) {
+    return new InventoryClient.ReserveResponse.LineItem(
+        sku, quantity, unitPrice == null ? null : new BigDecimal(unitPrice));
   }
 
   private CreateOrderRequest requestFor(String sku) {
     return new CreateOrderRequest(
-        List.of(new CreateOrderRequest.Item(sku, 3)),
-        5L,
-        new BigDecimal("20.00"),
-        "USD",
-        "1 Test Way");
+        List.of(new CreateOrderRequest.Item(sku, 3)), "USD", "1 Test Way");
   }
 
   @Test
   void createOrderAwaitsPaymentWhenReservationAndInitiationSucceed() {
     when(paymentClient.initiate(
-            any(), eq(5L), eq(new BigDecimal("20.00")), eq("USD"), eq("Bearer token")))
-        .thenReturn(42L);
+            any(), eq("alice"), eq(new BigDecimal("30.00")), eq("USD"), eq("Bearer service-token")))
+        .thenReturn(new PaymentClient.InitiatedPayment(42L, "http://gw/checkout/cs_42"));
 
-    OrderResponse response = orderService.createOrder("alice", requestFor("SKU-1"), "Bearer token");
+    OrderResponse response = orderService.createOrder("alice", requestFor("SKU-1"));
 
     assertThat(response.status()).isEqualTo(OrderStatus.AWAITING_PAYMENT);
     assertThat(response.paymentId()).isEqualTo(42L);
-    verify(inventoryClient).reserve(any(), anyList(), eq("Bearer token"));
+    assertThat(response.checkoutUrl()).isEqualTo("http://gw/checkout/cs_42");
+    assertThat(response.totalAmount()).isEqualByComparingTo("30.00");
+    assertThat(response.currency()).isEqualTo("USD");
+    assertThat(response.items().get(0).unitPrice()).isEqualByComparingTo("10.00");
+    verify(inventoryClient).reserve(any(), anyList(), eq("Bearer service-token"));
     verify(eventPublisher).publishEvent(any(OrderCreatedEvent.class));
     verify(eventPublisher, never()).publishEvent(any(OrderConfirmedEvent.class));
     verify(eventPublisher, never()).publishEvent(any(OrderCancelledEvent.class));
+  }
+
+  @Test
+  void createOrderChargesInventoryPrices() {
+    when(inventoryClient.reserve(any(), anyList(), anyString()))
+        .thenReturn(
+            new InventoryClient.ReserveResponse(
+                List.of(priced("SKU-A", 2, "4.50"), priced("SKU-B", 3, "12.25"))));
+    when(paymentClient.initiate(any(), eq("alice"), any(), any(), anyString()))
+        .thenReturn(new PaymentClient.InitiatedPayment(42L, "http://gw/checkout/cs_42"));
+    CreateOrderRequest request =
+        new CreateOrderRequest(
+            List.of(
+                new CreateOrderRequest.Item("SKU-A", 2), new CreateOrderRequest.Item("SKU-B", 3)),
+            "USD",
+            "1 Test Way");
+
+    OrderResponse response = orderService.createOrder("alice", request);
+
+    // 2 x 4.50 + 3 x 12.25 = 45.75
+    verify(paymentClient)
+        .initiate(
+            any(), eq("alice"), eq(new BigDecimal("45.75")), eq("USD"), eq("Bearer service-token"));
+    assertThat(response.totalAmount()).isEqualByComparingTo("45.75");
+  }
+
+  @Test
+  void createOrderForMoreThanIsInStockIsCancelledWithInventorysReason() {
+    doThrow(
+            new InventoryReservationException(
+                "Inventory reservation failed with status 409",
+                null,
+                "Not enough stock: SKU-1 (3 requested, 0 available)"))
+        .when(inventoryClient)
+        .reserve(any(), anyList(), anyString());
+
+    OrderResponse response = orderService.createOrder("alice", requestFor("SKU-1"));
+
+    assertThat(response.status()).isEqualTo(OrderStatus.CANCELLED);
+    assertThat(response.cancellationReason())
+        .isEqualTo("Not enough stock: SKU-1 (3 requested, 0 available)");
+    verify(compensations, never()).releaseInventory(any());
+    verify(paymentClient, never()).initiate(any(), any(), any(), any(), any());
+  }
+
+  @Test
+  void createOrderCancelsWithoutChargingWhenInventoryReturnsNoPrice() {
+    when(inventoryClient.reserve(any(), anyList(), anyString()))
+        .thenReturn(new InventoryClient.ReserveResponse(List.of(priced("SKU-1", 3, null))));
+
+    OrderResponse response = orderService.createOrder("alice", requestFor("SKU-1"));
+
+    assertThat(response.status()).isEqualTo(OrderStatus.CANCELLED);
+    verify(compensations).releaseInventory(any());
+    verify(paymentClient, never()).initiate(any(), any(), any(), any(), any());
   }
 
   @Test
@@ -106,10 +194,10 @@ class OrderServiceTest {
         .when(inventoryClient)
         .reserve(any(), anyList(), anyString());
 
-    OrderResponse response =
-        orderService.createOrder("alice", requestFor("SKU-UNKNOWN"), "Bearer token");
+    OrderResponse response = orderService.createOrder("alice", requestFor("SKU-UNKNOWN"));
 
     assertThat(response.status()).isEqualTo(OrderStatus.CANCELLED);
+    assertThat(response.cancellationReason()).isEqualTo("Some items are unavailable");
     verify(eventPublisher).publishEvent(any(OrderCreatedEvent.class));
     verify(eventPublisher).publishEvent(any(OrderCancelledEvent.class));
     verify(paymentClient, never()).initiate(any(), any(), any(), any(), any());
@@ -117,14 +205,14 @@ class OrderServiceTest {
 
   @Test
   void createOrderCompensatesInventoryWhenPaymentInitiationFails() {
-    doThrow(new PaymentInitiationException("no such payment method"))
+    doThrow(new PaymentInitiationException("payment provider unavailable"))
         .when(paymentClient)
-        .initiate(any(), any(), any(), any(), anyString());
+        .initiate(any(), eq("alice"), any(), any(), anyString());
 
-    OrderResponse response = orderService.createOrder("alice", requestFor("SKU-1"), "Bearer token");
+    OrderResponse response = orderService.createOrder("alice", requestFor("SKU-1"));
 
     assertThat(response.status()).isEqualTo(OrderStatus.CANCELLED);
-    verify(inventoryClient).release(any(), eq("Bearer token"));
+    verify(compensations).releaseInventory(any());
     verify(eventPublisher).publishEvent(any(OrderCancelledEvent.class));
   }
 
@@ -145,11 +233,62 @@ class OrderServiceTest {
 
     assertThat(order.getStatus()).isEqualTo(OrderStatus.CONFIRMED);
     assertThat(order.getShipmentId()).isEqualTo(7L);
+    verify(inventoryClient).confirm(10L, "Bearer service-token");
     verify(eventPublisher).publishEvent(any(OrderConfirmedEvent.class));
   }
 
   @Test
-  void progressAwaitingPaymentStillConfirmsWhenShipmentCreationFails() {
+  void paymentCompletedStaysAwaitingPaymentWhenInventoryConfirmIsUnavailable() {
+    Order order = new Order("alice");
+    order.setId(10L);
+    order.setPaymentId(42L);
+    order.markStatus(OrderStatus.AWAITING_PAYMENT);
+    when(orderRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(order));
+    when(paymentClient.getStatus(42L, "Bearer service-token"))
+        .thenReturn(PaymentClient.PaymentStatus.COMPLETED);
+    doThrow(
+            new InventoryReservationException(
+                "down",
+                HttpServerErrorException.create(
+                    HttpStatus.SERVICE_UNAVAILABLE, "", null, null, null)))
+        .when(inventoryClient)
+        .confirm(10L, "Bearer service-token");
+
+    orderService.progressAwaitingPayment(10L);
+
+    // Left for the next saga sweep to retry - not confirmed, not cancelled, nothing refunded.
+    assertThat(order.getStatus()).isEqualTo(OrderStatus.AWAITING_PAYMENT);
+    verify(shippingClient, never()).createShipment(any(), any(), any(), any());
+    verify(compensations, never()).refundPayment(any(), any(), any());
+    verify(eventPublisher, never()).publishEvent(any(OrderConfirmedEvent.class));
+    verify(eventPublisher, never()).publishEvent(any(OrderCancelledEvent.class));
+  }
+
+  @Test
+  void paymentCompletedRefundsAndCancelsWhenReservationCanNoLongerBeConfirmed() {
+    Order order = new Order("alice");
+    order.setId(10L);
+    order.setPaymentId(42L);
+    order.markStatus(OrderStatus.AWAITING_PAYMENT);
+    when(orderRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(order));
+    doThrow(
+            new InventoryReservationException(
+                "expired",
+                HttpClientErrorException.create(HttpStatus.CONFLICT, "", null, null, null)))
+        .when(inventoryClient)
+        .confirm(10L, "Bearer service-token");
+
+    orderService.onPaymentEvent(10L, true);
+
+    assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCELLED);
+    verify(compensations).refundPayment(eq(10L), eq(42L), anyString());
+    verify(shippingClient, never()).createShipment(any(), any(), any(), any());
+    verify(eventPublisher, never()).publishEvent(any(OrderConfirmedEvent.class));
+    verify(eventPublisher).publishEvent(any(OrderCancelledEvent.class));
+  }
+
+  @Test
+  void progressAwaitingPaymentConfirmsAndSchedulesARetryWhenShipmentCreationFails() {
     Order order = new Order("alice");
     order.setId(10L);
     order.setPaymentId(42L);
@@ -165,6 +304,10 @@ class OrderServiceTest {
 
     assertThat(order.getStatus()).isEqualTo(OrderStatus.CONFIRMED);
     assertThat(order.getShipmentId()).isNull();
+    assertThat(order.getShipmentAttempts()).isEqualTo(1);
+    assertThat(order.getShipmentNextAttemptAt()).isNotNull();
+    assertThat(order.getShipmentLastError()).isEqualTo("boom");
+    verify(eventPublisher).publishEvent(any(OrderConfirmedEvent.class));
   }
 
   @Test
@@ -180,7 +323,7 @@ class OrderServiceTest {
     orderService.progressAwaitingPayment(10L);
 
     assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCELLED);
-    verify(inventoryClient).release(10L, "Bearer service-token");
+    verify(compensations).releaseInventory(10L);
     verify(shippingClient, never()).createShipment(any(), any(), any(), any());
     verify(eventPublisher).publishEvent(any(OrderCancelledEvent.class));
   }
@@ -198,7 +341,7 @@ class OrderServiceTest {
     orderService.progressAwaitingPayment(10L);
 
     assertThat(order.getStatus()).isEqualTo(OrderStatus.AWAITING_PAYMENT);
-    verify(inventoryClient, never()).release(any(), any());
+    verify(compensations, never()).releaseInventory(any());
     verify(shippingClient, never()).createShipment(any(), any(), any(), any());
     verify(eventPublisher, never()).publishEvent(any(OrderConfirmedEvent.class));
     verify(eventPublisher, never()).publishEvent(any(OrderCancelledEvent.class));
@@ -217,7 +360,7 @@ class OrderServiceTest {
     orderService.progressAwaitingPayment(10L);
 
     assertThat(order.getStatus()).isEqualTo(OrderStatus.AWAITING_PAYMENT);
-    verify(inventoryClient, never()).release(any(), any());
+    verify(compensations, never()).releaseInventory(any());
     verify(shippingClient, never()).createShipment(any(), any(), any(), any());
     verify(eventPublisher, never()).publishEvent(any(OrderConfirmedEvent.class));
     verify(eventPublisher, never()).publishEvent(any(OrderCancelledEvent.class));
@@ -238,8 +381,37 @@ class OrderServiceTest {
 
     assertThat(order.getStatus()).isEqualTo(OrderStatus.CONFIRMED);
     assertThat(order.getShipmentId()).isEqualTo(7L);
+    verify(inventoryClient).confirm(10L, "Bearer service-token");
     verify(eventPublisher).publishEvent(any(OrderConfirmedEvent.class));
     verify(paymentClient, never()).getStatus(any(), any());
+  }
+
+  @Test
+  void onPaymentEventRefundsPaymentThatCompletesAfterOrderWasCancelled() {
+    Order order = new Order("alice");
+    order.setId(10L);
+    order.setPaymentId(42L);
+    order.markStatus(OrderStatus.CANCELLED);
+    when(orderRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(order));
+
+    orderService.onPaymentEvent(10L, true);
+
+    assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCELLED);
+    verify(compensations).refundPayment(eq(10L), eq(42L), anyString());
+    verify(inventoryClient, never()).confirm(any(), any());
+    verify(eventPublisher, never()).publishEvent(any(OrderConfirmedEvent.class));
+  }
+
+  @Test
+  void checkoutUrlIsOnlyExposedWhileAwaitingPayment() {
+    Order order = new Order("alice");
+    order.setId(10L);
+    order.setCheckoutUrl("http://gw/checkout/cs_1");
+    order.markStatus(OrderStatus.AWAITING_PAYMENT);
+    assertThat(OrderResponse.from(order).checkoutUrl()).isEqualTo("http://gw/checkout/cs_1");
+
+    order.markStatus(OrderStatus.CONFIRMED);
+    assertThat(OrderResponse.from(order).checkoutUrl()).isNull();
   }
 
   @Test
@@ -253,7 +425,7 @@ class OrderServiceTest {
     orderService.onPaymentEvent(10L, false);
 
     assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCELLED);
-    verify(inventoryClient).release(10L, "Bearer service-token");
+    verify(compensations).releaseInventory(10L);
     verify(eventPublisher).publishEvent(any(OrderCancelledEvent.class));
   }
 
@@ -278,11 +450,11 @@ class OrderServiceTest {
     order.markStatus(OrderStatus.AWAITING_PAYMENT);
     when(orderRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(order));
 
-    OrderResponse response = orderService.cancelOrder("alice", false, 10L, "Bearer token");
+    OrderResponse response = orderService.cancelOrder("alice", false, 10L);
 
     assertThat(response.status()).isEqualTo(OrderStatus.CANCELLED);
-    verify(inventoryClient).release(10L, "Bearer token");
-    verify(paymentClient, never()).refund(any(), any(), any());
+    verify(compensations).releaseInventory(10L);
+    verify(compensations, never()).refundPayment(any(), any(), any());
   }
 
   @Test
@@ -293,15 +465,15 @@ class OrderServiceTest {
     order.markStatus(OrderStatus.CONFIRMED);
     when(orderRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(order));
 
-    OrderResponse response = orderService.cancelOrder("alice", false, 10L, "Bearer token");
+    OrderResponse response = orderService.cancelOrder("alice", false, 10L);
 
     assertThat(response.status()).isEqualTo(OrderStatus.CANCELLED);
-    verify(inventoryClient).release(10L, "Bearer token");
-    verify(paymentClient).refund(42L, "Order cancelled by customer", "Bearer token");
+    verify(compensations).releaseInventory(10L);
+    verify(compensations).refundPayment(10L, 42L, "Order cancelled by customer");
 
-    OrderResponse second = orderService.cancelOrder("alice", false, 10L, "Bearer token");
+    OrderResponse second = orderService.cancelOrder("alice", false, 10L);
     assertThat(second.status()).isEqualTo(OrderStatus.CANCELLED);
-    verify(inventoryClient).release(10L, "Bearer token");
+    verify(compensations).releaseInventory(10L);
   }
 
   @Test
@@ -312,14 +484,14 @@ class OrderServiceTest {
     order.setShipmentId(7L);
     order.markStatus(OrderStatus.CONFIRMED);
     when(orderRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(order));
-    when(shippingClient.getStatus(7L, "Bearer token"))
+    when(shippingClient.getStatus(7L, "Bearer service-token"))
         .thenReturn(ShippingClient.ShipmentStatus.DELIVERED);
 
-    assertThatThrownBy(() -> orderService.cancelOrder("alice", false, 10L, "Bearer token"))
+    assertThatThrownBy(() -> orderService.cancelOrder("alice", false, 10L))
         .isInstanceOf(OrderCancellationNotAllowedException.class);
 
-    verify(inventoryClient, never()).release(any(), any());
-    verify(paymentClient, never()).refund(any(), any(), any());
+    verify(compensations, never()).releaseInventory(any());
+    verify(compensations, never()).refundPayment(any(), any(), any());
   }
 
   @Test
@@ -330,14 +502,14 @@ class OrderServiceTest {
     order.setShipmentId(7L);
     order.markStatus(OrderStatus.CONFIRMED);
     when(orderRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(order));
-    when(shippingClient.getStatus(7L, "Bearer token"))
+    when(shippingClient.getStatus(7L, "Bearer service-token"))
         .thenReturn(ShippingClient.ShipmentStatus.IN_TRANSIT);
 
-    OrderResponse response = orderService.cancelOrder("alice", false, 10L, "Bearer token");
+    OrderResponse response = orderService.cancelOrder("alice", false, 10L);
 
     assertThat(response.status()).isEqualTo(OrderStatus.CANCELLED);
-    verify(inventoryClient).release(10L, "Bearer token");
-    verify(paymentClient).refund(42L, "Order cancelled by customer", "Bearer token");
+    verify(compensations).releaseInventory(10L);
+    verify(compensations).refundPayment(10L, 42L, "Order cancelled by customer");
   }
 
   @Test
@@ -348,10 +520,10 @@ class OrderServiceTest {
     order.setShipmentId(7L);
     order.markStatus(OrderStatus.CONFIRMED);
     when(orderRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(order));
-    when(shippingClient.getStatus(7L, "Bearer token"))
+    when(shippingClient.getStatus(7L, "Bearer service-token"))
         .thenThrow(new ShipmentLookupException("unreachable", new RuntimeException()));
 
-    OrderResponse response = orderService.cancelOrder("alice", false, 10L, "Bearer token");
+    OrderResponse response = orderService.cancelOrder("alice", false, 10L);
 
     assertThat(response.status()).isEqualTo(OrderStatus.CANCELLED);
   }
