@@ -158,6 +158,20 @@ class OrderServiceTest {
   }
 
   @Test
+  void anOrderTotallingZeroIsCancelledWithAClearReasonAndNothingCharged() {
+    when(inventoryClient.reserve(any(), anyList(), anyString()))
+        .thenReturn(new InventoryClient.ReserveResponse(List.of(priced("SKU-1", 3, "0.00"))));
+
+    OrderResponse response = orderService.createOrder("alice", requestFor("SKU-1"));
+
+    assertThat(response.status()).isEqualTo(OrderStatus.CANCELLED);
+    assertThat(response.cancellationReason())
+        .isEqualTo("These items are priced at 0.00 and can't be sold");
+    verify(compensations).releaseInventory(any());
+    verify(paymentClient, never()).initiate(any(), any(), any(), any(), any());
+  }
+
+  @Test
   void createOrderForMoreThanIsInStockIsCancelledWithInventorysReason() {
     doThrow(
             new InventoryReservationException(

@@ -30,7 +30,7 @@
   - Request routing via Eureka discovery locator: `/{service-id}/**` → that service (e.g. `/ordersphere-orders/orders`)
   - Client-side load balancing across registered instances
   - CORS for the Web UI dev server (`http://localhost:5173`; GET/POST/PUT/PATCH/DELETE/OPTIONS)
-  - Rate limiting (`RequestRateLimiter`, token buckets in Redis, per client IP): 50 req/s burst 100 on every route; login/register/refresh/token 5 req/s burst 30 (`GATEWAY_*RATE_LIMIT*` env vars). Over the limit → 429 with `X-RateLimit-*` headers; if Redis is down requests are let through
+  - Rate limiting (`RequestRateLimiter`, token buckets in Redis, per client IP): 50 req/s burst 100 on every route; login/register/refresh/token 5 req/s burst 30 (`GATEWAY_*RATE_LIMIT*` env vars). Over the limit → 429 with `X-RateLimit-*` headers; if Redis is down requests are let through. The client IP is the TCP peer; `X-Forwarded-For` is only used behind trusted proxies (`GATEWAY_TRUSTED_PROXY_HOPS`, default 0 - otherwise a client could send a fake address each request and dodge the limit), and then only the entry the outermost trusted proxy appended
 - **Not implemented yet:** request validation, centralized logging/metrics
 - **Technology:** Spring Cloud Gateway
 - **Interacts With:** All downstream services
@@ -88,7 +88,7 @@
 - **Port:** 8083
 - **Purpose:** Stock reservation, release, and inventory tracking
 - **Responsibilities:**
-  - Product catalog management with unit prices (create is ADMIN/VENDOR only; the creator is recorded as the product's `createdBy` owner)
+  - Product catalog management with unit prices of at least 0.01 (create is ADMIN/VENDOR only; the creator is recorded as the product's `createdBy` owner)
   - Low-stock alerts: when a reservation takes a product's available stock from above its reorder threshold to at/below it, `StockLowEvent` is published once (not again while it stays low; restock/release/expiry re-arm it)
   - Stock level tracking
   - Inventory reservation, confirmation and release for orders (internal: SERVICE/ADMIN only - called by the orders saga over REST)
@@ -192,7 +192,7 @@
 ### 9. **Common Libraries** (Shared Code)
 
 #### `common-security`
-- JWT verification only (`JwtVerifier`): RS256 public keys from auth-service's JWKS (`jwt.jwks-uri`, fetched lazily, cached, re-fetched for unknown key ids) or a fixed `jwt.public-key`
+- JWT verification only (`JwtVerifier`): RS256 public keys from auth-service's JWKS (`jwt.jwks-uri`, fetched lazily, cached, re-fetched for unknown key ids; concurrent cache misses wait for a single fetch, so a burst of requests right after startup isn't answered 401) or a fixed `jwt.public-key`
 - `JwtAuthenticationFilter` mapping the `role` claim to `ROLE_*` authorities
 - Test-jar with `TestJwtIssuer`, auto-configured so every service's tests can mint tokens without auth-service
 

@@ -113,7 +113,7 @@ export default function ManageProducts({ token, currentUsername, isAdmin, onUnau
             Unit price
             <input
               type="number"
-              min="0"
+              min="0.01"
               step="0.01"
               value={form.unitPrice}
               onChange={updateField("unitPrice")}

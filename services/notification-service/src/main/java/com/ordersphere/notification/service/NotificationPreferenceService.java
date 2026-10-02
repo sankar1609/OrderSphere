@@ -7,6 +7,7 @@ import com.ordersphere.notification.exception.NotificationPreferenceNotFoundExce
 import com.ordersphere.notification.repository.NotificationPreferenceRepository;
 import java.time.Instant;
 import java.util.List;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -19,7 +20,20 @@ public class NotificationPreferenceService {
     this.preferenceRepository = preferenceRepository;
   }
 
+  /**
+   * Upsert per (user, channel). Two saves of a new channel at the same moment both find nothing and
+   * both insert; the unique constraint rejects one, which then updates the row the other created.
+   */
   public NotificationPreferenceResponse setPreference(
+      String username, CreateNotificationPreferenceRequest request) {
+    try {
+      return upsert(username, request);
+    } catch (DataIntegrityViolationException createdConcurrently) {
+      return upsert(username, request);
+    }
+  }
+
+  private NotificationPreferenceResponse upsert(
       String username, CreateNotificationPreferenceRequest request) {
     NotificationPreference preference =
         preferenceRepository

@@ -19,6 +19,7 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Sort;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -60,7 +61,13 @@ public class AuthService {
 
     User user =
         new User(request.username(), passwordEncoder.encode(request.password()), request.role());
-    User saved = userRepository.save(user);
+    User saved;
+    try {
+      saved = userRepository.save(user);
+    } catch (DataIntegrityViolationException taken) {
+      // Registered by a concurrent request between the check above and this insert.
+      throw new DuplicateUsernameException(request.username());
+    }
 
     eventPublisher.publishEvent(
         new UserRegisteredEvent(saved.getId(), saved.getUsername(), saved.getRole().name()));

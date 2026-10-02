@@ -103,6 +103,16 @@ public class OrderService {
       cancelWithReason(order, OrderCancelledEvent.Reason.INVENTORY_UNAVAILABLE);
       return OrderResponse.from(order);
     }
+    // Payments start at 0.01; a zero total (items priced 0.00) can't be charged. Say so rather than
+    // let it fail at the payment provider as an unexplained "payment wasn't completed".
+    if (order.getTotalAmount().signum() == 0) {
+      compensations.releaseInventory(order.getId());
+      cancelWithReason(
+          order,
+          OrderCancelledEvent.Reason.INVENTORY_UNAVAILABLE,
+          "These items are priced at 0.00 and can't be sold");
+      return OrderResponse.from(order);
+    }
     order.setCurrency(request.currency());
     orderRepository.save(order);
 

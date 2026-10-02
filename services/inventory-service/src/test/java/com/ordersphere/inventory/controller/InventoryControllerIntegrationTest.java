@@ -257,6 +257,16 @@ class InventoryControllerIntegrationTest {
                         new CreateProductRequest(
                             "SKU-LONG", "n".repeat(256), 1, 0, BigDecimal.ONE))))
         .andExpect(status().isBadRequest());
+    // Payments start at 0.01, so a product priced 0.00 could never be bought.
+    mockMvc
+        .perform(
+            post("/inventory/products")
+                .header("Authorization", "Bearer " + adminToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(
+                        new CreateProductRequest("SKU-FREE", "Widget", 1, 0, BigDecimal.ZERO))))
+        .andExpect(status().isBadRequest());
   }
 
   @Test
