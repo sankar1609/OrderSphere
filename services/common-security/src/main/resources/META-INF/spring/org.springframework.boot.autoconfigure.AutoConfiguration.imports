@@ -1,2 +1,3 @@
 com.ordersphere.security.JwtAutoConfiguration
 com.ordersphere.security.OpenApiAutoConfiguration
+com.ordersphere.security.TracingAutoConfiguration

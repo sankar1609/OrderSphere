@@ -68,6 +68,7 @@ The Web UI runs on http://localhost:5173 and talks to the API gateway set in `we
 | API docs (Swagger UI, all services) | http://localhost:8080/swagger-ui.html |
 | Payment page (dummy gateway) | http://localhost:8087 |
 | Eureka dashboard | http://localhost:8761 |
+| Jaeger (distributed traces) | http://localhost:16686 |
 | RabbitMQ management | http://localhost:15672 |
 
 - **Accounts:** register customers in the Web UI. An admin account is created on first start: `admin` / `admin123` (override with `ADMIN_BOOTSTRAP_USERNAME` / `ADMIN_BOOTSTRAP_PASSWORD`).

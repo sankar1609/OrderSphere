@@ -47,6 +47,14 @@ payment:
 
 
 management:
+  tracing:
+    # Every request traced in dev; lower in production (TRACING_SAMPLING_PROBABILITY).
+    sampling:
+      probability: ${TRACING_SAMPLING_PROBABILITY:1.0}
+  otlp:
+    tracing:
+      # Jaeger's OTLP/HTTP receiver (docker-compose sets OTLP_TRACING_ENDPOINT).
+      endpoint: ${OTLP_TRACING_ENDPOINT:http://localhost:4318/v1/traces}
   endpoints:
     web:
       exposure:

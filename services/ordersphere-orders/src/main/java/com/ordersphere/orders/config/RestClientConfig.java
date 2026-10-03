@@ -1,6 +1,8 @@
 package com.ordersphere.orders.config;
 
+import io.micrometer.observation.ObservationRegistry;
 import java.time.Duration;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.client.ClientHttpRequestFactories;
 import org.springframework.boot.web.client.ClientHttpRequestFactorySettings;
@@ -24,12 +26,18 @@ public class RestClientConfig {
   @LoadBalanced
   public RestClient.Builder loadBalancedRestClientBuilder(
       @Value("${orders.rest-client.connect-timeout-ms}") long connectTimeoutMs,
-      @Value("${orders.rest-client.read-timeout-ms}") long readTimeoutMs) {
+      @Value("${orders.rest-client.read-timeout-ms}") long readTimeoutMs,
+      ObjectProvider<ObservationRegistry> observationRegistry) {
     ClientHttpRequestFactorySettings settings =
         ClientHttpRequestFactorySettings.DEFAULTS
             .withConnectTimeout(Duration.ofMillis(connectTimeoutMs))
             .withReadTimeout(Duration.ofMillis(readTimeoutMs));
     ClientHttpRequestFactory factory = ClientHttpRequestFactories.get(settings);
-    return RestClient.builder().requestFactory(factory);
+    // Built by hand (it's load-balanced), so it doesn't get Boot's observation customizer: without
+    // the registry, calls to inventory/payment/shipping would carry no traceparent and every trace
+    // would stop at orders.
+    return RestClient.builder()
+        .requestFactory(factory)
+        .observationRegistry(observationRegistry.getIfAvailable(() -> ObservationRegistry.NOOP));
   }
 }

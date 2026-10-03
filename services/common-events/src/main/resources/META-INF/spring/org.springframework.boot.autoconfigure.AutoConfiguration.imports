@@ -1,1 +1,2 @@
 com.ordersphere.events.messaging.EventsAutoConfiguration
+com.ordersphere.events.messaging.TracedSchedulingAutoConfiguration
