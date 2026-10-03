@@ -1,6 +1,8 @@
 package com.ordersphere.payment.gateway;
 
 import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -27,7 +29,33 @@ public interface PaymentGatewayClient {
       String cancelUrl,
       String webhookUrl) {}
 
-  record CheckoutSession(String id, String url, SessionStatus status, String chargeReference) {}
+  /** The provider's settlement report: every charge and refund in [from, to). */
+  List<ProviderTransaction> transactions(Instant from, Instant to);
+
+  /** {@code refundReference} is set once the provider has refunded the charge. */
+  record CheckoutSession(
+      String id, String url, SessionStatus status, String chargeReference, String refundReference) {
+
+    public CheckoutSession(String id, String url, SessionStatus status, String chargeReference) {
+      this(id, url, status, chargeReference, null);
+    }
+  }
+
+  /** One line of the settlement report. */
+  record ProviderTransaction(
+      Type type,
+      String sessionId,
+      String chargeReference,
+      String refundReference,
+      BigDecimal amount,
+      String currency,
+      Instant occurredAt) {
+
+    public enum Type {
+      CHARGE,
+      REFUND
+    }
+  }
 
   enum SessionStatus {
     OPEN,

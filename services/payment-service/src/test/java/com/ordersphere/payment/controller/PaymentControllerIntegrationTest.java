@@ -1,5 +1,6 @@
 package com.ordersphere.payment.controller;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
@@ -22,6 +23,7 @@ import com.ordersphere.security.testing.TestJwtIssuer;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Optional;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -282,5 +284,81 @@ class PaymentControllerIntegrationTest {
             org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath(
                 "$.paths['/payments'].post.description",
                 org.hamcrest.Matchers.containsString("Requires role: SERVICE, ADMIN")));
+  }
+
+  @Test
+  void reconciliationFindsAChargeWeRecordedAsFailedAndReSyncsIt() throws Exception {
+    Long paymentId = initiate("rita", 7001L, "cs_rec_1");
+    // The customer cancelled... as far as our webhook knew.
+    String cancelled = """
+        {"type":"checkout.session.cancelled","sessionId":"cs_rec_1"}""";
+    sendWebhook(cancelled, sign(cancelled), 204);
+    // ...but the provider's settlement report says the card was charged.
+    doReturn(
+            List.of(
+                new PaymentGatewayClient.ProviderTransaction(
+                    PaymentGatewayClient.ProviderTransaction.Type.CHARGE,
+                    "cs_rec_1",
+                    "ch_rec_1",
+                    null,
+                    new BigDecimal("30.00"),
+                    "USD",
+                    java.time.Instant.now())))
+        .when(gatewayClient)
+        .transactions(any(), any());
+    String admin = "Bearer " + TestJwtIssuer.token("admin", "ADMIN");
+
+    mockMvc
+        .perform(
+            post("/payments/admin/reconciliation/runs").header("Authorization", tokenFor("rita")))
+        .andExpect(status().isForbidden());
+    mockMvc
+        .perform(post("/payments/admin/reconciliation/runs?hours=0").header("Authorization", admin))
+        .andExpect(status().isBadRequest());
+    mockMvc
+        .perform(post("/payments/admin/reconciliation/runs").header("Authorization", admin))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status", is("SUCCEEDED")))
+        .andExpect(jsonPath("$.transactions", is(1)));
+
+    String findings =
+        mockMvc
+            .perform(get("/payments/admin/reconciliation/findings").header("Authorization", admin))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    long findingId = -1;
+    for (var finding : objectMapper.readTree(findings)) {
+      if (finding.get("checkoutSessionId").asText().equals("cs_rec_1")) {
+        assertThat(finding.get("type").asText()).isEqualTo("CHARGED_NOT_RECORDED");
+        assertThat(finding.get("ourStatus").asText()).isEqualTo("FAILED");
+        findingId = finding.get("id").asLong();
+      }
+    }
+    assertThat(findingId).isPositive();
+
+    mockMvc
+        .perform(
+            post("/payments/admin/reconciliation/findings/" + findingId + "/resync")
+                .header("Authorization", admin))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.resolution", is("RESYNCED")))
+        .andExpect(jsonPath("$.resolvedBy", is("admin")));
+    mockMvc
+        .perform(get("/payments/" + paymentId).header("Authorization", tokenFor("rita")))
+        .andExpect(jsonPath("$.status", is("COMPLETED")));
+    mockMvc
+        .perform(
+            post("/payments/admin/reconciliation/findings/" + findingId + "/resync")
+                .header("Authorization", admin))
+        .andExpect(status().isConflict());
+    mockMvc
+        .perform(
+            post("/payments/admin/reconciliation/findings/999999/resolve")
+                .header("Authorization", admin)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"note\":\"x\"}"))
+        .andExpect(status().isNotFound());
   }
 }

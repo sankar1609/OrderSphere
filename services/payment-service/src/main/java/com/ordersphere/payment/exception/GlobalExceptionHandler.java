@@ -1,6 +1,8 @@
 package com.ordersphere.payment.exception;
 
 import com.ordersphere.payment.gateway.PaymentGatewayException;
+import com.ordersphere.payment.reconciliation.ReconciliationService;
+import jakarta.validation.ConstraintViolationException;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -26,6 +28,23 @@ public class GlobalExceptionHandler {
   @ExceptionHandler(InvalidPaymentStateException.class)
   public ResponseEntity<Object> handleInvalidPaymentState(InvalidPaymentStateException ex) {
     return errorResponse(HttpStatus.CONFLICT, ex.getMessage());
+  }
+
+  @ExceptionHandler(ReconciliationService.FindingNotFoundException.class)
+  public ResponseEntity<Object> handleFindingNotFound(
+      ReconciliationService.FindingNotFoundException ex) {
+    return errorResponse(HttpStatus.NOT_FOUND, ex.getMessage());
+  }
+
+  @ExceptionHandler(ReconciliationService.FindingStateException.class)
+  public ResponseEntity<Object> handleFindingState(ReconciliationService.FindingStateException ex) {
+    return errorResponse(HttpStatus.CONFLICT, ex.getMessage());
+  }
+
+  /** Invalid request parameters (e.g. a reconciliation window outside 1-744 hours). */
+  @ExceptionHandler(ConstraintViolationException.class)
+  public ResponseEntity<Object> handleConstraintViolation(ConstraintViolationException ex) {
+    return errorResponse(HttpStatus.BAD_REQUEST, ex.getMessage());
   }
 
   @ExceptionHandler(MethodArgumentNotValidException.class)

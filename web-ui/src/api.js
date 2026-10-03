@@ -219,3 +219,39 @@ export function retryUnshipped(token, orderId) {
     token,
   });
 }
+
+/** Runs reconciliation over the last `hours` against the provider's settlement report. */
+export function runReconciliation(token, hours = 24) {
+  return request(`/payment-service/payments/admin/reconciliation/runs?hours=${hours}`, {
+    method: "POST",
+    token,
+  });
+}
+
+export function listReconciliationRuns(token) {
+  return request("/payment-service/payments/admin/reconciliation/runs", { token });
+}
+
+/** status: OPEN (default) or RESOLVED. */
+export function listReconciliationFindings(token, status = "OPEN") {
+  return request(
+    `/payment-service/payments/admin/reconciliation/findings?status=${encodeURIComponent(status)}`,
+    { token }
+  );
+}
+
+/** Applies the provider's state (charge or refund) for a re-syncable finding. */
+export function resyncFinding(token, id) {
+  return request(`/payment-service/payments/admin/reconciliation/findings/${id}/resync`, {
+    method: "POST",
+    token,
+  });
+}
+
+export function resolveFinding(token, id, note) {
+  return request(`/payment-service/payments/admin/reconciliation/findings/${id}/resolve`, {
+    method: "POST",
+    token,
+    body: { note },
+  });
+}

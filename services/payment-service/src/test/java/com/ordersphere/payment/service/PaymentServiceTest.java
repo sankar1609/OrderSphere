@@ -281,4 +281,52 @@ class PaymentServiceTest {
     assertThat(refund.getStatus()).isEqualTo(RefundStatus.PENDING);
     assertThat(payment.getStatus()).isEqualTo(PaymentStatus.COMPLETED);
   }
+
+  @Test
+  void recordingAProviderChargeCompletesAFailedPaymentAndAnnouncesIt() {
+    Payment payment = pendingPayment();
+    payment.setStatus(PaymentStatus.FAILED);
+    payment.setFailureReason("Checkout session not found at payment provider");
+    when(paymentRepository.findByIdForUpdate(5L)).thenReturn(Optional.of(payment));
+
+    paymentService.recordProviderCharge(5L, "ch_9");
+
+    assertThat(payment.getStatus()).isEqualTo(PaymentStatus.COMPLETED);
+    assertThat(payment.getGatewayReference()).isEqualTo("ch_9");
+    assertThat(payment.getFailureReason()).isNull();
+    verify(eventPublisher).publishEvent(any(PaymentCompletedEvent.class));
+  }
+
+  @Test
+  void recordingAProviderRefundMarksThePaymentRefunded() {
+    Payment payment = pendingPayment();
+    payment.setStatus(PaymentStatus.COMPLETED);
+    when(paymentRepository.findByIdForUpdate(5L)).thenReturn(Optional.of(payment));
+    when(refundRepository.findByPaymentId(5L)).thenReturn(Optional.empty());
+    when(refundRepository.save(any(Refund.class))).thenAnswer(i -> i.getArgument(0));
+
+    paymentService.recordProviderRefund(5L, "re_9");
+
+    assertThat(payment.getStatus()).isEqualTo(PaymentStatus.REFUNDED);
+    ArgumentCaptor<Refund> refund = ArgumentCaptor.forClass(Refund.class);
+    verify(refundRepository).save(refund.capture());
+    assertThat(refund.getValue().getStatus()).isEqualTo(RefundStatus.COMPLETED);
+    assertThat(refund.getValue().getGatewayReference()).isEqualTo("re_9");
+    verify(eventPublisher).publishEvent(any(RefundIssuedEvent.class));
+  }
+
+  @Test
+  void executingAMissingRefundRefundsTheChargeAtTheProvider() {
+    Payment payment = pendingPayment();
+    payment.setStatus(PaymentStatus.REFUNDED);
+    payment.setGatewayReference("ch_9");
+    when(paymentRepository.findByIdForUpdate(5L)).thenReturn(Optional.of(payment));
+    when(gatewayClient.refund("ch_9")).thenReturn(Optional.of("re_9"));
+
+    assertThat(paymentService.executeMissingRefund(5L)).isEqualTo("re_9");
+
+    when(gatewayClient.refund("ch_9")).thenReturn(Optional.empty());
+    assertThatThrownBy(() -> paymentService.executeMissingRefund(5L))
+        .isInstanceOf(InvalidPaymentStateException.class);
+  }
 }

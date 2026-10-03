@@ -4,17 +4,21 @@ import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.YearMonth;
-import java.util.Map;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Checkout sessions and test-card rules. Sessions live in memory: this is a dummy provider, so a
- * restart simply forgets them (payment-service treats an unknown session as a failed payment).
+ * Checkout sessions and test-card rules. Sessions are stored in gateway_db, so they survive a
+ * restart and the provider can report its charges and refunds for reconciliation. Every change
+ * re-reads the session under a row lock, so concurrent pay/cancel/refund requests serialize.
  */
 @Service
+@Transactional
 public class CheckoutService {
 
   /** Always succeeds. */
@@ -23,13 +27,17 @@ public class CheckoutService {
   /** Always declined - the customer can retry with another card on the same page. */
   public static final String DECLINE_CARD = "4000000000000002";
 
-  private final Map<String, CheckoutSession> sessions = new ConcurrentHashMap<>();
-  private final Map<String, CheckoutSession> sessionsByCharge = new ConcurrentHashMap<>();
+  private final CheckoutSessionRepository repository;
   private final GatewayProperties properties;
   private final WebhookSender webhookSender;
   private final Clock clock;
 
-  public CheckoutService(GatewayProperties properties, WebhookSender webhookSender, Clock clock) {
+  public CheckoutService(
+      CheckoutSessionRepository repository,
+      GatewayProperties properties,
+      WebhookSender webhookSender,
+      Clock clock) {
+    this.repository = repository;
     this.properties = properties;
     this.webhookSender = webhookSender;
     this.clock = clock;
@@ -53,13 +61,14 @@ public class CheckoutService {
             successUrl,
             cancelUrl,
             webhookUrl,
+            clock.instant(),
             clock.instant().plus(properties.sessionTtl()));
-    sessions.put(session.getId(), session);
-    return session;
+    return repository.save(session);
   }
 
+  @Transactional(readOnly = true)
   public Optional<CheckoutSession> find(String sessionId) {
-    return Optional.ofNullable(sessions.get(sessionId));
+    return repository.findById(sessionId);
   }
 
   public String checkoutUrl(CheckoutSession session) {
@@ -75,7 +84,8 @@ public class CheckoutService {
    * again; only a successful charge completes it (and notifies the merchant).
    */
   public PayResult pay(
-      CheckoutSession session, String cardNumber, String expiry, String cvc, String name) {
+      CheckoutSession requested, String cardNumber, String expiry, String cvc, String name) {
+    CheckoutSession session = lock(requested);
     Instant now = clock.instant();
     if (session.status(now) != CheckoutSession.Status.OPEN) {
       return PayResult.notPayable(session.status(now));
@@ -102,24 +112,88 @@ public class CheckoutService {
     if (!session.complete(CheckoutSession.Status.SUCCEEDED, chargeReference, now)) {
       return PayResult.notPayable(session.status(now));
     }
-    sessionsByCharge.put(chargeReference, session);
+    repository.save(session);
     webhookSender.send(session, "checkout.session.completed");
     return PayResult.succeeded();
   }
 
   /** The customer abandoned checkout. Returns false if the session was no longer OPEN. */
-  public boolean cancel(CheckoutSession session) {
+  public boolean cancel(CheckoutSession requested) {
+    CheckoutSession session = lock(requested);
     if (!session.complete(CheckoutSession.Status.CANCELLED, null, clock.instant())) {
       return false;
     }
+    repository.save(session);
     webhookSender.send(session, "checkout.session.cancelled");
     return true;
   }
 
   /** Refunds a completed charge in full; idempotent per charge. Empty if the charge is unknown. */
   public Optional<String> refund(String chargeReference) {
-    return Optional.ofNullable(sessionsByCharge.get(chargeReference))
-        .map(session -> session.refund("re_" + UUID.randomUUID().toString().replace("-", "")));
+    return repository
+        .findByChargeReferenceForUpdate(chargeReference)
+        .map(
+            session -> {
+              String refundReference =
+                  session.refund(
+                      "re_" + UUID.randomUUID().toString().replace("-", ""), clock.instant());
+              repository.save(session);
+              return refundReference;
+            });
+  }
+
+  /**
+   * The settlement report: every charge and refund that happened in [from, to), oldest first - what
+   * a merchant reconciles its own records against.
+   */
+  @Transactional(readOnly = true)
+  public List<Transaction> transactions(Instant from, Instant to) {
+    List<Transaction> report = new ArrayList<>();
+    for (CheckoutSession s :
+        repository.findByChargedAtGreaterThanEqualAndChargedAtLessThanOrderByChargedAt(from, to)) {
+      report.add(Transaction.of(Transaction.Type.CHARGE, s, s.getChargedAt()));
+    }
+    for (CheckoutSession s :
+        repository.findByRefundedAtGreaterThanEqualAndRefundedAtLessThanOrderByRefundedAt(
+            from, to)) {
+      report.add(Transaction.of(Transaction.Type.REFUND, s, s.getRefundedAt()));
+    }
+    report.sort(Comparator.comparing(Transaction::occurredAt));
+    return report;
+  }
+
+  /** The current, row-locked copy of the session - the same object when it's already managed. */
+  private CheckoutSession lock(CheckoutSession session) {
+    return repository.findByIdForUpdate(session.getId()).orElse(session);
+  }
+
+  /** One line of the settlement report. */
+  public record Transaction(
+      Type type,
+      String sessionId,
+      String merchantReference,
+      String chargeReference,
+      String refundReference,
+      BigDecimal amount,
+      String currency,
+      Instant occurredAt) {
+
+    public enum Type {
+      CHARGE,
+      REFUND
+    }
+
+    static Transaction of(Type type, CheckoutSession s, Instant occurredAt) {
+      return new Transaction(
+          type,
+          s.getId(),
+          s.getMerchantReference(),
+          s.getChargeReference(),
+          type == Type.REFUND ? s.getRefundReference() : null,
+          s.getAmount(),
+          s.getCurrency(),
+          occurredAt);
+    }
   }
 
   static boolean passesLuhn(String digits) {
