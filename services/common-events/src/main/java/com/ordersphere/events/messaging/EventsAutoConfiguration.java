@@ -37,6 +37,12 @@ public class EventsAutoConfiguration {
     return new Jackson2JsonMessageConverter(mapper);
   }
 
+  /** Static: a BeanPostProcessor must exist before the beans it processes. */
+  @Bean
+  public static RabbitObservationPostProcessor rabbitObservationPostProcessor() {
+    return new RabbitObservationPostProcessor();
+  }
+
   @Bean
   @ConditionalOnMissingBean
   public DomainEventRelay domainEventRelay(RabbitTemplate rabbitTemplate) {

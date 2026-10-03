@@ -57,6 +57,13 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- X-Trace-Id response header (TraceIdResponseFilter); only active where tracing is on. -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-tracing</artifactId>
+            <optional>true</optional>
+        </dependency>
+
         <!-- Shared OpenAPI setup (OpenApiAutoConfiguration); only active in services that add springdoc. -->
         <dependency>
             <groupId>org.springdoc</groupId>

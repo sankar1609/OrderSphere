@@ -17,6 +17,18 @@ class OrdersphereGatewayApplicationTests {
   void contextLoads() {}
 
   @Test
+  void everyResponseCarriesItsTraceId() {
+    client
+        .get()
+        .uri("/no-such-route")
+        .exchange()
+        .expectStatus()
+        .isNotFound()
+        .expectHeader()
+        .valueMatches("X-Trace-Id", "[0-9a-f]{32}");
+  }
+
+  @Test
   void servesOneSwaggerUiListingEveryServicesSpecThroughTheGateway() {
     client.get().uri("/swagger-ui.html").exchange().expectStatus().is3xxRedirection();
     client

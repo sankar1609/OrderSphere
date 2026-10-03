@@ -31,6 +31,16 @@ services:
       timeout: 3s
       retries: 3
 
+  # Distributed tracing: every service exports spans over OTLP; UI at http://localhost:16686.
+  jaeger:
+    image: jaegertracing/all-in-one:1.57
+    container_name: ordersphere-jaeger
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"
+      - "4318:4318"
+
   service-registry:
     build:
       context: .
@@ -47,6 +57,7 @@ services:
     ports:
       - "8080:8080"
     environment:
+      OTLP_TRACING_ENDPOINT: http://jaeger:4318/v1/traces
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://service-registry:8761/eureka
       REDIS_HOST: redis
     depends_on:
@@ -68,6 +79,7 @@ services:
       - "8081:8081"
       - "5005:5005"
     environment:
+      OTLP_TRACING_ENDPOINT: http://jaeger:4318/v1/traces
       DB_HOST: postgres
       DB_NAME: auth_db
       DB_USERNAME: ordersphere
@@ -98,6 +110,7 @@ services:
       - "8083:8083"
       - "5006:5006"
     environment:
+      OTLP_TRACING_ENDPOINT: http://jaeger:4318/v1/traces
       DB_HOST: postgres
       DB_NAME: inventory_db
       DB_USERNAME: ordersphere
@@ -128,6 +141,7 @@ services:
       - "8082:8082"
       - "5007:5007"
     environment:
+      OTLP_TRACING_ENDPOINT: http://jaeger:4318/v1/traces
       DB_HOST: postgres
       DB_NAME: orders_db
       DB_USERNAME: ordersphere
@@ -159,6 +173,7 @@ services:
       - "8084:8084"
       - "5008:5008"
     environment:
+      OTLP_TRACING_ENDPOINT: http://jaeger:4318/v1/traces
       DB_HOST: postgres
       DB_NAME: payment_db
       DB_USERNAME: ordersphere
@@ -211,6 +226,7 @@ services:
       - "8085:8085"
       - "5009:5009"
     environment:
+      OTLP_TRACING_ENDPOINT: http://jaeger:4318/v1/traces
       DB_HOST: postgres
       DB_NAME: shipping_db
       DB_USERNAME: ordersphere
@@ -241,6 +257,7 @@ services:
       - "8086:8086"
       - "5010:5010"
     environment:
+      OTLP_TRACING_ENDPOINT: http://jaeger:4318/v1/traces
       DB_HOST: postgres
       DB_NAME: notification_db
       DB_USERNAME: ordersphere

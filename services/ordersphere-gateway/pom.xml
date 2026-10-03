@@ -18,6 +18,15 @@
     <description>API Gateway - single entry point for external client requests</description>
 
     <dependencies>
+        <!-- Distributed tracing: Micrometer Tracing over OpenTelemetry, exported to Jaeger (OTLP). -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-tracing-bridge-otel</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-exporter-otlp</artifactId>
+        </dependency>
         <!-- The one Swagger UI, listing every service's spec through the gateway routes. -->
         <dependency>
             <groupId>org.springdoc</groupId>

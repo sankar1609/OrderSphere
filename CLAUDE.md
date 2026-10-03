@@ -247,7 +247,7 @@ Order Placement Flow:
 ## 🚀 Deployment Architecture
 
 ### Docker Compose (Development - the only deployment in the repo today)
-- `docker-compose.yml` - PostgreSQL, RabbitMQ, Redis (gateway rate limits) (management UI on `:15672`, `ordersphere`/`ordersphere`), Eureka, the gateway, all six services and the dummy payment gateway (`:8087`)
+- `docker-compose.yml` - PostgreSQL, RabbitMQ, Redis (gateway rate limits), Jaeger (traces, UI on `:16686`) (management UI on `:15672`, `ordersphere`/`ordersphere`), Eureka, the gateway, all six services and the dummy payment gateway (`:8087`)
 - Each service has its own `Dockerfile` under `services/<name>/`; rebuild one with `docker compose up -d --build <service>`
 
 ### Kubernetes (Planned)
@@ -291,6 +291,21 @@ Order Placement Flow:
 - The Postman collections in `postman/` remain the runnable end-to-end examples.
 
 ---
+
+## 🔭 Observability (Distributed Tracing)
+
+- **Jaeger UI:** `http://localhost:16686` (the `jaeger` container in docker-compose). Pick a service, e.g. `ordersphere-orders`, and open a trace to see the cross-service waterfall.
+- **What's traced** (Micrometer Tracing over OpenTelemetry, exported via OTLP to `OTLP_TRACING_ENDPOINT`):
+  - every request through the gateway into the services;
+  - the orders saga's REST calls to inventory, payment and shipping (`RestClientConfig` passes the `ObservationRegistry` to its hand-built load-balanced builder);
+  - RabbitMQ events from publish to consume (`RabbitObservationPostProcessor` in common-events turns observation on for every RabbitTemplate and listener factory - Boot 3.2 has no property for it);
+  - each run of an `@Scheduled` sweep as its own trace (`TracedSchedulingAutoConfiguration` in common-events).
+- **Correlation:**
+  - every log line carries `[service,traceId,spanId]`;
+  - every response has an `X-Trace-Id` header (`TraceIdResponseFilter` in common-security; the gateway's `TraceIdResponseHeaderFilter` covers responses it answers itself);
+  - the Web UI appends the trace id to server-error messages.
+- **Sampling:** 100% by default (`TRACING_SAMPLING_PROBABILITY`); lower it in production.
+- **Not traced:** the dummy payment gateway. It stands in for an external provider, which wouldn't propagate our trace headers, so its webhook starts a new trace in payment-service; the payment's `orderId` links it to the order.
 
 ## 🧪 Testing & Quality Assurance
 
@@ -381,6 +396,7 @@ docker compose up -d
 # Service Registry: http://localhost:8761
 # RabbitMQ management: http://localhost:15672 (ordersphere / ordersphere)
 # Dummy payment gateway (hosted checkout): http://localhost:8087
+# Jaeger (distributed traces): http://localhost:16686
 # PostgreSQL: localhost:5432
 
 # Rebuild one service after a change
@@ -447,6 +463,7 @@ ordersphere/
 | **Deployment** | Docker Compose (Kubernetes planned) | Containerization & orchestration |
 | **Audit Trail** | Hyperledger Fabric (planned) | Blockchain-based audit logs |
 | **API Docs** | springdoc-openapi | OpenAPI 3 specs + Swagger UI |
+| **Tracing** | Micrometer Tracing + OpenTelemetry, Jaeger | Distributed traces across REST, RabbitMQ and sweeps |
 | **Build Tool** | Maven | Dependency & build management |
 | **CI** | GitHub Actions | Build, test and format check on push/PR |
 
@@ -482,7 +499,7 @@ Service Registry (Eureka) - 8761
 - [x] Consume `StockLowEvent` - low-stock alerts to the product's vendor
 - [ ] Payment reconciliation
 - [x] API documentation: OpenAPI specs per service, one Swagger UI at the gateway
-- [ ] Add distributed tracing (Jaeger/Zipkin)
+- [x] Distributed tracing (Micrometer Tracing + OpenTelemetry, Jaeger)
 - [ ] Kubernetes manifests
 - [ ] Add Hyperledger Fabric Ledger Service
 - [ ] Implement CQRS for analytics/reporting

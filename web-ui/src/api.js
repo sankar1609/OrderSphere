@@ -72,8 +72,15 @@ async function send(path, { method = "GET", token, body } = {}) {
   const data = text ? JSON.parse(text) : null;
 
   if (!response.ok) {
-    const error = new Error(data?.message ?? `Request failed with status ${response.status}`);
+    // The trace id (from the gateway) finds this request's whole path in Jaeger, so include it
+    // in what the user sees - server errors only; a 4xx message already says what's wrong.
+    const traceId = response.headers.get("X-Trace-Id");
+    const message = data?.message ?? `Request failed with status ${response.status}`;
+    const error = new Error(
+      response.status >= 500 && traceId ? `${message} (trace ${traceId})` : message
+    );
     error.status = response.status;
+    error.traceId = traceId;
     throw error;
   }
 
