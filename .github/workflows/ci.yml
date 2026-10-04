@@ -58,3 +58,24 @@ jobs:
 
       - run: npm ci
       - run: npm run build
+
+  k8s:
+    name: Kubernetes manifests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      KUBECONFORM_VERSION: v0.6.7
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Postgres init script matches docker-compose's
+        run: diff docker/postgres-init/01-init-databases.sql k8s/base/infra/postgres-init.sql
+
+      # kubectl (with built-in kustomize) is preinstalled on ubuntu-latest runners.
+      - name: Render the docker-desktop overlay
+        run: kubectl kustomize k8s/overlays/docker-desktop > rendered.yaml
+
+      - name: Validate against the Kubernetes schemas
+        run: |
+          curl -fsSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" | tar xz kubeconform
+          ./kubeconform -strict -summary -kubernetes-version 1.30.0 rendered.yaml

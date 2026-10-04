@@ -1,0 +1,15 @@
+# Docker Desktop's Kubernetes: the images built by `docker compose build` are used directly (same
+# image store), and LoadBalancer Services are published on localhost - so the gateway, the
+# checkout pages, Jaeger, Eureka and RabbitMQ's UI keep the URLs they have under docker-compose.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+patches:
+  - target:
+      kind: Service
+      name: "ordersphere-gateway|dummy-payment-gateway|jaeger|service-registry|rabbitmq"
+    patch: |-
+      - op: add
+        path: /spec/type
+        value: LoadBalancer

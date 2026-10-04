@@ -42,6 +42,8 @@ services:
       - "4318:4318"
 
   service-registry:
+    # Same tag the Kubernetes manifests use (k8s/), so one build serves both.
+    image: ordersphere/service-registry:local
     build:
       context: .
       dockerfile: services/service-registry/Dockerfile
@@ -50,6 +52,8 @@ services:
       - "8761:8761"
 
   ordersphere-gateway:
+    # Same tag the Kubernetes manifests use (k8s/), so one build serves both.
+    image: ordersphere/ordersphere-gateway:local
     build:
       context: .
       dockerfile: services/ordersphere-gateway/Dockerfile
@@ -71,6 +75,8 @@ services:
       start_period: 60s
 
   auth-service:
+    # Same tag the Kubernetes manifests use (k8s/), so one build serves both.
+    image: ordersphere/auth-service:local
     build:
       context: .
       dockerfile: services/auth-service/Dockerfile
@@ -102,6 +108,8 @@ services:
       start_period: 60s
 
   inventory-service:
+    # Same tag the Kubernetes manifests use (k8s/), so one build serves both.
+    image: ordersphere/inventory-service:local
     build:
       context: .
       dockerfile: services/inventory-service/Dockerfile
@@ -133,6 +141,8 @@ services:
       start_period: 60s
 
   ordersphere-orders:
+    # Same tag the Kubernetes manifests use (k8s/), so one build serves both.
+    image: ordersphere/ordersphere-orders:local
     build:
       context: .
       dockerfile: services/ordersphere-orders/Dockerfile
@@ -165,6 +175,8 @@ services:
       start_period: 60s
 
   payment-service:
+    # Same tag the Kubernetes manifests use (k8s/), so one build serves both.
+    image: ordersphere/payment-service:local
     build:
       context: .
       dockerfile: services/payment-service/Dockerfile
@@ -206,6 +218,8 @@ services:
       start_period: 60s
 
   dummy-payment-gateway:
+    # Same tag the Kubernetes manifests use (k8s/), so one build serves both.
+    image: ordersphere/dummy-payment-gateway:local
     build:
       context: .
       dockerfile: services/dummy-payment-gateway/Dockerfile
@@ -223,6 +237,8 @@ services:
       - postgres
 
   shipping-service:
+    # Same tag the Kubernetes manifests use (k8s/), so one build serves both.
+    image: ordersphere/shipping-service:local
     build:
       context: .
       dockerfile: services/shipping-service/Dockerfile
@@ -254,6 +270,8 @@ services:
       start_period: 60s
 
   notification-service:
+    # Same tag the Kubernetes manifests use (k8s/), so one build serves both.
+    image: ordersphere/notification-service:local
     build:
       context: .
       dockerfile: services/notification-service/Dockerfile

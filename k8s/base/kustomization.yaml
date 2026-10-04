@@ -1,0 +1,17 @@
+# The whole OrderSphere stack in the "ordersphere" namespace. Deploy through an overlay, e.g.
+#   kubectl apply -k k8s/overlays/docker-desktop
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ordersphere
+resources:
+  - namespace.yaml
+  - infra
+  - apps
+configMapGenerator:
+  - name: ordersphere-config
+    envs:
+      - config.env
+secretGenerator:
+  - name: ordersphere-secrets
+    envs:
+      - secrets.env

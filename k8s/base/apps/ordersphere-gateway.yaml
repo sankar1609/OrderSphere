@@ -1,0 +1,81 @@
+# ordersphere-gateway: Deployment + ClusterIP Service. Same name as in docker-compose, so the URLs in
+# ordersphere-config (and the services' own defaults) resolve the same way.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ordersphere-gateway
+  labels:
+    app.kubernetes.io/name: ordersphere-gateway
+    app.kubernetes.io/part-of: ordersphere
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ordersphere-gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ordersphere-gateway
+        app.kubernetes.io/part-of: ordersphere
+    spec:
+      # No Docker-link-style env vars (REDIS_PORT=tcp://..., RABBITMQ_PORT=...): the services read
+      # REDIS_PORT / RABBITMQ_PORT / DB_PORT as plain port numbers.
+      enableServiceLinks: false
+      containers:
+        - name: ordersphere-gateway
+          image: ordersphere/ordersphere-gateway:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: ordersphere-config
+            - secretRef:
+                name: ordersphere-secrets
+          env:
+            - name: REDIS_HOST
+              value: "redis"
+            - name: JAVA_TOOL_OPTIONS
+              value: "-XX:MaxRAMPercentage=75"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 768Mi
+          # Spring Boot can take a while to start on a busy laptop: allow ~3 minutes before the
+          # liveness probe may restart it.
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 5
+            failureThreshold: 36
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 20
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ordersphere-gateway
+  labels:
+    app.kubernetes.io/name: ordersphere-gateway
+    app.kubernetes.io/part-of: ordersphere
+spec:
+  selector:
+    app.kubernetes.io/name: ordersphere-gateway
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
