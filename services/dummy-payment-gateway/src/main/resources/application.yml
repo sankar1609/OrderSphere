@@ -26,3 +26,13 @@ gateway:
   webhook-secret: ${GATEWAY_WEBHOOK_SECRET:dpg_test_webhook_secret}
   # How long a checkout session stays payable. Keep it below inventory's reservation hold.
   session-ttl: ${GATEWAY_SESSION_TTL:10m}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      probes:
+        enabled: true

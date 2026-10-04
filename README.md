@@ -95,6 +95,20 @@ docker compose down -v                            # stop and wipe the data (dele
 
 The gateway rate-limits each client IP (50 requests/s, and 5/s for login, register, refresh and token); over the limit it answers 429. Tune with `GATEWAY_RATE_LIMIT_PER_SECOND`, `GATEWAY_RATE_LIMIT_BURST`, `GATEWAY_AUTH_RATE_LIMIT_PER_SECOND` and `GATEWAY_AUTH_RATE_LIMIT_BURST`.
 
+## Running on Kubernetes
+
+Kustomize manifests for the whole stack live in [`k8s/`](k8s/README.md). On Docker Desktop with
+Kubernetes enabled (stop docker-compose first - both use the same ports):
+
+```bash
+docker compose stop
+k8s/deploy.sh                       # builds the images, applies k8s/overlays/docker-desktop, waits until ready
+kubectl delete namespace ordersphere   # tear down
+```
+
+The gateway, checkout page, Eureka, Jaeger and RabbitMQ UI keep their localhost URLs, so the Web
+UI and the Postman collections work unchanged.
+
 ## Running a Single Service Locally
 
 For dev/debugging outside Docker:

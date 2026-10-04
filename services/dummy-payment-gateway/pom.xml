@@ -18,6 +18,11 @@
     <description>Stand-in for an external payment provider: hosted checkout page, merchant API and signed webhooks</description>
 
     <dependencies>
+        <!-- /actuator/health/{readiness,liveness} for container and Kubernetes probes. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>

@@ -16,7 +16,7 @@
 - **Microservices Pattern**: Each service is independently deployable with its own database
 - **Orchestrated Saga + Events**: the order saga is orchestrated over synchronous REST with compensation; domain events on RabbitMQ drive everything that doesn't block the request (notifications, shipment cancellation, payment progress)
 - **Blockchain for Audit (planned)**: Immutable audit trails using Hyperledger Fabric (trust layer, not transaction layer)
-- **Cloud-Native**: Containerized services (Docker Compose today; Kubernetes planned)
+- **Cloud-Native**: Containerized services, run with Docker Compose or on Kubernetes (`k8s/`, Kustomize)
 - **Service Discovery**: Eureka-based service registry for dynamic service location
 
 ---
@@ -247,13 +247,19 @@ Order Placement Flow:
 
 ## 🚀 Deployment Architecture
 
-### Docker Compose (Development - the only deployment in the repo today)
+### Docker Compose (Development)
 - `docker-compose.yml` - PostgreSQL, RabbitMQ, Redis (gateway rate limits), Jaeger (traces, UI on `:16686`) (management UI on `:15672`, `ordersphere`/`ordersphere`), Eureka, the gateway, all six services and the dummy payment gateway (`:8087`)
 - Each service has its own `Dockerfile` under `services/<name>/`; rebuild one with `docker compose up -d --build <service>`
+- Images are tagged `ordersphere/<service>:local`, the same tags the Kubernetes manifests use
 
-### Kubernetes (Planned)
-- No Kubernetes manifests are checked in yet. Target: one Deployment per service, PostgreSQL as a StatefulSet with persistent volumes, credentials in Secrets.
-- Every service and the gateway expose `/actuator/health` plus `/liveness` and `/readiness` probes without authentication; docker-compose health checks use `/actuator/health/readiness`. Orders' circuit-breaker actuator endpoints are ADMIN-only.
+### Kubernetes (`k8s/`, Kustomize)
+- `k8s/base/`: the whole stack in the `ordersphere` namespace - one Deployment + ClusterIP Service per service (`apps/`), PostgreSQL as a StatefulSet with a 2Gi PVC plus RabbitMQ, Redis and Jaeger (`infra/`), shared settings in ConfigMap `ordersphere-config` (`config.env`) and credentials in Secret `ordersphere-secrets` (`secrets.env` - **dev values**, replace before deploying anywhere real)
+- Services keep their docker-compose names, so the same env settings work in both; discovery still goes through Eureka (pods register their IPs)
+- `k8s/overlays/docker-desktop/`: Docker Desktop's built-in Kubernetes - uses the images `docker compose build` produces (no registry) and publishes the gateway (8080), checkout page (8087), Eureka (8761), Jaeger (16686) and RabbitMQ UI (15672) on localhost, so the Web UI and Postman collections work unchanged
+- `k8s/deploy.sh` builds, applies and waits until every rollout is ready; tear down with `kubectl delete namespace ordersphere`. Stop docker-compose first (same ports). See `k8s/README.md`
+- Probes: every service and the gateway expose `/actuator/health/liveness` and `/readiness` without authentication - Kubernetes uses them (plus a startup probe allowing ~3 minutes), docker-compose health checks use `/readiness`. Orders' circuit-breaker actuator endpoints are ADMIN-only.
+- `k8s/base/infra/postgres-init.sql` must stay identical to `docker/postgres-init/01-init-databases.sql` (CI checks)
+- Docker Desktop: if Docker's disk passes ~85%, the kubelet deletes unused images - `docker buildx prune --filter until=72h` frees old build cache
 
 ---
 
@@ -317,7 +323,7 @@ Order Placement Flow:
   - `postman/full-order-flow.postman_collection.json` - happy path, payment decline, cancellation with refund, negative checks
   - `postman/feature-coverage.postman_collection.json` - auth/RBAC, inventory, payments, returns, notifications, Eureka, RabbitMQ, circuit breakers
   - `postman/api-reference.postman_collection.json` - one example request per endpoint (no assertions)
-- **CI:** GitHub Actions (`.github/workflows/ci.yml`) runs `mvn verify` and the Web UI build on pushes and PRs to `master`/`develop`
+- **CI:** GitHub Actions (`.github/workflows/ci.yml`) runs `mvn verify`, the Web UI build and a Kubernetes manifest check (kustomize render + `kubeconform -strict`) on pushes and PRs to `master`/`develop`
 - **Not yet:** contract tests, load tests
 
 ---
@@ -439,7 +445,8 @@ ordersphere/
 ├── postman/                          # Postman collections (flow, feature coverage, API reference)
 ├── docs/                             # product-functionality.md, technical-architecture.md
 ├── docker/postgres-init/             # Creates the per-service databases
-├── .github/workflows/ci.yml          # CI: mvn verify + Web UI build
+├── k8s/                              # Kubernetes manifests (Kustomize base + docker-desktop overlay, deploy.sh)
+├── .github/workflows/ci.yml          # CI: mvn verify + Web UI build + k8s manifest check
 ├── pom.xml                           # Parent Maven configuration (incl. Spotless)
 ├── docker-compose.yml                # Local development environment
 ├── README.md                         # Project overview
@@ -461,7 +468,7 @@ ordersphere/
 | **Resilience** | Resilience4j | Circuit breakers on the saga's outbound calls |
 | **Migrations** | Flyway | Per-service schema management |
 | **Web UI** | React + Vite | Customer front end |
-| **Deployment** | Docker Compose (Kubernetes planned) | Containerization & orchestration |
+| **Deployment** | Docker Compose, Kubernetes (Kustomize) | Containerization & orchestration |
 | **Audit Trail** | Hyperledger Fabric (planned) | Blockchain-based audit logs |
 | **API Docs** | springdoc-openapi | OpenAPI 3 specs + Swagger UI |
 | **Tracing** | Micrometer Tracing + OpenTelemetry, Jaeger | Distributed traces across REST, RabbitMQ and sweeps |
@@ -501,7 +508,7 @@ Service Registry (Eureka) - 8761
 - [x] Payment reconciliation (settlement report vs. our records, findings with admin re-sync/resolve)
 - [x] API documentation: OpenAPI specs per service, one Swagger UI at the gateway
 - [x] Distributed tracing (Micrometer Tracing + OpenTelemetry, Jaeger)
-- [ ] Kubernetes manifests
+- [x] Kubernetes manifests (Kustomize, verified on Docker Desktop Kubernetes)
 - [ ] Add Hyperledger Fabric Ledger Service
 - [ ] Implement CQRS for analytics/reporting
 - [ ] Add comprehensive logging (ELK stack)
