@@ -1,9 +1,20 @@
 package com.ordersphere.dummygateway;
 
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
 import java.math.BigDecimal;
 import java.time.Instant;
 
-/** One payable checkout. Mutable state is guarded by the instance monitor. */
+/**
+ * One payable checkout, stored in gateway_db. Changes happen under a row lock (see {@link
+ * CheckoutSessionRepository#findByIdForUpdate}), so a pay and a cancel can't both win.
+ */
+@Entity
+@Table(name = "checkout_sessions")
 public class CheckoutSession {
 
   public enum Status {
@@ -13,18 +24,51 @@ public class CheckoutSession {
     EXPIRED
   }
 
-  private final String id;
-  private final String merchantReference;
-  private final BigDecimal amount;
-  private final String currency;
-  private final String description;
-  private final String successUrl;
-  private final String cancelUrl;
-  private final String webhookUrl;
-  private final Instant expiresAt;
+  @Id private String id;
+
+  @Column(name = "merchant_reference", nullable = false)
+  private String merchantReference;
+
+  @Column(nullable = false, precision = 19, scale = 2)
+  private BigDecimal amount;
+
+  @Column(nullable = false)
+  private String currency;
+
+  private String description;
+
+  @Column(name = "success_url")
+  private String successUrl;
+
+  @Column(name = "cancel_url")
+  private String cancelUrl;
+
+  @Column(name = "webhook_url")
+  private String webhookUrl;
+
+  @Enumerated(EnumType.STRING)
+  @Column(nullable = false)
   private Status status = Status.OPEN;
+
+  @Column(name = "charge_reference")
   private String chargeReference;
+
+  @Column(name = "refund_reference")
   private String refundReference;
+
+  @Column(name = "created_at", nullable = false)
+  private Instant createdAt;
+
+  @Column(name = "expires_at", nullable = false)
+  private Instant expiresAt;
+
+  @Column(name = "charged_at")
+  private Instant chargedAt;
+
+  @Column(name = "refunded_at")
+  private Instant refundedAt;
+
+  protected CheckoutSession() {}
 
   public CheckoutSession(
       String id,
@@ -35,6 +79,7 @@ public class CheckoutSession {
       String successUrl,
       String cancelUrl,
       String webhookUrl,
+      Instant createdAt,
       Instant expiresAt) {
     this.id = id;
     this.merchantReference = merchantReference;
@@ -44,11 +89,12 @@ public class CheckoutSession {
     this.successUrl = successUrl;
     this.cancelUrl = cancelUrl;
     this.webhookUrl = webhookUrl;
+    this.createdAt = createdAt;
     this.expiresAt = expiresAt;
   }
 
   /** Current status; an OPEN session past its expiry is reported (and stays) EXPIRED. */
-  public synchronized Status status(Instant now) {
+  public Status status(Instant now) {
     if (status == Status.OPEN && now.isAfter(expiresAt)) {
       status = Status.EXPIRED;
     }
@@ -56,19 +102,23 @@ public class CheckoutSession {
   }
 
   /** Moves OPEN → the given final status; returns false if the session was no longer OPEN. */
-  public synchronized boolean complete(Status finalStatus, String chargeReference, Instant now) {
+  public boolean complete(Status finalStatus, String chargeReference, Instant now) {
     if (status(now) != Status.OPEN) {
       return false;
     }
     this.status = finalStatus;
     this.chargeReference = chargeReference;
+    if (finalStatus == Status.SUCCEEDED) {
+      this.chargedAt = now;
+    }
     return true;
   }
 
   /** Records a refund once; returns the (possibly pre-existing) refund reference. */
-  public synchronized String refund(String newRefundReference) {
+  public String refund(String newRefundReference, Instant now) {
     if (refundReference == null) {
       refundReference = newRefundReference;
+      refundedAt = now;
     }
     return refundReference;
   }
@@ -105,11 +155,27 @@ public class CheckoutSession {
     return webhookUrl;
   }
 
+  public Instant getCreatedAt() {
+    return createdAt;
+  }
+
   public Instant getExpiresAt() {
     return expiresAt;
   }
 
-  public synchronized String getChargeReference() {
+  public String getChargeReference() {
     return chargeReference;
+  }
+
+  public String getRefundReference() {
+    return refundReference;
+  }
+
+  public Instant getChargedAt() {
+    return chargedAt;
+  }
+
+  public Instant getRefundedAt() {
+    return refundedAt;
   }
 }

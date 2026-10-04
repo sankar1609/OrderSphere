@@ -1,5 +1,7 @@
 package com.ordersphere.payment.gateway;
 
+import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
@@ -81,6 +83,21 @@ public class DummyPaymentGatewayClient implements PaymentGatewayClient {
       throw new PaymentGatewayException("Unable to refund charge " + chargeReference, ex);
     } catch (RestClientException ex) {
       throw new PaymentGatewayException("Unable to refund charge " + chargeReference, ex);
+    }
+  }
+
+  @Override
+  public List<ProviderTransaction> transactions(Instant from, Instant to) {
+    try {
+      ProviderTransaction[] report =
+          restClient
+              .get()
+              .uri("/api/reports/transactions?from={from}&to={to}", from, to)
+              .retrieve()
+              .body(ProviderTransaction[].class);
+      return report == null ? List.of() : List.of(report);
+    } catch (RestClientException ex) {
+      throw new PaymentGatewayException("Unable to fetch the settlement report", ex);
     }
   }
 

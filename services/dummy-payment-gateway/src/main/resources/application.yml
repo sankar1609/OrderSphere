@@ -4,6 +4,18 @@ server:
 spring:
   application:
     name: dummy-payment-gateway
+  # Sessions, charges and refunds are kept in gateway_db, so they survive a restart and can be
+  # reported back to the merchant for reconciliation.
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:gateway_db}
+    username: ${DB_USERNAME:ordersphere}
+    password: ${DB_PASSWORD:ordersphere}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
 
 gateway:
   # Base URL browsers use to reach the hosted checkout page.

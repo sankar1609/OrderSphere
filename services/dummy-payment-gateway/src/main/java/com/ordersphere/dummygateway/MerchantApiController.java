@@ -6,6 +6,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -14,6 +15,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -63,6 +65,13 @@ public class MerchantApiController {
         .orElseGet(() -> ResponseEntity.notFound().build());
   }
 
+  /** Settlement report: charges and refunds in [from, to), ISO-8601 instants. */
+  @GetMapping("/reports/transactions")
+  public List<CheckoutService.Transaction> transactions(
+      @RequestParam Instant from, @RequestParam Instant to) {
+    return checkoutService.transactions(from, to);
+  }
+
   private SessionResponse toResponse(CheckoutSession session) {
     return new SessionResponse(
         session.getId(),
@@ -70,6 +79,7 @@ public class MerchantApiController {
         checkoutService.status(session),
         session.getMerchantReference(),
         session.getChargeReference(),
+        session.getRefundReference(),
         session.getAmount(),
         session.getCurrency(),
         session.getExpiresAt());
@@ -92,6 +102,7 @@ public class MerchantApiController {
       CheckoutSession.Status status,
       String merchantReference,
       String chargeReference,
+      String refundReference,
       BigDecimal amount,
       String currency,
       Instant expiresAt) {}

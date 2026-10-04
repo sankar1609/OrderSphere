@@ -2905,6 +2905,119 @@
               }
             }
           ]
+        },
+        {
+          "name": "Customer Runs Reconciliation [expect 403]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentBaseUrl}}/payments/admin/reconciliation/runs",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "admin",
+                "reconciliation",
+                "runs"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 403', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Admin Runs Reconciliation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentBaseUrl}}/payments/admin/reconciliation/runs",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "admin",
+                "reconciliation",
+                "runs"
+              ]
+            },
+            "description": "Compares the last 24h of payments with the dummy provider's settlement report (GET /api/reports/transactions). Mismatches become findings for an admin."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Run compared the provider\\'s settlement report with our payments', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.status).to.eql('SUCCEEDED');",
+                  "    pm.expect(b.transactions).to.be.a('number');",
+                  "    pm.expect(b.paymentsChecked).to.be.a('number');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Admin Lists Open Findings",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentBaseUrl}}/payments/admin/reconciliation/findings",
+              "host": [
+                "{{paymentBaseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "admin",
+                "reconciliation",
+                "findings"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('A list of findings', function () { pm.expect(pm.response.json()).to.be.an('array'); });"
+                ]
+              }
+            }
+          ]
         }
       ]
     },

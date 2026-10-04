@@ -119,6 +119,7 @@
   - Card details never reach OrderSphere - customers pay on the provider's page
   - `PaymentGatewayClient` abstraction; `DummyPaymentGatewayClient` talks to the dummy gateway (swap for a real provider)
   - `PaymentProcessingJob` (~5s sweep) reconciles PENDING payments with the provider (covers lost webhooks and expired checkouts) and settles refunds
+  - **Reconciliation** (`ReconciliationService`, daily at 02:00 via `payment.reconciliation.cron`, or on demand): settled payments and refunds are compared with the provider's settlement report. Mismatches become findings: `CHARGED_NOT_RECORDED`, `RECORDED_NOT_CHARGED`, `AMOUNT_MISMATCH`, `REFUND_NOT_RECORDED`, `REFUND_NOT_EXECUTED`, `UNKNOWN_SESSION`. Nothing changes automatically: an admin **re-syncs** (the provider's state is applied through the normal paths, so the orders saga confirms or refunds the order) or **resolves with a note**; findings that later agree are closed as CLEARED. Admin API: `/payments/admin/reconciliation` (`POST /runs?hours=`, `GET /runs`, `GET /findings?status=`, `POST /findings/{id}/resync`, `POST /findings/{id}/resolve`)
   - Idempotent initiation per orderId; webhook and sweep serialized by a row lock
 - **Not implemented yet:** real payment provider / PCI handling, saved cards
 - **Events Produced:** PaymentInitiatedEvent, PaymentCompletedEvent, PaymentFailedEvent, RefundIssuedEvent
@@ -130,11 +131,11 @@
 - **Port:** 8087 (not registered in Eureka, not behind the API gateway - it stands in for an external provider)
 - **Purpose:** Development stand-in for a hosted-checkout card provider (Stripe Checkout-style)
 - **Provides:**
-  - Merchant API (`/api/checkout-sessions`, `/api/refunds`), authenticated with `Authorization: Bearer <GATEWAY_API_KEY>`
+  - Merchant API (`/api/checkout-sessions`, `/api/refunds`, and the settlement report `GET /api/reports/transactions?from&to` listing charges and refunds), authenticated with `Authorization: Bearer <GATEWAY_API_KEY>`
   - Hosted checkout page (`/checkout/{sessionId}`) with Pay and Cancel; redirects back to the Web UI (`?payment=success|cancelled&orderId=N`)
   - Signed webhooks (`X-Dummy-Gateway-Signature: sha256=<HMAC>`) to payment-service
 - **Test cards:** `4242 4242 4242 4242` succeeds; `4000 0000 0000 0002` is declined (the customer can retry on the same page); any name, a future `MM/YY` expiry, any 3-4 digit CVC
-- **Sessions:** kept in memory (lost on restart → payment-service fails those payments); expire after `GATEWAY_SESSION_TTL` (10 min, below inventory's 15-min hold)
+- **Sessions:** stored in its own `gateway_db` (Flyway), so sessions, charges and refunds survive a restart; expire after `GATEWAY_SESSION_TTL` (10 min, below inventory's 15-min hold)
 
 ---
 
@@ -239,7 +240,7 @@ Order Placement Flow:
 ### PostgreSQL
 - **Host:** `postgres` (containerized service)
 - **Port:** 5432
-- **Databases:** One per service (auth_db, orders_db, inventory_db, payment_db, shipping_db, notification_db), created by `docker/postgres-init`
+- **Databases:** One per service (auth_db, orders_db, inventory_db, payment_db, shipping_db, notification_db) plus gateway_db for the dummy payment provider, created by `docker/postgres-init` (on an existing volume, create gateway_db once by hand: `docker exec ordersphere-postgres psql -U ordersphere -d postgres -c "CREATE DATABASE gateway_db;"`)
 - **Migrations:** Flyway, per service (`src/main/resources/db/migration`)
 
 ---
@@ -279,7 +280,7 @@ Order Placement Flow:
 - **Auth Service:** `/auth/register`, `/auth/login`, `/auth/me`, `/auth/admin/users` (ADMIN: list), `/auth/admin/users/{id}/role`
 - **Orders Service:** `/orders` (create, list), `/orders/{id}`, `/orders/{id}/cancel`, `/orders/admin/compensations` (ADMIN: list, get, retry failed), `/orders/admin/unshipped` (ADMIN: list, retry)
 - **Inventory Service:** `/inventory/products` (create, list, get, restock), `/inventory/reservations` (reserve, confirm, release - internal, SERVICE/ADMIN)
-- **Payment Service:** `/payments` (initiate, status, refund), `/payments/webhooks/gateway` (provider webhook)
+- **Payment Service:** `/payments` (initiate, status, refund), `/payments/webhooks/gateway` (provider webhook), `/payments/admin/reconciliation` (ADMIN: runs, findings, re-sync, resolve)
 - **Dummy Payment Gateway (:8087, direct):** `/checkout/{sessionId}` (hosted page), `/api/checkout-sessions`, `/api/refunds`
 - **Shipping Service:** `/shipments` (create - ADMIN), `/shipments/{id}`, `/shipments/{id}/tracking`, `/shipments/order/{orderId}`, `/shipments/{id}/return`
 - **Notifications:** `/notifications` (list, get; create - ADMIN), `/notification-preferences` (set, list, delete)
@@ -349,7 +350,7 @@ The system uses the Saga pattern to maintain consistency across distributed serv
 
 ### Web UI (`web-ui/` - customer, vendor and admin screens done)
 - **Technology Stack:** React 18 + Vite (no router, no server of its own); see `web-ui/README.md`
-- **Done:** login/register as Customer or Vendor (tokens kept in `localStorage`, silent refresh, 401 → back to login), order list with totals and cancellation reasons, product catalog with prices and stock, order placement (out-of-stock products disabled, quantities capped at what's available) with redirect to the hosted payment page and back (with a "Pay now" link for unpaid orders), **order detail** (cancel with refund notice, shipment tracking timeline refreshed while in transit, return requests once delivered), **notifications** inbox with per-channel preferences, **Manage Products** for ADMIN/VENDOR (create a product, restock, low-stock highlighting; tab shown based on the token's `role` claim), **Admin** for ADMIN (users & roles with your own role locked, failed refunds/stock releases with Retry, unshipped paid orders with Retry)
+- **Done:** login/register as Customer or Vendor (tokens kept in `localStorage`, silent refresh, 401 → back to login), order list with totals and cancellation reasons, product catalog with prices and stock, order placement (out-of-stock products disabled, quantities capped at what's available) with redirect to the hosted payment page and back (with a "Pay now" link for unpaid orders), **order detail** (cancel with refund notice, shipment tracking timeline refreshed while in transit, return requests once delivered), **notifications** inbox with per-channel preferences, **Manage Products** for ADMIN/VENDOR (create a product, restock, low-stock highlighting; tab shown based on the token's `role` claim), **Admin** for ADMIN (users & roles with your own role locked, failed refunds/stock releases with Retry, unshipped paid orders with Retry, payment reconciliation with Run/Re-sync/Resolve)
 - **Not yet:** URL routing (pages aren't addressable by URL), automated UI tests
 - **Integration:** REST calls to the API Gateway (`VITE_GATEWAY_URL`, default `http://localhost:8080`); dev server on `http://localhost:5173`
 - **Deployment:** not decided (static hosting behind a CDN is the likely fit)
@@ -497,7 +498,7 @@ Service Registry (Eureka) - 8761
 - [x] Gateway rate limiting (Redis), unauthenticated health probes, PATCH in gateway CORS
 - [ ] Security hardening (later): OAuth2/OIDC, request validation at the gateway
 - [x] Consume `StockLowEvent` - low-stock alerts to the product's vendor
-- [ ] Payment reconciliation
+- [x] Payment reconciliation (settlement report vs. our records, findings with admin re-sync/resolve)
 - [x] API documentation: OpenAPI specs per service, one Swagger UI at the gateway
 - [x] Distributed tracing (Micrometer Tracing + OpenTelemetry, Jaeger)
 - [ ] Kubernetes manifests

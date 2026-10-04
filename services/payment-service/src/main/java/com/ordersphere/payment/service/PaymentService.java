@@ -203,6 +203,84 @@ public class PaymentService {
     }
   }
 
+  // --- Reconciliation re-sync: apply what the provider's records say, through the same paths.
+
+  /**
+   * The provider charged the card but our payment isn't COMPLETED (e.g. it was failed while the
+   * provider was unreachable). Completes it, so the orders saga confirms the order - or refunds it
+   * automatically if the order was cancelled meanwhile.
+   */
+  @Transactional
+  public void recordProviderCharge(Long paymentId, String chargeReference) {
+    Payment payment = lockedOrThrow(paymentId);
+    if (payment.getStatus() == PaymentStatus.COMPLETED
+        || payment.getStatus() == PaymentStatus.REFUNDED) {
+      return;
+    }
+    log.warn(
+        "Reconciliation: recording provider charge {} for paymentId {} (was {})",
+        chargeReference,
+        paymentId,
+        payment.getStatus());
+    payment.setFailureReason(null);
+    completePayment(payment, chargeReference);
+  }
+
+  /** The provider refunded the charge but we don't show it: record the refund as done. */
+  @Transactional
+  public void recordProviderRefund(Long paymentId, String refundReference) {
+    Payment payment = lockedOrThrow(paymentId);
+    if (payment.getStatus() == PaymentStatus.REFUNDED) {
+      return;
+    }
+    Refund refund =
+        refundRepository
+            .findByPaymentId(paymentId)
+            .orElseGet(
+                () ->
+                    new Refund(
+                        payment, payment.getAmount(), "Recorded from the provider's settlement"));
+    refund.setGatewayReference(refundReference);
+    refund.setStatus(RefundStatus.COMPLETED);
+    refundRepository.save(refund);
+    payment.markStatus(PaymentStatus.REFUNDED);
+    paymentRepository.save(payment);
+    eventPublisher.publishEvent(
+        new RefundIssuedEvent(
+            payment.getId(), refund.getId(), payment.getOrderId(), refund.getAmount()));
+  }
+
+  /**
+   * We show the payment REFUNDED but the provider never refunded the charge: refund it at the
+   * provider now (idempotent there). Returns the provider's refund reference.
+   */
+  @Transactional
+  public String executeMissingRefund(Long paymentId) {
+    Payment payment = lockedOrThrow(paymentId);
+    String refundReference =
+        gatewayClient
+            .refund(payment.getGatewayReference())
+            .orElseThrow(
+                () ->
+                    new InvalidPaymentStateException(
+                        "The provider doesn't know charge " + payment.getGatewayReference()));
+    refundRepository
+        .findByPaymentId(paymentId)
+        .ifPresent(
+            refund -> {
+              refund.setGatewayReference(refundReference);
+              refund.setStatus(RefundStatus.COMPLETED);
+              refundRepository.save(refund);
+            });
+    return refundReference;
+  }
+
+  private Payment lockedOrThrow(Long paymentId) {
+    return paymentRepository
+        .findByIdForUpdate(paymentId)
+        .orElseThrow(() -> new PaymentNotFoundException(paymentId));
+  }
+
   private void apply(Payment payment, SessionStatus status, String chargeReference) {
     if (payment.getStatus() != PaymentStatus.PENDING) {
       return;

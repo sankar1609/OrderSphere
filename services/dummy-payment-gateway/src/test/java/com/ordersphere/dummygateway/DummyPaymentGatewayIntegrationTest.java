@@ -20,10 +20,14 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.client.AutoConfigureMockRestServiceServer;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.test.web.client.match.MockRestRequestMatchers;
 import org.springframework.test.web.servlet.MockMvc;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
 
 @SpringBootTest(
     properties = {
@@ -33,7 +37,11 @@ import org.springframework.test.web.servlet.MockMvc;
     })
 @AutoConfigureMockMvc
 @AutoConfigureMockRestServiceServer
+@Testcontainers
 class DummyPaymentGatewayIntegrationTest {
+
+  @Container @ServiceConnection
+  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16");
 
   private static final String AUTH = "Bearer test-key";
 
@@ -119,12 +127,25 @@ class DummyPaymentGatewayIntegrationTest {
         .andExpect(status().isSeeOther())
         .andExpect(header().string("Location", "http://shop/?payment=success"));
 
-    webhookServer.verify();
+    webhookServer.verify(java.time.Duration.ofSeconds(5)); // delivered in the background
     mockMvc
         .perform(get("/api/checkout-sessions/" + sessionId).header("Authorization", AUTH))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCEEDED"))
         .andExpect(jsonPath("$.chargeReference", startsWith("ch_")));
+
+    // The settlement report lists the charge (and needs the merchant key like the rest of /api).
+    String window =
+        "?from="
+            + java.time.Instant.now().minusSeconds(3600)
+            + "&to="
+            + java.time.Instant.now().plusSeconds(60);
+    mockMvc.perform(get("/api/reports/transactions" + window)).andExpect(status().isUnauthorized());
+    mockMvc
+        .perform(get("/api/reports/transactions" + window).header("Authorization", AUTH))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[?(@.sessionId == '" + sessionId + "')].type").value("CHARGE"))
+        .andExpect(jsonPath("$[?(@.sessionId == '" + sessionId + "')].amount").value(6.0));
   }
 
   @Test
@@ -140,6 +161,7 @@ class DummyPaymentGatewayIntegrationTest {
         .andExpect(status().isSeeOther())
         .andExpect(header().string("Location", "http://shop/?payment=cancelled"));
     mockMvc.perform(post("/checkout/" + sessionId + "/cancel")).andExpect(status().isConflict());
+    webhookServer.verify(java.time.Duration.ofSeconds(5)); // delivered in the background
 
     mockMvc
         .perform(

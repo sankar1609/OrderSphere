@@ -12,6 +12,7 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.core.task.TaskExecutor;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -32,16 +33,24 @@ public class WebhookSender {
   private final RestClient restClient;
   private final ObjectMapper objectMapper;
   private final GatewayProperties properties;
+  private final TaskExecutor executor;
 
   public WebhookSender(
       RestClient.Builder restClientBuilder,
       ObjectMapper objectMapper,
-      GatewayProperties properties) {
+      GatewayProperties properties,
+      TaskExecutor executor) {
     this.restClient = restClientBuilder.build();
     this.objectMapper = objectMapper;
     this.properties = properties;
+    this.executor = executor;
   }
 
+  /**
+   * Builds and signs the event now, delivers it in the background - like a real provider, the
+   * customer's payment never waits on the merchant's endpoint (and the session's row lock isn't
+   * held while it does). Delivery has short timeouts (see WebhookClientConfig).
+   */
   public void send(CheckoutSession session, String type) {
     if (session.getWebhookUrl() == null || session.getWebhookUrl().isBlank()) {
       return;
@@ -53,23 +62,31 @@ public class WebhookSender {
     event.put("chargeReference", session.getChargeReference());
     event.put("amount", session.getAmount());
     event.put("currency", session.getCurrency());
+    String body;
     try {
-      String body = objectMapper.writeValueAsString(event);
+      body = objectMapper.writeValueAsString(event);
+    } catch (JsonProcessingException ex) {
+      log.warn("Webhook {} for session {} not sent: {}", type, session.getId(), ex.getMessage());
+      return;
+    }
+    String url = session.getWebhookUrl();
+    String sessionId = session.getId();
+    String signature = sign(body, properties.webhookSecret());
+    executor.execute(() -> deliver(url, body, signature, type, sessionId));
+  }
+
+  private void deliver(String url, String body, String signature, String type, String sessionId) {
+    try {
       restClient
           .post()
-          .uri(session.getWebhookUrl())
+          .uri(url)
           .contentType(MediaType.APPLICATION_JSON)
-          .header(SIGNATURE_HEADER, sign(body, properties.webhookSecret()))
+          .header(SIGNATURE_HEADER, signature)
           .body(body)
           .retrieve()
           .toBodilessEntity();
-    } catch (JsonProcessingException | RestClientException ex) {
-      log.warn(
-          "Webhook {} for session {} to {} failed: {}",
-          type,
-          session.getId(),
-          session.getWebhookUrl(),
-          ex.getMessage());
+    } catch (RestClientException ex) {
+      log.warn("Webhook {} for session {} to {} failed: {}", type, sessionId, url, ex.getMessage());
     }
   }
 
