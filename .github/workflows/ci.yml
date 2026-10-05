@@ -6,9 +6,12 @@ on:
   pull_request:
     branches: [master, develop]
 
+# Push runs and PR runs never share a group: right after a merge GitHub can start a PR run whose
+# group would otherwise collide with the base branch's and cancel the merge commit's run. Only PR
+# runs are cancelled by a newer push to the PR; every master/develop commit gets a full run.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
