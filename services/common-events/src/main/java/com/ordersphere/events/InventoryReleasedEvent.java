@@ -3,7 +3,7 @@ package com.ordersphere.events;
 import lombok.Getter;
 
 @Getter
-public class InventoryReleasedEvent extends BaseEvent {
+public class InventoryReleasedEvent extends BaseEvent implements OrderScoped {
 
   public enum Reason {
     MANUAL,

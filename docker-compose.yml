@@ -41,6 +41,55 @@ services:
       - "16686:16686"
       - "4318:4318"
 
+  # Centralized logging: Alloy tails every container's stdout into Loki; Grafana searches it and
+  # links log lines to their Jaeger traces. Config lives in observability/.
+  loki:
+    image: grafana/loki:3.7.8
+    container_name: ordersphere-loki
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    volumes:
+      - ./observability/loki/loki.yaml:/etc/loki/loki.yaml:ro
+      - loki-data:/loki
+    ports:
+      - "3100:3100"
+    mem_limit: 512m
+
+  alloy:
+    image: grafana/alloy:v1.20.1
+    container_name: ordersphere-alloy
+    command: ["run", "--server.http.listen-addr=0.0.0.0:12345", "--storage.path=/var/lib/alloy/data", "/etc/alloy/config.alloy"]
+    volumes:
+      - ./observability/alloy/config.docker.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "12345:12345"
+    depends_on:
+      - loki
+    mem_limit: 256m
+
+  grafana:
+    image: grafana/grafana:13.2.3
+    container_name: ordersphere-grafana
+    environment:
+      # Local development: anyone can look (and use Explore); admin / admin to change things.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_USERS_VIEWERS_CAN_EDIT: "true"
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/provisioning/dashboards/ordersphere-logs.json
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - loki
+      - jaeger
+    # Grafana 13 thrashes (and starves the Docker VM) below ~512m.
+    mem_limit: 768m
+
   service-registry:
     # Same tag the Kubernetes manifests use (k8s/), so one build serves both.
     image: ordersphere/service-registry:local
@@ -50,6 +99,9 @@ services:
     container_name: ordersphere-service-registry
     ports:
       - "8761:8761"
+    environment:
+      # One JSON object per line (common-logging), collected into Loki by Alloy.
+      LOG_FORMAT: json
 
   ordersphere-gateway:
     # Same tag the Kubernetes manifests use (k8s/), so one build serves both.
@@ -61,6 +113,8 @@ services:
     ports:
       - "8080:8080"
     environment:
+      # One JSON object per line (common-logging), collected into Loki by Alloy.
+      LOG_FORMAT: json
       OTLP_TRACING_ENDPOINT: http://jaeger:4318/v1/traces
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://service-registry:8761/eureka
       REDIS_HOST: redis
@@ -85,6 +139,8 @@ services:
       - "8081:8081"
       - "5005:5005"
     environment:
+      # One JSON object per line (common-logging), collected into Loki by Alloy.
+      LOG_FORMAT: json
       OTLP_TRACING_ENDPOINT: http://jaeger:4318/v1/traces
       DB_HOST: postgres
       DB_NAME: auth_db
@@ -118,6 +174,8 @@ services:
       - "8083:8083"
       - "5006:5006"
     environment:
+      # One JSON object per line (common-logging), collected into Loki by Alloy.
+      LOG_FORMAT: json
       OTLP_TRACING_ENDPOINT: http://jaeger:4318/v1/traces
       DB_HOST: postgres
       DB_NAME: inventory_db
@@ -151,6 +209,8 @@ services:
       - "8082:8082"
       - "5007:5007"
     environment:
+      # One JSON object per line (common-logging), collected into Loki by Alloy.
+      LOG_FORMAT: json
       OTLP_TRACING_ENDPOINT: http://jaeger:4318/v1/traces
       DB_HOST: postgres
       DB_NAME: orders_db
@@ -185,6 +245,8 @@ services:
       - "8084:8084"
       - "5008:5008"
     environment:
+      # One JSON object per line (common-logging), collected into Loki by Alloy.
+      LOG_FORMAT: json
       OTLP_TRACING_ENDPOINT: http://jaeger:4318/v1/traces
       DB_HOST: postgres
       DB_NAME: payment_db
@@ -227,6 +289,8 @@ services:
     ports:
       - "8087:8087"
     environment:
+      # One JSON object per line (common-logging), collected into Loki by Alloy.
+      LOG_FORMAT: json
       GATEWAY_PUBLIC_URL: http://localhost:8087
       GATEWAY_API_KEY: ${PAYMENT_GATEWAY_API_KEY:-dpg_test_secret_key}
       GATEWAY_WEBHOOK_SECRET: ${PAYMENT_GATEWAY_WEBHOOK_SECRET:-dpg_test_webhook_secret}
@@ -247,6 +311,8 @@ services:
       - "8085:8085"
       - "5009:5009"
     environment:
+      # One JSON object per line (common-logging), collected into Loki by Alloy.
+      LOG_FORMAT: json
       OTLP_TRACING_ENDPOINT: http://jaeger:4318/v1/traces
       DB_HOST: postgres
       DB_NAME: shipping_db
@@ -280,6 +346,8 @@ services:
       - "8086:8086"
       - "5010:5010"
     environment:
+      # One JSON object per line (common-logging), collected into Loki by Alloy.
+      LOG_FORMAT: json
       OTLP_TRACING_ENDPOINT: http://jaeger:4318/v1/traces
       DB_HOST: postgres
       DB_NAME: notification_db
@@ -304,3 +372,4 @@ services:
 
 volumes:
   postgres-data:
+  loki-data:

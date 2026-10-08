@@ -4,6 +4,7 @@ import com.ordersphere.payment.dto.CreatePaymentRequest;
 import com.ordersphere.payment.dto.PaymentResponse;
 import com.ordersphere.payment.dto.RefundRequest;
 import com.ordersphere.payment.dto.RefundResponse;
+import com.ordersphere.payment.logging.PaymentLogContext;
 import com.ordersphere.payment.service.PaymentService;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -35,7 +36,10 @@ public class PaymentController {
   @PreAuthorize("hasAnyRole('SERVICE', 'ADMIN')")
   public ResponseEntity<PaymentResponse> initiatePayment(
       @Valid @RequestBody CreatePaymentRequest request) {
-    return ResponseEntity.status(HttpStatus.ACCEPTED).body(paymentService.initiatePayment(request));
+    try (var logContext = PaymentLogContext.forOrder(request.orderId())) {
+      return ResponseEntity.status(HttpStatus.ACCEPTED)
+          .body(paymentService.initiatePayment(request));
+    }
   }
 
   @GetMapping("/{paymentId}")
@@ -52,8 +56,10 @@ public class PaymentController {
   @PreAuthorize("hasAnyRole('SERVICE', 'ADMIN')")
   public ResponseEntity<RefundResponse> refundPayment(
       @PathVariable Long paymentId, @Valid @RequestBody RefundRequest request) {
-    return ResponseEntity.status(HttpStatus.ACCEPTED)
-        .body(paymentService.refundPayment(paymentId, request));
+    try (var logContext = PaymentLogContext.forPayment(paymentId)) {
+      return ResponseEntity.status(HttpStatus.ACCEPTED)
+          .body(paymentService.refundPayment(paymentId, request));
+    }
   }
 
   /** ADMIN and the SERVICE identity can read any payment; customers only their own. */

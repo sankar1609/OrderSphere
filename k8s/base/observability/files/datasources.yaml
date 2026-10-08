@@ -1,0 +1,33 @@
+# Loki (logs) and Jaeger (traces), linked both ways: a log line's traceId opens its trace, and a
+# trace's spans link back to the log lines with that traceId. "$$" escapes Grafana's own
+# environment-variable interpolation in provisioning files.
+apiVersion: 1
+
+datasources:
+  - name: Loki
+    uid: loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    isDefault: true
+    jsonData:
+      maxLines: 1000
+      derivedFields:
+        - name: traceId
+          datasourceUid: jaeger
+          matcherRegex: '"traceId":"(\w+)"'
+          url: '$${__value.raw}'
+          urlDisplayLabel: View trace in Jaeger
+
+  - name: Jaeger
+    uid: jaeger
+    type: jaeger
+    access: proxy
+    url: http://jaeger:16686
+    jsonData:
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: '-5m'
+        spanEndTimeShift: '5m'
+        customQuery: true
+        query: '{service=~".+"} | traceId = "$${__trace.traceId}"'

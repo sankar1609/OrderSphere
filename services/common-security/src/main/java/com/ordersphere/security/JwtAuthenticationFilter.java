@@ -8,6 +8,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.List;
+import org.slf4j.MDC;
 import org.springframework.lang.NonNull;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.GrantedAuthority;
@@ -16,6 +17,12 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
+
+  /**
+   * MDC key holding the authenticated subject for the rest of the request - a username, or the
+   * client id for a SERVICE token - so every log line written while handling it names the caller.
+   */
+  public static final String MDC_USER = "user";
 
   private static final String BEARER_PREFIX = "Bearer ";
   private static final String ROLE_CLAIM = "role";
@@ -45,7 +52,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
       SecurityContextHolder.getContext().setAuthentication(authentication);
     }
 
-    filterChain.doFilter(request, response);
+    if (claims == null || claims.getSubject() == null) {
+      filterChain.doFilter(request, response);
+      return;
+    }
+    try (var user = MDC.putCloseable(MDC_USER, claims.getSubject())) {
+      filterChain.doFilter(request, response);
+    }
   }
 
   /** An invalid, expired or foreign-signed token simply leaves the request unauthenticated. */

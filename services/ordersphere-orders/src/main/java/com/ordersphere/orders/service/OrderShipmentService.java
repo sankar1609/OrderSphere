@@ -8,6 +8,7 @@ import com.ordersphere.orders.dto.UnshippedOrderResponse;
 import com.ordersphere.orders.exception.OrderNotFoundException;
 import com.ordersphere.orders.exception.ShipmentCreationException;
 import com.ordersphere.orders.exception.ShipmentRetryNotAllowedException;
+import com.ordersphere.orders.logging.OrderLogContext;
 import com.ordersphere.orders.repository.OrderRepository;
 import java.time.Clock;
 import java.time.Duration;
@@ -119,7 +120,7 @@ public class OrderShipmentService {
   /** Saga sweep: retries every order whose shipment creation is due. */
   public void processDue() {
     for (Long orderId : orderRepository.findShipmentDueIds(now())) {
-      try {
+      try (var logContext = OrderLogContext.forOrder(orderId)) {
         newTransaction.executeWithoutResult(status -> retryDue(orderId));
       } catch (RuntimeException ex) {
         log.warn("Shipment retry for orderId {} errored: {}", orderId, ex.getMessage());

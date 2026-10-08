@@ -18,6 +18,7 @@ import com.ordersphere.orders.exception.OrderCancellationNotAllowedException;
 import com.ordersphere.orders.exception.OrderNotFoundException;
 import com.ordersphere.orders.exception.PaymentInitiationException;
 import com.ordersphere.orders.exception.ShipmentLookupException;
+import com.ordersphere.orders.logging.OrderLogContext;
 import com.ordersphere.orders.repository.OrderRepository;
 import java.math.BigDecimal;
 import java.util.HashMap;
@@ -77,6 +78,14 @@ public class OrderService {
     }
     orderRepository.save(order);
 
+    try (var logContext = OrderLogContext.forOrder(order.getId())) {
+      return reserveAndRequestPayment(order, username, request, bearerToken);
+    }
+  }
+
+  /** The rest of order placement, once the order has an id: reserve, price, open a checkout. */
+  private OrderResponse reserveAndRequestPayment(
+      Order order, String username, CreateOrderRequest request, String bearerToken) {
     eventPublisher.publishEvent(
         new OrderCreatedEvent(order.getId(), username, quantitiesBySku(request)));
 

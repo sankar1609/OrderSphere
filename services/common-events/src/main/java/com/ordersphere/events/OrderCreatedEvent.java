@@ -4,7 +4,7 @@ import java.util.Map;
 import lombok.Getter;
 
 @Getter
-public class OrderCreatedEvent extends BaseEvent {
+public class OrderCreatedEvent extends BaseEvent implements OrderScoped {
 
   private final Long orderId;
   private final String customerUsername;

@@ -18,6 +18,12 @@
     <description>Centralized authentication and authorization service</description>
 
     <dependencies>
+        <!-- Shared logback config: readable text by default, JSON lines with LOG_FORMAT=json. -->
+        <dependency>
+            <groupId>com.ordersphere</groupId>
+            <artifactId>common-logging</artifactId>
+        </dependency>
+
         <!-- Distributed tracing: Micrometer Tracing over OpenTelemetry, exported to Jaeger (OTLP). -->
         <dependency>
             <groupId>io.micrometer</groupId>

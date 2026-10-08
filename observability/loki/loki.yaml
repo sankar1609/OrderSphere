@@ -1,0 +1,53 @@
+# Loki, single binary, local filesystem storage - enough for one developer machine or a small
+# cluster. Only labels are indexed (service, level, container); traceId/user/orderId/paymentId
+# arrive as structured metadata, so they're searchable without blowing up the index.
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  log_level: warn
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+    # One process is the whole ring. With the default 1m heartbeat timeout, a busy or sleeping
+    # laptop (e.g. during big builds) can make the only ingester miss heartbeats; it is then dropped
+    # from the ring and every push fails with "at least 1 live replicas required" until Loki
+    # restarts. So: a year. (Not 0 - Loki 3.7 treats 0 as "always timed out", not "never".)
+    heartbeat_timeout: 8760h
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+
+schema_config:
+  configs:
+    - from: 2026-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  retention_period: 72h
+  allow_structured_metadata: true
+  volume_enabled: true
+
+ingester:
+  lifecycler:
+    # Same reason as common.ring.heartbeat_timeout: never declare the only ingester dead.
+    heartbeat_timeout: 8760h
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  delete_request_store: filesystem
+
+analytics:
+  reporting_enabled: false

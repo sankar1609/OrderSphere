@@ -2,6 +2,7 @@ package com.ordersphere.orders.messaging;
 
 import com.ordersphere.events.PaymentCompletedEvent;
 import com.ordersphere.events.PaymentFailedEvent;
+import com.ordersphere.orders.logging.OrderLogContext;
 import com.ordersphere.orders.service.OrderService;
 import org.springframework.amqp.rabbit.annotation.RabbitHandler;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
@@ -25,11 +26,15 @@ public class PaymentEventListener {
 
   @RabbitHandler
   public void onPaymentCompleted(PaymentCompletedEvent event) {
-    orderService.onPaymentEvent(event.getOrderId(), true);
+    try (var logContext = OrderLogContext.forOrder(event.getOrderId())) {
+      orderService.onPaymentEvent(event.getOrderId(), true);
+    }
   }
 
   @RabbitHandler
   public void onPaymentFailed(PaymentFailedEvent event) {
-    orderService.onPaymentEvent(event.getOrderId(), false);
+    try (var logContext = OrderLogContext.forOrder(event.getOrderId())) {
+      orderService.onPaymentEvent(event.getOrderId(), false);
+    }
   }
 }

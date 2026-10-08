@@ -5,8 +5,10 @@ import static org.mockito.Mockito.verify;
 
 import com.ordersphere.security.testing.TestJwtIssuer;
 import jakarta.servlet.FilterChain;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.Authentication;
@@ -65,5 +67,32 @@ class JwtAuthenticationFilterTest {
 
     assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
     verify(chain).doFilter(request, response);
+  }
+
+  @Test
+  void namesTheCallerInTheLogContextOnlyWhileHandlingTheRequest() throws Exception {
+    MockHttpServletRequest request = new MockHttpServletRequest();
+    request.addHeader("Authorization", TestJwtIssuer.bearer("alice", "CUSTOMER"));
+    AtomicReference<String> userDuringRequest = new AtomicReference<>();
+
+    filter.doFilter(
+        request,
+        new MockHttpServletResponse(),
+        (req, res) -> userDuringRequest.set(MDC.get(JwtAuthenticationFilter.MDC_USER)));
+
+    assertThat(userDuringRequest.get()).isEqualTo("alice");
+    assertThat(MDC.get(JwtAuthenticationFilter.MDC_USER)).isNull();
+  }
+
+  @Test
+  void leavesTheLogContextAloneForAnonymousRequests() throws Exception {
+    AtomicReference<String> userDuringRequest = new AtomicReference<>("unset");
+
+    filter.doFilter(
+        new MockHttpServletRequest(),
+        new MockHttpServletResponse(),
+        (req, res) -> userDuringRequest.set(MDC.get(JwtAuthenticationFilter.MDC_USER)));
+
+    assertThat(userDuringRequest.get()).isNull();
   }
 }

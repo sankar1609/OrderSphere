@@ -8,9 +8,9 @@ This document describes how OrderSphere is actually built today — architecture
 
 ## 1. Overview
 
-OrderSphere is a cloud-native order and inventory management platform built as eleven Maven modules — nine independently deployable Spring Boot applications (eight platform services plus a stand-in payment provider) and two shared libraries. It exists to demonstrate — and exercise — the hard parts of distributed order processing: reserving stock without overselling, keeping payment and fulfillment eventually consistent, giving every state transition a compensating path back out, and — the part that's easy to get wrong — making sure the two independent things that can each try to finish the same step don't race each other into a lost update.
+OrderSphere is a cloud-native order and inventory management platform built as twelve Maven modules — nine independently deployable Spring Boot applications (eight platform services plus a stand-in payment provider) and three shared libraries. It exists to demonstrate — and exercise — the hard parts of distributed order processing: reserving stock without overselling, keeping payment and fulfillment eventually consistent, giving every state transition a compensating path back out, and — the part that's easy to get wrong — making sure the two independent things that can each try to finish the same step don't race each other into a lost update.
 
-The system runs as a full Docker Compose stack or on Kubernetes (Kustomize manifests in `k8s/`): a Eureka service registry, an API gateway, six business services, a dummy hosted-checkout payment provider, PostgreSQL (one database per service), RabbitMQ for asynchronous fan-out, Redis for gateway rate limits and Jaeger for distributed traces. Every service builds, has a Flyway-managed schema and carries its own test suite; the six business services publish OpenAPI specs.
+The system runs as a full Docker Compose stack or on Kubernetes (Kustomize manifests in `k8s/`): a Eureka service registry, an API gateway, six business services, a dummy hosted-checkout payment provider, PostgreSQL (one database per service), RabbitMQ for asynchronous fan-out, Redis for gateway rate limits, Jaeger for distributed traces, and Loki, Alloy and Grafana for centralized logs. Every service builds, has a Flyway-managed schema and carries its own test suite; the six business services publish OpenAPI specs.
 
 ---
 
@@ -103,7 +103,7 @@ All API traffic enters through the gateway; every service resolves its peers (an
 
 ## 3. Service catalog
 
-Nine runtime applications plus two shared libraries. Ports match the Docker Compose configuration and are stable across local and containerized runs.
+Nine runtime applications plus three shared libraries. Ports match the Docker Compose configuration and are stable across local and containerized runs.
 
 | Service | Port | Responsibility | Database |
 |---|---|---|---|
@@ -117,7 +117,8 @@ Nine runtime applications plus two shared libraries. Ports match the Docker Comp
 | `service-registry` | 8761 | Eureka server — service discovery for every service above | — |
 | `dummy-payment-gateway` | 8087 | Stand-in external payment provider: hosted checkout page, merchant API, settlement report, HMAC-signed webhooks. Not in Eureka, not behind the gateway | `gateway_db` |
 | `common-events` | — | Shared library: event POJOs, topic-exchange auto-configuration, routing-key derivation, domain-event relay, RabbitMQ and `@Scheduled` tracing | — |
-| `common-security` | — | Shared library: JWT verification (JWKS), Spring Security filter, role model, OpenAPI conventions, `X-Trace-Id` response header | — |
+| `common-security` | — | Shared library: JWT verification (JWKS), Spring Security filter (also puts the caller in the logging context), role model, OpenAPI conventions, `X-Trace-Id` response header | — |
+| `common-logging` | — | Shared library: the logback configuration every application uses — readable text by default, one JSON object per line with `LOG_FORMAT=json` | — |
 
 ---
 
@@ -212,7 +213,7 @@ What every service is actually built on, confirmed against each module's `pom.xm
 | Technology | Role |
 |---|---|
 | Java 17 | Language baseline, parent POM |
-| Spring Boot 3.2.1 | Service framework across all eleven modules |
+| Spring Boot 3.2.1 | Service framework across all twelve modules |
 | Spring Cloud Gateway | API gateway routing |
 | Netflix Eureka | Service discovery, client + server |
 | Spring Cloud LoadBalancer | Client-side balancing for Orders' outbound calls |
@@ -227,6 +228,7 @@ What every service is actually built on, confirmed against each module's `pom.xm
 | jjwt | JWT signing (auth-service) and verification (`common-security`), RS256 |
 | springdoc-openapi 2.3 | OpenAPI 3 spec per service, one Swagger UI at the gateway |
 | Micrometer Tracing + OpenTelemetry (OTLP), Jaeger | Distributed traces across REST, RabbitMQ and scheduled sweeps |
+| logstash-logback-encoder, Grafana Alloy, Loki, Grafana | JSON logs, collected centrally, searchable by service, user, order and trace |
 | Jackson + jsr310 | Event (de)serialization, incl. `java.time` types |
 | Lombok | Boilerplate reduction across domain/DTO classes |
 | JUnit 5 + Testcontainers | Unit and integration tests against real Postgres/RabbitMQ |
@@ -245,7 +247,7 @@ What every service is actually built on, confirmed against each module's `pom.xm
 
 Two deployment paths share the same images and configuration: Docker Compose for everyday development, and Kubernetes manifests in `k8s/`.
 
-- `mvn verify` builds all eleven modules from the root parent POM and runs every test plus the Spotless check - exactly what CI runs.
+- `mvn verify` builds all twelve modules from the root parent POM and runs every test plus the Spotless check - exactly what CI runs.
 - Each of the nine runtime applications has its own `Dockerfile`; `docker-compose.yml` builds them as `ordersphere/<service>:local` and wires them with `postgres`, `rabbitmq`, `redis` and `jaeger`.
 - **Kubernetes:** `k8s/base` holds a Deployment + ClusterIP Service per application (startup, readiness and liveness probes; memory requests/limits), Postgres as a StatefulSet with a PVC, RabbitMQ, Redis and Jaeger, a ConfigMap (`ordersphere-config`) for shared settings and a Secret (`ordersphere-secrets`, dev values) for credentials. Services keep their compose names, so the same settings work in both, and discovery still goes through Eureka (pods register their IPs). Pods set `enableServiceLinks: false` - Kubernetes' injected `REDIS_PORT=tcp://...`-style variables would otherwise clash with the services' own `*_PORT` settings. The `docker-desktop` overlay uses the locally built images and publishes the gateway, checkout page, Eureka, Jaeger and RabbitMQ UI on localhost; `k8s/deploy.sh` builds, applies and waits for every rollout.
 - Configuration is environment-variable driven throughout — `DB_HOST`, `EUREKA_URI`, `RABBITMQ_HOST`, `JWT_JWKS_URI`, `ORDERS_CLIENT_SECRET`, `PAYMENT_GATEWAY_*`, `OTLP_TRACING_ENDPOINT` — the same images run under Compose or Kubernetes without rebuilding.
@@ -254,6 +256,7 @@ Two deployment paths share the same images and configuration: Docker Compose for
 ### Observability and API docs
 
 - **Tracing:** Micrometer Tracing over OpenTelemetry, exported over OTLP to Jaeger (`http://localhost:16686`). Traced: every request through the gateway, the saga's REST calls (`RestClientConfig` hands its load-balanced builder the `ObservationRegistry`), RabbitMQ events from publish to consume (`RabbitObservationPostProcessor` in `common-events`, since Boot 3.2 has no property for it), and every run of a `@Scheduled` sweep as its own trace. Log lines carry `[service,traceId,spanId]`, responses an `X-Trace-Id` header. The dummy provider is deliberately untraced, like an external provider: its webhook starts a new trace, linked to the order by `orderId`.
+- **Centralized logs:** with `LOG_FORMAT=json` (set under Compose and Kubernetes) every application writes one JSON object per line through `common-logging`'s logback config: `service`, `level`, `logger`, `message`, a shortened `stack_trace`, and every MDC entry — Micrometer's `traceId`/`spanId`, the caller (`user`, set by `JwtAuthenticationFilter`; the client id for SERVICE tokens), and `orderId`/`paymentId`. The order id is set at each unit of work on an order (`OrderLogContext` in Orders, `PaymentLogContext` in Payment) and by `DomainEventRelay`, which also logs one INFO line per relayed domain event — so every service's state changes for an order can be found by its id. Grafana Alloy tails the containers (Docker socket under Compose; pod logs through the Kubernetes API, with a namespaced Role, on Kubernetes) and ships to Loki (72h retention). `service`, `level` and `container` are indexed labels; the per-request ids are structured metadata, filterable without growing the index. Grafana (`:3000`) provisions Loki and Jaeger linked both ways — a log line's `traceId` opens its trace, a trace links back to its lines — and an "OrderSphere logs" dashboard. Loki was chosen over ELK for its footprint: it indexes labels only, and the whole logging stack needs less memory than Elasticsearch alone.
 - **API docs:** each of the six business services serves an OpenAPI 3 spec at `/v3/api-docs`, generated by springdoc; `common-security`'s `OpenApiAutoConfiguration` applies the shared conventions (gateway server URL, Bearer JWT, a shared `ErrorResponse` schema, 401/403 responses). The gateway serves one Swagger UI for all of them.
 
 ---
@@ -278,7 +281,7 @@ Every module carries its own test suite; `common-events` is the most heavily cov
 
 Integration coverage runs against real dependencies via Testcontainers (Postgres and RabbitMQ), rather than mocking the database or broker — the suites in `ordersphere-orders` and `common-events` in particular exercise actual message publish/consume round-trips. Every `@SpringBootTest`-based integration test class carries `@DirtiesContext(classMode = AFTER_CLASS)`: without it, Testcontainers tears down the Postgres/RabbitMQ containers right after the test class finishes, but the cached Spring context (and its live `@Scheduled` jobs and AMQP listeners) can outlive them until the JVM exits — the mismatch shows up as retry-spam against dead containers and, eventually, Surefire force-killing the fork after a 30s hang.
 
-End to end, three Postman collections run against a live stack with newman - `full-order-flow` (happy path, decline, cancellation with refund, negative checks), `feature-coverage` (auth/RBAC, inventory, payments and reconciliation, returns, notifications, Eureka, RabbitMQ, circuit breakers) and `api-reference` (one example per endpoint). The first two pass against both the Compose stack and the Kubernetes deployment. CI (GitHub Actions) runs `mvn verify`, the Web UI build and a Kubernetes manifest check on every push and PR to `master`/`develop`.
+End to end, three Postman collections run against a live stack with newman - `full-order-flow` (happy path, decline, cancellation with refund, negative checks), `feature-coverage` (auth/RBAC, inventory, payments and reconciliation, returns, notifications, Eureka, RabbitMQ, circuit breakers, an order's lines found in Loki by trace and order id) and `api-reference` (one example per endpoint). The first two pass against both the Compose stack and the Kubernetes deployment. CI (GitHub Actions) runs `mvn verify`, the Web UI build and a Kubernetes manifest check on every push and PR to `master`/`develop`.
 
 ---
 
@@ -301,5 +304,6 @@ What's shipped versus what's still ahead, per the project's own tracked roadmap.
 - [ ] OAuth2/OIDC, request validation at the gateway
 - [ ] Hyperledger Fabric ledger service for immutable audit trails
 - [ ] CQRS-based analytics/reporting
-- [ ] Centralized logging (ELK stack)
+- [x] Centralized logging (Loki + Alloy + Grafana; JSON logs linked to traces)
+- [ ] Metrics (Prometheus) and alerting
 - [ ] Caching layer (Redis)

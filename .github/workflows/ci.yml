@@ -71,8 +71,15 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Postgres init script matches docker-compose's
-        run: diff docker/postgres-init/01-init-databases.sql k8s/base/infra/postgres-init.sql
+      # kustomize can't read outside k8s/, so these are copies of the docker-compose originals.
+      - name: Copied config matches docker-compose's
+        run: |
+          diff docker/postgres-init/01-init-databases.sql k8s/base/infra/postgres-init.sql
+          diff observability/loki/loki.yaml k8s/base/observability/files/loki.yaml
+          diff observability/alloy/config.k8s.alloy k8s/base/observability/files/config.k8s.alloy
+          diff observability/grafana/provisioning/datasources/datasources.yaml k8s/base/observability/files/datasources.yaml
+          diff observability/grafana/provisioning/dashboards/dashboards.yaml k8s/base/observability/files/dashboards.yaml
+          diff observability/grafana/provisioning/dashboards/ordersphere-logs.json k8s/base/observability/files/ordersphere-logs.json
 
       # kubectl (with built-in kustomize) is preinstalled on ubuntu-latest runners.
       - name: Render the docker-desktop overlay

@@ -1,17 +1,22 @@
 package com.ordersphere.orders.service;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.ordersphere.orders.domain.Order;
 import com.ordersphere.orders.domain.OrderStatus;
+import com.ordersphere.orders.logging.OrderLogContext;
 import com.ordersphere.orders.repository.OrderRepository;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.MDC;
 
 @ExtendWith(MockitoExtension.class)
 class OrderSagaProgressJobTest {
@@ -33,6 +38,28 @@ class OrderSagaProgressJobTest {
     job.progressAwaitingPaymentOrders();
 
     verify(orderService).progressAwaitingPayment(10L);
+  }
+
+  @Test
+  void progressesEachOrderWithItsIdInTheLogContext() {
+    Order order = new Order("alice");
+    order.setId(10L);
+    order.markStatus(OrderStatus.AWAITING_PAYMENT);
+    when(orderRepository.findByStatus(OrderStatus.AWAITING_PAYMENT)).thenReturn(List.of(order));
+    AtomicReference<String> orderIdWhileProgressing = new AtomicReference<>();
+    doAnswer(
+            invocation -> {
+              orderIdWhileProgressing.set(MDC.get(OrderLogContext.ORDER_ID));
+              return null;
+            })
+        .when(orderService)
+        .progressAwaitingPayment(10L);
+
+    new OrderSagaProgressJob(orderRepository, orderService, compensations, shipments)
+        .progressAwaitingPaymentOrders();
+
+    assertThat(orderIdWhileProgressing.get()).isEqualTo("10");
+    assertThat(MDC.get(OrderLogContext.ORDER_ID)).isNull();
   }
 
   @Test

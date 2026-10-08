@@ -1,0 +1,84 @@
+// Grafana Alloy on Kubernetes: tails the logs of every pod in the "ordersphere" namespace through
+// the Kubernetes API and ships them to Loki. docker-compose uses config.docker.alloy.
+
+discovery.kubernetes "pods" {
+  role = "pod"
+
+  namespaces {
+    names = ["ordersphere"]
+  }
+}
+
+discovery.relabel "pods" {
+  targets = discovery.kubernetes.pods.targets
+
+  // The app name, e.g. "ordersphere-orders". It doubles as "service" for pods that don't log
+  // JSON (postgres, rabbitmq, ...); JSON lines set "service" themselves.
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+    target_label  = "container"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+    target_label  = "service"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_name"]
+    target_label  = "pod"
+  }
+}
+
+loki.source.kubernetes "pods" {
+  targets    = discovery.relabel.pods.output
+  forward_to = [loki.process.ordersphere.receiver]
+}
+
+// Shared with config.docker.alloy - keep the two in step.
+loki.process "ordersphere" {
+  forward_to = [loki.write.loki.receiver]
+
+  // OrderSphere services log one JSON object per line (LOG_FORMAT=json, common-logging).
+  // Other lines don't parse and pass through unchanged.
+  stage.json {
+    expressions = {
+      service   = "service",
+      level     = "level",
+      traceId   = "traceId",
+      spanId    = "spanId",
+      user      = "user",
+      orderId   = "orderId",
+      paymentId = "paymentId",
+    }
+  }
+
+  // Lowercase, so Logback's "ERROR" and other containers' "error" are one label value.
+  stage.template {
+    source   = "level"
+    template = "{{ ToLower .Value }}"
+  }
+
+  // Few distinct values: index them as labels.
+  stage.labels {
+    values = {
+      service = "",
+      level   = "",
+    }
+  }
+
+  // One value per request/order: structured metadata, filterable but not indexed.
+  stage.structured_metadata {
+    values = {
+      traceId   = "",
+      spanId    = "",
+      user      = "",
+      orderId   = "",
+      paymentId = "",
+    }
+  }
+}
+
+loki.write "loki" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

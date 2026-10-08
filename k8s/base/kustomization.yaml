@@ -6,6 +6,7 @@ namespace: ordersphere
 resources:
   - namespace.yaml
   - infra
+  - observability
   - apps
 configMapGenerator:
   - name: ordersphere-config
