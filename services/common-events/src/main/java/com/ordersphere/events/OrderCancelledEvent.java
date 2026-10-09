@@ -3,7 +3,7 @@ package com.ordersphere.events;
 import lombok.Getter;
 
 @Getter
-public class OrderCancelledEvent extends BaseEvent {
+public class OrderCancelledEvent extends BaseEvent implements OrderScoped {
 
   public enum Reason {
     CUSTOMER_REQUESTED,

@@ -4,7 +4,7 @@ import java.math.BigDecimal;
 import lombok.Getter;
 
 @Getter
-public class RefundIssuedEvent extends BaseEvent {
+public class RefundIssuedEvent extends BaseEvent implements OrderScoped {
 
   private final Long paymentId;
   private final Long refundId;

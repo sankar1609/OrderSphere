@@ -26,6 +26,7 @@ cat <<URLS
 
 OrderSphere is up:
   API gateway           http://localhost:8080   (Swagger UI: /webjars/swagger-ui/index.html)
+  Grafana (logs)        http://localhost:3000
   Payment checkout      http://localhost:8087
   Eureka                http://localhost:8761
   Jaeger                http://localhost:16686

@@ -8,6 +8,7 @@ import com.ordersphere.orders.dto.CompensationResponse;
 import com.ordersphere.orders.exception.CompensationCallException;
 import com.ordersphere.orders.exception.CompensationNotFoundException;
 import com.ordersphere.orders.exception.CompensationNotRetryableException;
+import com.ordersphere.orders.logging.OrderLogContext;
 import com.ordersphere.orders.repository.CompensationRepository;
 import java.time.Clock;
 import java.time.Duration;
@@ -176,6 +177,12 @@ public class CompensationService {
   }
 
   private void run(Compensation compensation) {
+    try (var logContext = OrderLogContext.forOrder(compensation.getOrderId())) {
+      runAttempt(compensation);
+    }
+  }
+
+  private void runAttempt(Compensation compensation) {
     compensation.setAttempts(compensation.getAttempts() + 1);
     compensation.setUpdatedAt(now());
     try {

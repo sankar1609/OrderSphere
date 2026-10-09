@@ -18,6 +18,7 @@ import com.ordersphere.payment.gateway.PaymentGatewayClient;
 import com.ordersphere.payment.gateway.PaymentGatewayClient.CheckoutSession;
 import com.ordersphere.payment.gateway.PaymentGatewayClient.SessionStatus;
 import com.ordersphere.payment.gateway.PaymentGatewayException;
+import com.ordersphere.payment.logging.PaymentLogContext;
 import com.ordersphere.payment.repository.PaymentRepository;
 import com.ordersphere.payment.repository.RefundRepository;
 import java.util.Optional;
@@ -146,7 +147,13 @@ public class PaymentService {
     paymentRepository
         .findByCheckoutSessionIdForUpdate(sessionId)
         .ifPresentOrElse(
-            payment -> apply(payment, status, chargeReference),
+            payment -> {
+              // Webhooks carry only the session id: name the payment and order for the logs.
+              try (var logContext =
+                  PaymentLogContext.forPayment(payment.getId(), payment.getOrderId())) {
+                apply(payment, status, chargeReference);
+              }
+            },
             () -> log.warn("Ignoring gateway outcome for unknown checkout session {}", sessionId));
   }
 

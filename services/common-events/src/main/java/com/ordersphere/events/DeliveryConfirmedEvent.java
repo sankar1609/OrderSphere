@@ -4,7 +4,7 @@ import java.time.Instant;
 import lombok.Getter;
 
 @Getter
-public class DeliveryConfirmedEvent extends BaseEvent {
+public class DeliveryConfirmedEvent extends BaseEvent implements OrderScoped {
 
   private final Long shipmentId;
   private final Long orderId;

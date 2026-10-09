@@ -2,6 +2,7 @@ package com.ordersphere.orders.controller;
 
 import com.ordersphere.orders.dto.CreateOrderRequest;
 import com.ordersphere.orders.dto.OrderResponse;
+import com.ordersphere.orders.logging.OrderLogContext;
 import com.ordersphere.orders.service.OrderService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -57,7 +58,9 @@ public class OrderController {
           "Idempotent. Releases the stock, refunds a paid order and cancels an undelivered shipment; 409 once delivered.")
   @PostMapping("/{orderId}/cancel")
   public OrderResponse cancelOrder(@PathVariable Long orderId, Authentication authentication) {
-    return orderService.cancelOrder(authentication.getName(), isAdmin(authentication), orderId);
+    try (var logContext = OrderLogContext.forOrder(orderId)) {
+      return orderService.cancelOrder(authentication.getName(), isAdmin(authentication), orderId);
+    }
   }
 
   private boolean isAdmin(Authentication authentication) {

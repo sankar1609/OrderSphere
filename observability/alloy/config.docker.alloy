@@ -1,0 +1,83 @@
+// Grafana Alloy under docker-compose: tails the stdout of every container in the "ordersphere"
+// compose project and ships it to Loki. Kubernetes uses config.k8s.alloy (same processing).
+
+discovery.docker "ordersphere" {
+  host = "unix:///var/run/docker.sock"
+
+  filter {
+    name   = "label"
+    values = ["com.docker.compose.project=ordersphere"]
+  }
+}
+
+discovery.relabel "ordersphere" {
+  targets = []
+
+  // The compose service name, e.g. "ordersphere-orders". It doubles as "service" for containers
+  // that don't log JSON (postgres, rabbitmq, ...); JSON lines set "service" themselves.
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "container"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+}
+
+loki.source.docker "ordersphere" {
+  host          = "unix:///var/run/docker.sock"
+  targets       = discovery.docker.ordersphere.targets
+  relabel_rules = discovery.relabel.ordersphere.rules
+  forward_to    = [loki.process.ordersphere.receiver]
+}
+
+// Shared with config.k8s.alloy - keep the two in step.
+loki.process "ordersphere" {
+  forward_to = [loki.write.loki.receiver]
+
+  // OrderSphere services log one JSON object per line (LOG_FORMAT=json, common-logging).
+  // Other lines don't parse and pass through unchanged.
+  stage.json {
+    expressions = {
+      service   = "service",
+      level     = "level",
+      traceId   = "traceId",
+      spanId    = "spanId",
+      user      = "user",
+      orderId   = "orderId",
+      paymentId = "paymentId",
+    }
+  }
+
+  // Lowercase, so Logback's "ERROR" and other containers' "error" are one label value.
+  stage.template {
+    source   = "level"
+    template = "{{ ToLower .Value }}"
+  }
+
+  // Few distinct values: index them as labels.
+  stage.labels {
+    values = {
+      service = "",
+      level   = "",
+    }
+  }
+
+  // One value per request/order: structured metadata, filterable but not indexed.
+  stage.structured_metadata {
+    values = {
+      traceId   = "",
+      spanId    = "",
+      user      = "",
+      orderId   = "",
+      paymentId = "",
+    }
+  }
+}
+
+loki.write "loki" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

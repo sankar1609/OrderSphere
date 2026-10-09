@@ -1,6 +1,7 @@
 package com.ordersphere.orders.service;
 
 import com.ordersphere.orders.domain.OrderStatus;
+import com.ordersphere.orders.logging.OrderLogContext;
 import com.ordersphere.orders.repository.OrderRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,7 +42,7 @@ public class OrderSagaProgressJob {
     for (var order : orderRepository.findByStatus(OrderStatus.AWAITING_PAYMENT)) {
       // One order's failure (e.g. auth-service briefly unreachable) mustn't stop the rest of the
       // sweep; the order is simply retried on the next one.
-      try {
+      try (var logContext = OrderLogContext.forOrder(order.getId())) {
         orderService.progressAwaitingPayment(order.getId());
       } catch (RuntimeException ex) {
         log.warn("Could not progress orderId {} this sweep: {}", order.getId(), ex.getMessage());

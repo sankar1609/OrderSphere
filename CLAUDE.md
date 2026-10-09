@@ -31,7 +31,7 @@
   - Client-side load balancing across registered instances
   - CORS for the Web UI dev server (`http://localhost:5173`; GET/POST/PUT/PATCH/DELETE/OPTIONS)
   - Rate limiting (`RequestRateLimiter`, token buckets in Redis, per client IP): 50 req/s burst 100 on every route; login/register/refresh/token 5 req/s burst 30 (`GATEWAY_*RATE_LIMIT*` env vars). Over the limit → 429 with `X-RateLimit-*` headers; if Redis is down requests are let through. The client IP is the TCP peer; `X-Forwarded-For` is only used behind trusted proxies (`GATEWAY_TRUSTED_PROXY_HOPS`, default 0 - otherwise a client could send a fake address each request and dodge the limit), and then only the entry the outermost trusted proxy appended
-- **Not implemented yet:** request validation, centralized logging/metrics
+- **Not implemented yet:** request validation, metrics
 - **Technology:** Spring Cloud Gateway
 - **Interacts With:** All downstream services
 
@@ -194,14 +194,18 @@
 
 #### `common-security`
 - JWT verification only (`JwtVerifier`): RS256 public keys from auth-service's JWKS (`jwt.jwks-uri`, fetched lazily, cached, re-fetched for unknown key ids; concurrent cache misses wait for a single fetch, so a burst of requests right after startup isn't answered 401) or a fixed `jwt.public-key`
-- `JwtAuthenticationFilter` mapping the `role` claim to `ROLE_*` authorities
+- `JwtAuthenticationFilter` mapping the `role` claim to `ROLE_*` authorities, and putting the caller (`user`: username, or the client id for SERVICE tokens) in the logging context for the request
 - Test-jar with `TestJwtIssuer`, auto-configured so every service's tests can mint tokens without auth-service
 
 #### `common-events`
 - Event definitions (POJOs)
 - Event serialization/deserialization
 - Base event classes
-- Event publisher utilities
+- Event publisher utilities; `DomainEventRelay` logs one INFO line per relayed event, tagged with the order id for events about an order (`OrderScoped`)
+
+#### `common-logging`
+- The shared `logback-spring.xml` every application picks up: `LOG_FORMAT=text` (default - Spring Boot's readable console pattern, for local runs and tests) or `json` (one JSON object per line via logstash-logback-encoder, set in docker-compose and k8s)
+- JSON lines carry `service`, `level`, `logger`, `message`, a shortened `stack_trace` and every MDC entry: `traceId`/`spanId`, `user`, `orderId`, `paymentId`
 
 ---
 
@@ -248,17 +252,18 @@ Order Placement Flow:
 ## 🚀 Deployment Architecture
 
 ### Docker Compose (Development)
-- `docker-compose.yml` - PostgreSQL, RabbitMQ, Redis (gateway rate limits), Jaeger (traces, UI on `:16686`) (management UI on `:15672`, `ordersphere`/`ordersphere`), Eureka, the gateway, all six services and the dummy payment gateway (`:8087`)
+- `docker-compose.yml` - PostgreSQL, RabbitMQ (management UI on `:15672`, `ordersphere`/`ordersphere`), Redis (gateway rate limits), Jaeger (traces, UI on `:16686`), Loki + Alloy + Grafana (logs, UI on `:3000`), Eureka, the gateway, all six services and the dummy payment gateway (`:8087`)
 - Each service has its own `Dockerfile` under `services/<name>/`; rebuild one with `docker compose up -d --build <service>`
 - Images are tagged `ordersphere/<service>:local`, the same tags the Kubernetes manifests use
+- The Dockerfiles build with a BuildKit cache mount for `/root/.m2` shared by every service image, so Maven dependencies are downloaded once rather than per image or per `pom.xml` change
 
 ### Kubernetes (`k8s/`, Kustomize)
-- `k8s/base/`: the whole stack in the `ordersphere` namespace - one Deployment + ClusterIP Service per service (`apps/`), PostgreSQL as a StatefulSet with a 2Gi PVC plus RabbitMQ, Redis and Jaeger (`infra/`), shared settings in ConfigMap `ordersphere-config` (`config.env`) and credentials in Secret `ordersphere-secrets` (`secrets.env` - **dev values**, replace before deploying anywhere real)
+- `k8s/base/`: the whole stack in the `ordersphere` namespace - one Deployment + ClusterIP Service per service (`apps/`), PostgreSQL as a StatefulSet with a 2Gi PVC plus RabbitMQ, Redis and Jaeger (`infra/`), Loki (PVC), Alloy (one replica, reads pod logs through the API with a namespaced Role) and Grafana (`observability/`), shared settings in ConfigMap `ordersphere-config` (`config.env`) and credentials in Secret `ordersphere-secrets` (`secrets.env` - **dev values**, replace before deploying anywhere real)
 - Services keep their docker-compose names, so the same env settings work in both; discovery still goes through Eureka (pods register their IPs)
-- `k8s/overlays/docker-desktop/`: Docker Desktop's built-in Kubernetes - uses the images `docker compose build` produces (no registry) and publishes the gateway (8080), checkout page (8087), Eureka (8761), Jaeger (16686) and RabbitMQ UI (15672) on localhost, so the Web UI and Postman collections work unchanged
+- `k8s/overlays/docker-desktop/`: Docker Desktop's built-in Kubernetes - uses the images `docker compose build` produces (no registry) and publishes the gateway (8080), checkout page (8087), Eureka (8761), Grafana (3000), Jaeger (16686) and RabbitMQ UI (15672) on localhost, so the Web UI and Postman collections work unchanged
 - `k8s/deploy.sh` builds, applies and waits until every rollout is ready; tear down with `kubectl delete namespace ordersphere`. Stop docker-compose first (same ports). See `k8s/README.md`
 - Probes: every service and the gateway expose `/actuator/health/liveness` and `/readiness` without authentication - Kubernetes uses them (plus a startup probe allowing ~3 minutes), docker-compose health checks use `/readiness`. Orders' circuit-breaker actuator endpoints are ADMIN-only.
-- `k8s/base/infra/postgres-init.sql` must stay identical to `docker/postgres-init/01-init-databases.sql` (CI checks)
+- `k8s/base/infra/postgres-init.sql` and `k8s/base/observability/files/*` are copies of `docker/postgres-init/01-init-databases.sql` and the `observability/` configs (kustomize can't read outside `k8s/`); CI fails if they differ
 - Docker Desktop: if Docker's disk passes ~85%, the kubelet deletes unused images - `docker buildx prune --filter until=72h` frees old build cache
 
 ---
@@ -314,6 +319,16 @@ Order Placement Flow:
 - **Sampling:** 100% by default (`TRACING_SAMPLING_PROBABILITY`); lower it in production.
 - **Not traced:** the dummy payment gateway. It stands in for an external provider, which wouldn't propagate our trace headers, so its webhook starts a new trace in payment-service; the payment's `orderId` links it to the order.
 
+## 🪵 Centralized Logging (Loki + Grafana)
+
+- **Grafana:** `http://localhost:3000` (anonymous viewing; `admin`/`admin` to edit). Home is the **OrderSphere logs** dashboard: errors and warnings, volume per service and level, and a log panel filtered by `service`, `level`, `user`, `orderId` and `traceId`. *Explore* runs ad-hoc LogQL, e.g. `{service="ordersphere-orders", level="error"}` or `{service=~".+"} | orderId="42"`.
+- **Pipeline:** every application logs one JSON object per line (`LOG_FORMAT=json`, `common-logging`) → **Grafana Alloy** tails the containers (docker-compose: Docker socket, `observability/alloy/config.docker.alloy`; Kubernetes: pod logs via the API, `config.k8s.alloy`) → **Loki** (`:3100`, 72h retention, `observability/loki/loki.yaml`). Chosen over ELK: Elasticsearch alone needs more memory than this whole stack.
+- **Labels vs. metadata:** `service`, `level` (lowercased) and `container` are indexed labels; `traceId`, `spanId`, `user`, `orderId` and `paymentId` are structured metadata - filterable (`| orderId="42"`) without inflating the index. Non-JSON containers (postgres, rabbitmq, ...) are collected too, labelled by container.
+- **Logs ↔ traces:** a log line's `traceId` links to the trace in Jaeger, and a Jaeger trace links back to its log lines (`observability/grafana/provisioning/datasources/datasources.yaml`).
+- **What puts the order on a line:** `orderId` is set at each unit of work on an order - `OrderLogContext` in orders (order creation and cancel, payment events, the saga sweep, compensations, shipment retries), `PaymentLogContext` in payment-service (`orderId` + `paymentId`: initiation, refunds, webhooks, the sweep) - and by `DomainEventRelay` for every event about an order, so each service's state changes for one order can be found by its id.
+- **Single-node Loki:** the ring heartbeat timeouts in `loki.yaml` are set to a year on purpose. With the default 1m, a starved or sleeping machine makes the only ingester miss heartbeats, it is dropped from the ring and every push fails (`at least 1 live replicas required`) until Loki restarts. Don't use `0` - Loki 3.7 treats it as always timed out. Grafana 13 needs its 768m limit: below ~512m it thrashes and starves the Docker VM.
+- **Not yet:** metrics (Prometheus) and alerting.
+
 ## 🧪 Testing & Quality Assurance
 
 - **Unit Tests:** Per-service JUnit 5 + Mockito suites
@@ -321,7 +336,7 @@ Order Placement Flow:
 - **Formatting:** Spotless (google-java-format) runs `check` in the `verify` phase - fix with `mvn spotless:apply`
 - **End-to-End Tests:** Postman collections run against the docker-compose stack with newman:
   - `postman/full-order-flow.postman_collection.json` - happy path, payment decline, cancellation with refund, negative checks
-  - `postman/feature-coverage.postman_collection.json` - auth/RBAC, inventory, payments, returns, notifications, Eureka, RabbitMQ, circuit breakers
+  - `postman/feature-coverage.postman_collection.json` - auth/RBAC, inventory, payments, returns, notifications, Eureka, RabbitMQ, circuit breakers, API docs, centralized logs (an order's lines found in Loki by trace id and order id)
   - `postman/api-reference.postman_collection.json` - one example request per endpoint (no assertions)
 - **CI:** GitHub Actions (`.github/workflows/ci.yml`) runs `mvn verify`, the Web UI build and a Kubernetes manifest check (kustomize render + `kubeconform -strict`) on pushes and PRs to `master`/`develop`
 - **Not yet:** contract tests, load tests
@@ -404,6 +419,7 @@ docker compose up -d
 # RabbitMQ management: http://localhost:15672 (ordersphere / ordersphere)
 # Dummy payment gateway (hosted checkout): http://localhost:8087
 # Jaeger (distributed traces): http://localhost:16686
+# Grafana (centralized logs, linked to Jaeger): http://localhost:3000
 # PostgreSQL: localhost:5432
 
 # Rebuild one service after a change
@@ -440,11 +456,13 @@ ordersphere/
 │   ├── ordersphere-gateway/          # API Gateway
 │   ├── service-registry/             # Eureka Service Registry
 │   ├── common-events/                # Shared event definitions
+│   ├── common-logging/               # Shared logback config (text / JSON lines)
 │   └── common-security/              # Shared security utilities
 ├── web-ui/                           # React + Vite customer Web UI
 ├── postman/                          # Postman collections (flow, feature coverage, API reference)
 ├── docs/                             # product-functionality.md, technical-architecture.md
 ├── docker/postgres-init/             # Creates the per-service databases
+├── observability/                    # Loki, Alloy and Grafana config (docker-compose; copied into k8s/)
 ├── k8s/                              # Kubernetes manifests (Kustomize base + docker-desktop overlay, deploy.sh)
 ├── .github/workflows/ci.yml          # CI: mvn verify + Web UI build + k8s manifest check
 ├── pom.xml                           # Parent Maven configuration (incl. Spotless)
@@ -472,6 +490,7 @@ ordersphere/
 | **Audit Trail** | Hyperledger Fabric (planned) | Blockchain-based audit logs |
 | **API Docs** | springdoc-openapi | OpenAPI 3 specs + Swagger UI |
 | **Tracing** | Micrometer Tracing + OpenTelemetry, Jaeger | Distributed traces across REST, RabbitMQ and sweeps |
+| **Logging** | logstash-logback-encoder, Grafana Alloy, Loki, Grafana | JSON logs collected centrally, searchable by service/user/order/trace |
 | **Build Tool** | Maven | Dependency & build management |
 | **CI** | GitHub Actions | Build, test and format check on push/PR |
 
@@ -511,7 +530,8 @@ Service Registry (Eureka) - 8761
 - [x] Kubernetes manifests (Kustomize, verified on Docker Desktop Kubernetes)
 - [ ] Add Hyperledger Fabric Ledger Service
 - [ ] Implement CQRS for analytics/reporting
-- [ ] Add comprehensive logging (ELK stack)
+- [x] Centralized logging (Loki + Alloy + Grafana instead of ELK; JSON logs linked to traces)
+- [ ] Metrics (Prometheus) and alerting
 - [ ] Performance optimization and caching (Redis)
 
 ---

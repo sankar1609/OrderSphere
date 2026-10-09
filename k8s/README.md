@@ -2,13 +2,15 @@
 
 Kustomize manifests for the whole stack: the eight Spring Boot services (API gateway, Eureka, auth,
 orders, inventory, payment, shipping, notification), the dummy payment gateway, PostgreSQL,
-RabbitMQ, Redis and Jaeger - all in the `ordersphere` namespace.
+RabbitMQ, Redis, Jaeger, and Loki + Alloy + Grafana for centralized logs - all in the
+`ordersphere` namespace.
 
 ```
 k8s/
 ├── base/                     # everything, environment-neutral
 │   ├── apps/                 # one Deployment + ClusterIP Service per service
 │   ├── infra/                # postgres (StatefulSet + PVC), rabbitmq, redis, jaeger
+│   ├── observability/        # loki (PVC), alloy (reads pod logs via the API), grafana
 │   ├── config.env            # shared settings -> ConfigMap ordersphere-config
 │   └── secrets.env           # DEV credentials -> Secret ordersphere-secrets
 ├── overlays/docker-desktop/  # publishes the gateway, checkout page and UIs on localhost
@@ -39,6 +41,7 @@ service: `docker compose build <service>` and
 | API gateway (and Swagger UI) | http://localhost:8080 |
 | Hosted checkout (dummy payment gateway) | http://localhost:8087 |
 | Eureka | http://localhost:8761 |
+| Grafana (logs, linked to Jaeger traces; `admin`/`admin`) | http://localhost:3000 |
 | Jaeger | http://localhost:16686 |
 | RabbitMQ management (`ordersphere`/`ordersphere`) | http://localhost:15672 |
 
@@ -87,5 +90,8 @@ docker compose start
   at the deployed Web UI and payment page.
 - PostgreSQL, RabbitMQ and Redis run as single in-cluster instances; managed services (or
   operators) are the usual choice in production.
-- `base/infra/postgres-init.sql` is a copy of `docker/postgres-init/01-init-databases.sql`
-  (kustomize can't read outside `k8s/`); CI fails if they differ.
+- `base/infra/postgres-init.sql` and `base/observability/files/*` are copies of
+  `docker/postgres-init/01-init-databases.sql` and the `observability/` configs (kustomize can't
+  read outside `k8s/`); CI fails if they differ.
+- Grafana allows anonymous viewing with `admin`/`admin` - set real credentials (and turn
+  anonymous access off) outside a developer machine.

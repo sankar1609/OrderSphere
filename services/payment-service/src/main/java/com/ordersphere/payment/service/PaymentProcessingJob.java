@@ -2,7 +2,9 @@ package com.ordersphere.payment.service;
 
 import com.ordersphere.payment.domain.Payment;
 import com.ordersphere.payment.domain.PaymentStatus;
+import com.ordersphere.payment.domain.Refund;
 import com.ordersphere.payment.domain.RefundStatus;
+import com.ordersphere.payment.logging.PaymentLogContext;
 import com.ordersphere.payment.repository.PaymentRepository;
 import com.ordersphere.payment.repository.RefundRepository;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -35,12 +37,19 @@ public class PaymentProcessingJob {
    * payments whose checkout expired unpaid.
    */
   public void processPendingPayments() {
-    paymentRepository.findByStatus(PaymentStatus.PENDING).stream()
-        .map(Payment::getId)
-        .forEach(paymentService::reconcile);
+    for (Payment payment : paymentRepository.findByStatus(PaymentStatus.PENDING)) {
+      try (var logContext = PaymentLogContext.forPayment(payment.getId(), payment.getOrderId())) {
+        paymentService.reconcile(payment.getId());
+      }
+    }
   }
 
   public void processPendingRefunds() {
-    refundRepository.findByStatus(RefundStatus.PENDING).forEach(paymentService::settleRefund);
+    for (Refund refund : refundRepository.findByStatus(RefundStatus.PENDING)) {
+      Payment payment = refund.getPayment();
+      try (var logContext = PaymentLogContext.forPayment(payment.getId(), payment.getOrderId())) {
+        paymentService.settleRefund(refund);
+      }
+    }
   }
 }

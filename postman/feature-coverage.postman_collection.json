@@ -52,6 +52,10 @@
     {
       "key": "notificationBaseUrl",
       "value": "{{gatewayBaseUrl}}/notification-service"
+    },
+    {
+      "key": "lokiUrl",
+      "value": "http://localhost:3100"
     }
   ],
   "item": [
@@ -4938,6 +4942,272 @@
               }
             }
           ]
+        }
+      ]
+    },
+    {
+      "name": "10. Centralized Logs (Loki)",
+      "item": [
+        {
+          "name": "Vendor Creates Product For Log Checks",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{vendToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sku\": \"{{sku}}-LOG\",\n  \"name\": \"Log Check Widget\",\n  \"quantityOnHand\": 5,\n  \"reorderThreshold\": 0,\n  \"unitPrice\": 3.00\n}"
+            },
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/products",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "inventory",
+                "products"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Customer Places Order (note its trace id)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.test('Response names its trace', function () {",
+                  "    pm.expect(pm.response.headers.get('X-Trace-Id')).to.match(/^[0-9a-f]{32}$/);",
+                  "});",
+                  "pm.collectionVariables.set('logTraceId', pm.response.headers.get('X-Trace-Id'));",
+                  "pm.collectionVariables.set('logOrderId', pm.response.json().id);",
+                  "pm.collectionVariables.set('lokiAttempt', 0);",
+                  "pm.test('Order is awaiting payment', function () {",
+                  "    pm.expect(pm.response.json().status).to.eql('AWAITING_PAYMENT');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"sku\": \"{{sku}}-LOG\",\n      \"quantity\": 1\n    }\n  ],\n  \"currency\": \"USD\",\n  \"shippingDestination\": \"1 Log Lane\"\n}"
+            },
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders",
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Loki Has The Order's Trace Across Services",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Wait between polls (Alloy ships lines within a second or two).",
+                  "var attempt = Number(pm.collectionVariables.get('lokiAttempt') || 0);",
+                  "if (attempt > 0) { setTimeout(function () {}, 2000); }",
+                  "pm.collectionVariables.set('lokiStart', String(Date.now() - 15 * 60 * 1000) + '000000');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var attempt = Number(pm.collectionVariables.get('lokiAttempt') || 0);",
+                  "var body = pm.response.json();",
+                  "var streams = (body.data && body.data.result) || [];",
+                  "var services = {};",
+                  "streams.forEach(function (s) { services[s.stream.service] = true; });",
+                  "var expected = ['ordersphere-orders', 'inventory-service', 'payment-service'];",
+                  "var missing = expected.filter(function (s) { return !services[s]; });",
+                  "if (missing.length > 0 && attempt < 20) {",
+                  "    pm.collectionVariables.set('lokiAttempt', attempt + 1);",
+                  "    postman.setNextRequest(pm.info.requestName);",
+                  "    return;",
+                  "}",
+                  "pm.collectionVariables.set('lokiAttempt', 0);",
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Lines from orders, inventory and payment', function () {",
+                  "    pm.expect(missing, 'services without lines: ' + missing).to.eql([]);",
+                  "});",
+                  "pm.test('Lines are the services\\' JSON, with level, user and order id', function () {",
+                  "    var orders = streams.filter(function (s) { return s.stream.service === 'ordersphere-orders'; })[0];",
+                  "    pm.expect(orders.stream.level).to.eql('info');",
+                  "    var line = JSON.parse(orders.values[0][1]);",
+                  "    pm.expect(line.service).to.eql('ordersphere-orders');",
+                  "    pm.expect(line.traceId).to.eql(pm.collectionVariables.get('logTraceId'));",
+                  "    pm.expect(line.user).to.eql('cust_' + pm.collectionVariables.get('runId'));",
+                  "    pm.expect(String(line.orderId)).to.eql(String(pm.collectionVariables.get('logOrderId')));",
+                  "});",
+                  "pm.test('Downstream services log as the orders service identity, not the customer', function () {",
+                  "    var inv = streams.filter(function (s) { return s.stream.service === 'inventory-service'; })[0];",
+                  "    pm.expect(JSON.parse(inv.values[0][1]).user).to.eql('orders-service');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{lokiUrl}}/loki/api/v1/query_range?query={service!=\"\"} | traceId=\"{{logTraceId}}\"&start={{lokiStart}}&limit=500&direction=forward",
+              "host": [
+                "{{lokiUrl}}"
+              ],
+              "path": [
+                "loki",
+                "api",
+                "v1",
+                "query_range"
+              ],
+              "query": [
+                {
+                  "key": "query",
+                  "value": "{service!=\"\"} | traceId=\"{{logTraceId}}\""
+                },
+                {
+                  "key": "start",
+                  "value": "{{lokiStart}}"
+                },
+                {
+                  "key": "limit",
+                  "value": "500"
+                },
+                {
+                  "key": "direction",
+                  "value": "forward"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Loki Finds The Order By orderId",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Wait between polls (Alloy ships lines within a second or two).",
+                  "var attempt = Number(pm.collectionVariables.get('lokiAttempt') || 0);",
+                  "if (attempt > 0) { setTimeout(function () {}, 2000); }",
+                  "pm.collectionVariables.set('lokiStart', String(Date.now() - 15 * 60 * 1000) + '000000');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var attempt = Number(pm.collectionVariables.get('lokiAttempt') || 0);",
+                  "var body = pm.response.json();",
+                  "var streams = (body.data && body.data.result) || [];",
+                  "var services = {};",
+                  "streams.forEach(function (s) { services[s.stream.service] = true; });",
+                  "var expected = ['ordersphere-orders', 'inventory-service', 'payment-service'];",
+                  "var missing = expected.filter(function (s) { return !services[s]; });",
+                  "if (missing.length > 0 && attempt < 20) {",
+                  "    pm.collectionVariables.set('lokiAttempt', attempt + 1);",
+                  "    postman.setNextRequest(pm.info.requestName);",
+                  "    return;",
+                  "}",
+                  "pm.collectionVariables.set('lokiAttempt', 0);",
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Lines from orders, inventory and payment', function () {",
+                  "    pm.expect(missing, 'services without lines: ' + missing).to.eql([]);",
+                  "});",
+                  "pm.test('Its events are logged in every service that handled it', function () {",
+                  "    var text = JSON.stringify(streams);",
+                  "    ['OrderCreatedEvent', 'InventoryReservedEvent', 'PaymentInitiatedEvent'].forEach(function (e) {",
+                  "        pm.expect(text, e).to.include(e);",
+                  "    });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{lokiUrl}}/loki/api/v1/query_range?query={service!=\"\"} | orderId=\"{{logOrderId}}\"&start={{lokiStart}}&limit=500&direction=forward",
+              "host": [
+                "{{lokiUrl}}"
+              ],
+              "path": [
+                "loki",
+                "api",
+                "v1",
+                "query_range"
+              ],
+              "query": [
+                {
+                  "key": "query",
+                  "value": "{service!=\"\"} | orderId=\"{{logOrderId}}\""
+                },
+                {
+                  "key": "start",
+                  "value": "{{lokiStart}}"
+                },
+                {
+                  "key": "limit",
+                  "value": "500"
+                },
+                {
+                  "key": "direction",
+                  "value": "forward"
+                }
+              ]
+            }
+          }
         }
       ]
     }

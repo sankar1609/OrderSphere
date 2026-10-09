@@ -3,7 +3,7 @@ package com.ordersphere.events;
 import lombok.Getter;
 
 @Getter
-public class ShipmentInTransitEvent extends BaseEvent {
+public class ShipmentInTransitEvent extends BaseEvent implements OrderScoped {
 
   private final Long shipmentId;
   private final Long orderId;

@@ -3,7 +3,7 @@ package com.ordersphere.events;
 import lombok.Getter;
 
 @Getter
-public class PaymentFailedEvent extends BaseEvent {
+public class PaymentFailedEvent extends BaseEvent implements OrderScoped {
 
   private final Long paymentId;
   private final Long orderId;
