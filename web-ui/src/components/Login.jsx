@@ -1,8 +1,12 @@
 import { useState } from "react";
+import { Link, useLocation } from "react-router";
 import { login } from "../api";
-import { linkButtonStyle } from "../styles";
+import { usePageTitle } from "../usePageTitle";
 
-export default function Login({ onLoggedIn, onSwitchToRegister, message }) {
+export default function Login({ onLoggedIn, message }) {
+  usePageTitle("Log in");
+  // Keep "where the visitor was heading" (set by RequireAuth) when switching to Register.
+  const location = useLocation();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState(null);
@@ -57,9 +61,9 @@ export default function Login({ onLoggedIn, onSwitchToRegister, message }) {
       {error && <p style={{ color: "crimson" }}>{error}</p>}
       <p>
         No account?{" "}
-        <button type="button" onClick={onSwitchToRegister} style={linkButtonStyle}>
+        <Link to="/register" state={location.state}>
           Register
-        </button>
+        </Link>
       </p>
     </div>
   );

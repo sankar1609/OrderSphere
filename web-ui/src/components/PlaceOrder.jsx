@@ -2,8 +2,10 @@ import { useEffect, useState } from "react";
 import { listProducts, createOrder } from "../api";
 import { cellStyle, linkButtonStyle } from "../styles";
 import { formatMoney } from "../format";
+import { usePageTitle } from "../usePageTitle";
 
 export default function PlaceOrder({ token, onUnauthorized }) {
+  usePageTitle("Place Order");
   const [products, setProducts] = useState(null);
   const [productsError, setProductsError] = useState(null);
   const [selectedSku, setSelectedSku] = useState("");
@@ -19,9 +21,11 @@ export default function PlaceOrder({ token, onUnauthorized }) {
     listProducts(token)
       .then((data) => {
         setProducts(data);
+        // Only a default: the list reloads when the access token is refreshed, and that mustn't
+        // switch a product the customer has already picked.
         const firstInStock = data.find((product) => product.availableQuantity > 0);
         if (firstInStock) {
-          setSelectedSku(firstInStock.sku);
+          setSelectedSku((current) => current || firstInStock.sku);
         }
       })
       .catch((err) => {

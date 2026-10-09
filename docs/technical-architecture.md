@@ -234,7 +234,8 @@ What every service is actually built on, confirmed against each module's `pom.xm
 | JUnit 5 + Testcontainers | Unit and integration tests against real Postgres/RabbitMQ |
 | Docker + Docker Compose | Local multi-service environment, per-service Dockerfiles |
 | Kubernetes + Kustomize | `k8s/` base and a Docker Desktop overlay |
-| React 18 + Vite | Web UI (customer, vendor and admin screens) |
+| React 18 + Vite + React Router | Web UI (customer, vendor and admin screens), one address per page |
+| Playwright | End-to-end UI tests against the running stack (local) |
 | Spotless (google-java-format) | Format check in the `verify` phase |
 | GitHub Actions | CI: `mvn verify`, Web UI build, Kubernetes manifest validation (kubeconform) |
 | Maven (multi-module) | Build & dependency management, shared parent POM |
@@ -281,7 +282,7 @@ Every module carries its own test suite; `common-events` is the most heavily cov
 
 Integration coverage runs against real dependencies via Testcontainers (Postgres and RabbitMQ), rather than mocking the database or broker — the suites in `ordersphere-orders` and `common-events` in particular exercise actual message publish/consume round-trips. Every `@SpringBootTest`-based integration test class carries `@DirtiesContext(classMode = AFTER_CLASS)`: without it, Testcontainers tears down the Postgres/RabbitMQ containers right after the test class finishes, but the cached Spring context (and its live `@Scheduled` jobs and AMQP listeners) can outlive them until the JVM exits — the mismatch shows up as retry-spam against dead containers and, eventually, Surefire force-killing the fork after a 30s hang.
 
-End to end, three Postman collections run against a live stack with newman - `full-order-flow` (happy path, decline, cancellation with refund, negative checks), `feature-coverage` (auth/RBAC, inventory, payments and reconciliation, returns, notifications, Eureka, RabbitMQ, circuit breakers, an order's lines found in Loki by trace and order id) and `api-reference` (one example per endpoint). The first two pass against both the Compose stack and the Kubernetes deployment. CI (GitHub Actions) runs `mvn verify`, the Web UI build and a Kubernetes manifest check on every push and PR to `master`/`develop`.
+End to end, three Postman collections run against a live stack with newman - `full-order-flow` (happy path, decline, cancellation with refund, negative checks), `feature-coverage` (auth/RBAC, inventory, payments and reconciliation, returns, notifications, Eureka, RabbitMQ, circuit breakers, an order's lines found in Loki by trace and order id) and `api-reference` (one example per endpoint). The first two pass against both the Compose stack and the Kubernetes deployment. The Web UI has its own end-to-end suite: Playwright (`web-ui/e2e`, 18 tests) drives the real app in Chromium against the same running stack - routing and guards, order → hosted checkout → confirmed → delivered → return, declined and cancelled payments, vendor and admin screens - with each test creating its own users and products. CI (GitHub Actions) runs `mvn verify`, the Web UI build and a Kubernetes manifest check on every push and PR to `master`/`develop`; the Postman and Playwright suites need the full stack and are run locally.
 
 ---
 

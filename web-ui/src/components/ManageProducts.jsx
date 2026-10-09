@@ -2,11 +2,13 @@ import { useEffect, useState } from "react";
 import { createProduct, listProducts, restockProduct } from "../api";
 import { cellStyle } from "../styles";
 import { formatMoney } from "../format";
+import { usePageTitle } from "../usePageTitle";
 
 const emptyForm = { sku: "", name: "", unitPrice: "", quantityOnHand: "0", reorderThreshold: "0" };
 
 /** ADMIN/VENDOR screen: add products to the catalog and restock existing ones. */
 export default function ManageProducts({ token, currentUsername, isAdmin, onUnauthorized }) {
+  usePageTitle("Manage Products");
   const [products, setProducts] = useState(null);
   const [loadError, setLoadError] = useState(null);
   const [form, setForm] = useState(emptyForm);

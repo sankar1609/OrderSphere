@@ -2,8 +2,10 @@ import { useEffect, useState } from "react";
 import { listProducts } from "../api";
 import { cellStyle } from "../styles";
 import { formatMoney } from "../format";
+import { usePageTitle } from "../usePageTitle";
 
 export default function ProductsList({ token, onUnauthorized }) {
+  usePageTitle("Products");
   const [products, setProducts] = useState(null);
   const [error, setError] = useState(null);
 

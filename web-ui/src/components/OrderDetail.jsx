@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
+import { Link, useParams } from "react-router";
 import { cancelOrder, getOrder, getTracking, listShipmentsForOrder, requestReturn } from "../api";
-import { cellStyle, linkButtonStyle } from "../styles";
+import { cellStyle } from "../styles";
+import { usePageTitle } from "../usePageTitle";
 import { formatMoney } from "../format";
 
 // Shipping advances a shipment one stage per ~5s sweep, so refresh at about that pace while one is
@@ -34,7 +36,11 @@ function stillMoving(order, shipments) {
   );
 }
 
-export default function OrderDetail({ token, orderId, onBack, onUnauthorized }) {
+/** /orders/:orderId. An id that isn't a number can't exist, so it isn't sent to the backend. */
+export default function OrderDetail({ token, onUnauthorized }) {
+  const { orderId: orderIdParam } = useParams();
+  const orderId = /^\d+$/.test(orderIdParam) ? orderIdParam : null;
+  usePageTitle(orderId ? `Order #${orderId}` : "Order not found");
   const [order, setOrder] = useState(null);
   const [shipments, setShipments] = useState([]);
   const [shipmentsError, setShipmentsError] = useState(null);
@@ -47,6 +53,9 @@ export default function OrderDetail({ token, orderId, onBack, onUnauthorized }) 
   const [returning, setReturning] = useState(false);
 
   useEffect(() => {
+    if (!orderId) {
+      return undefined;
+    }
     let stopped = false;
     let timer;
 
@@ -131,11 +140,16 @@ export default function OrderDetail({ token, orderId, onBack, onUnauthorized }) 
     }
   }
 
-  const backLink = (
-    <button type="button" onClick={onBack} style={linkButtonStyle}>
-      ← Back to My Orders
-    </button>
-  );
+  const backLink = <Link to="/orders">← Back to My Orders</Link>;
+
+  if (!orderId) {
+    return (
+      <div>
+        {backLink}
+        <p style={{ color: "crimson" }}>Order not found.</p>
+      </div>
+    );
+  }
 
   if (error) {
     return (

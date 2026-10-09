@@ -338,6 +338,7 @@ Order Placement Flow:
   - `postman/full-order-flow.postman_collection.json` - happy path, payment decline, cancellation with refund, negative checks
   - `postman/feature-coverage.postman_collection.json` - auth/RBAC, inventory, payments, returns, notifications, Eureka, RabbitMQ, circuit breakers, API docs, centralized logs (an order's lines found in Loki by trace id and order id)
   - `postman/api-reference.postman_collection.json` - one example request per endpoint (no assertions)
+- **UI End-to-End Tests:** Playwright in `web-ui/e2e` against the same running stack (`cd web-ui && npm run e2e`); not part of CI
 - **CI:** GitHub Actions (`.github/workflows/ci.yml`) runs `mvn verify`, the Web UI build and a Kubernetes manifest check (kustomize render + `kubeconform -strict`) on pushes and PRs to `master`/`develop`
 - **Not yet:** contract tests, load tests
 
@@ -370,9 +371,11 @@ The system uses the Saga pattern to maintain consistency across distributed serv
 ## 📚 Additional Components
 
 ### Web UI (`web-ui/` - customer, vendor and admin screens done)
-- **Technology Stack:** React 18 + Vite (no router, no server of its own); see `web-ui/README.md`
+- **Technology Stack:** React 18 + Vite + React Router (no server of its own); see `web-ui/README.md`
 - **Done:** login/register as Customer or Vendor (tokens kept in `localStorage`, silent refresh, 401 → back to login), order list with totals and cancellation reasons, product catalog with prices and stock, order placement (out-of-stock products disabled, quantities capped at what's available) with redirect to the hosted payment page and back (with a "Pay now" link for unpaid orders), **order detail** (cancel with refund notice, shipment tracking timeline refreshed while in transit, return requests once delivered), **notifications** inbox with per-channel preferences, **Manage Products** for ADMIN/VENDOR (create a product, restock, low-stock highlighting; tab shown based on the token's `role` claim), **Admin** for ADMIN (users & roles with your own role locked, failed refunds/stock releases with Retry, unshipped paid orders with Retry, payment reconciliation with Run/Re-sync/Resolve)
-- **Not yet:** URL routing (pages aren't addressable by URL), automated UI tests
+- **Routing:** every page has its own address (`/orders`, `/orders/:id`, `/products`, `/place-order`, `/notifications`, `/manage-products`, `/admin/<tab>`), so refresh, back/forward and links work. A logged-out or expired session goes to `/login` and returns to the page asked for; a page the role doesn't allow goes to My Orders; the payment provider's return (`/?payment=...&orderId=N`) is moved to `/orders`. Static hosting needs an SPA fallback to `index.html`
+- **UI tests:** Playwright (`web-ui/e2e`, `npm run e2e`, 18 tests, ~1 min) drives the real app against the docker-compose stack - routing and guards, order → hosted checkout → confirmed → delivered → return, declined/cancelled payments, cancellation, vendor and admin screens. Each test creates its own users and products. Local only, not in CI
+- **Not yet:** UI tests in CI, component-level tests
 - **Integration:** REST calls to the API Gateway (`VITE_GATEWAY_URL`, default `http://localhost:8080`); dev server on `http://localhost:5173`
 - **Deployment:** not decided (static hosting behind a CDN is the likely fit)
 
@@ -431,6 +434,9 @@ npx newman run postman/feature-coverage.postman_collection.json
 
 # Web UI
 cd web-ui && npm install && npm run dev
+
+# Web UI end-to-end tests (stack must be running; first time: npx playwright install chromium)
+cd web-ui && npm run e2e
 ```
 
 ### Build Individual Service
@@ -458,7 +464,7 @@ ordersphere/
 │   ├── common-events/                # Shared event definitions
 │   ├── common-logging/               # Shared logback config (text / JSON lines)
 │   └── common-security/              # Shared security utilities
-├── web-ui/                           # React + Vite customer Web UI
+├── web-ui/                           # React + Vite Web UI (e2e/: Playwright tests)
 ├── postman/                          # Postman collections (flow, feature coverage, API reference)
 ├── docs/                             # product-functionality.md, technical-architecture.md
 ├── docker/postgres-init/             # Creates the per-service databases
@@ -485,7 +491,7 @@ ordersphere/
 | **Events** | RabbitMQ | Async messaging |
 | **Resilience** | Resilience4j | Circuit breakers on the saga's outbound calls |
 | **Migrations** | Flyway | Per-service schema management |
-| **Web UI** | React + Vite | Customer front end |
+| **Web UI** | React + Vite + React Router; Playwright | Front end; end-to-end UI tests |
 | **Deployment** | Docker Compose, Kubernetes (Kustomize) | Containerization & orchestration |
 | **Audit Trail** | Hyperledger Fabric (planned) | Blockchain-based audit logs |
 | **API Docs** | springdoc-openapi | OpenAPI 3 specs + Swagger UI |
