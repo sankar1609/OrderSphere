@@ -37,3 +37,6 @@ build/
 
 ### Mac OS ###
 .DS_Store
+### Playwright (web-ui/e2e) ###
+web-ui/test-results/
+web-ui/playwright-report/

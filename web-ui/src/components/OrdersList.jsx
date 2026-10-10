@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router";
 import { getOrder, listMyOrders } from "../api";
-import { cellStyle, linkButtonStyle } from "../styles";
+import { cellStyle } from "../styles";
+import { usePageTitle } from "../usePageTitle";
 import { formatMoney } from "../format";
 
 const POLL_INTERVAL_MS = 2000;
@@ -70,7 +72,18 @@ function usePaymentReturn(token, paymentReturn, onSettled, onUnauthorized) {
 
 const toneColors = { info: "#0645ad", success: "green", error: "crimson" };
 
-export default function OrdersList({ token, onUnauthorized, paymentReturn, onOpen }) {
+export default function OrdersList({ token, onUnauthorized }) {
+  usePageTitle("My Orders");
+  const location = useLocation();
+  const navigate = useNavigate();
+  // Set by App's Home route when the payment provider sends the customer back. Kept in component
+  // state and then cleared from the history entry, so a refresh doesn't replay the message.
+  const [paymentReturn] = useState(() => location.state?.paymentReturn ?? null);
+  useEffect(() => {
+    if (location.state?.paymentReturn) {
+      navigate(location.pathname, { replace: true, state: null });
+    }
+  }, []);
   const [orders, setOrders] = useState(null);
   const [error, setError] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -121,14 +134,12 @@ export default function OrdersList({ token, onUnauthorized, paymentReturn, onOpe
             {orders.map((order) => (
               <tr key={order.id}>
                 <td style={cellStyle}>
-                  <button
-                    type="button"
-                    onClick={() => onOpen(order.id)}
-                    style={linkButtonStyle}
+                  <Link
+                    to={`/orders/${order.id}`}
                     title="Order details, tracking and cancellation"
                   >
                     #{order.id}
-                  </button>
+                  </Link>
                 </td>
                 <td style={cellStyle}>
                   {order.status}

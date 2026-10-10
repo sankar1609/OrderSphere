@@ -1,8 +1,11 @@
 import { useState } from "react";
+import { Link, useLocation } from "react-router";
 import { register, login } from "../api";
-import { linkButtonStyle } from "../styles";
+import { usePageTitle } from "../usePageTitle";
 
-export default function Register({ onRegistered, onSwitchToLogin }) {
+export default function Register({ onRegistered }) {
+  usePageTitle("Register");
+  const location = useLocation();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState("CUSTOMER");
@@ -94,9 +97,9 @@ export default function Register({ onRegistered, onSwitchToLogin }) {
       {error && <p style={{ color: "crimson" }}>{error}</p>}
       <p>
         Already have an account?{" "}
-        <button type="button" onClick={onSwitchToLogin} style={linkButtonStyle}>
+        <Link to="/login" state={location.state}>
           Log in
-        </button>
+        </Link>
       </p>
     </div>
   );

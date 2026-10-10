@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { listNotifications, listPreferences, setPreference } from "../api";
 import { cellStyle } from "../styles";
+import { usePageTitle } from "../usePageTitle";
 
 const CHANNELS = ["EMAIL", "SMS", "IN_APP", "PUSH"];
 const statusColors = { SENT: "green", PENDING: "#0645ad", SKIPPED: "#777", FAILED: "crimson" };
 
 /** The customer's notifications, plus which channels they want them on. */
 export default function Notifications({ token, onUnauthorized }) {
+  usePageTitle("Notifications");
   const [notifications, setNotifications] = useState(null);
   const [enabled, setEnabled] = useState(null); // channel -> boolean
   const [error, setError] = useState(null);
