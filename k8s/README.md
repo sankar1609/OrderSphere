@@ -10,7 +10,7 @@ k8s/
 ├── base/                     # everything, environment-neutral
 │   ├── apps/                 # one Deployment + ClusterIP Service per service
 │   ├── infra/                # postgres (StatefulSet + PVC), rabbitmq, redis, jaeger
-│   ├── observability/        # loki (PVC), alloy (reads pod logs via the API), grafana
+│   ├── observability/        # prometheus (PVC), loki (PVC), alloy (reads pod logs via the API), grafana
 │   ├── config.env            # shared settings -> ConfigMap ordersphere-config
 │   └── secrets.env           # DEV credentials -> Secret ordersphere-secrets
 ├── overlays/docker-desktop/  # publishes the gateway, checkout page and UIs on localhost
@@ -41,7 +41,8 @@ service: `docker compose build <service>` and
 | API gateway (and Swagger UI) | http://localhost:8080 |
 | Hosted checkout (dummy payment gateway) | http://localhost:8087 |
 | Eureka | http://localhost:8761 |
-| Grafana (logs, linked to Jaeger traces; `admin`/`admin`) | http://localhost:3000 |
+| Grafana (logs, metrics dashboards, alerts; `admin`/`admin`) | http://localhost:3000 |
+| Prometheus (targets, alerts) | http://localhost:9090 |
 | Jaeger | http://localhost:16686 |
 | RabbitMQ management (`ordersphere`/`ordersphere`) | http://localhost:15672 |
 

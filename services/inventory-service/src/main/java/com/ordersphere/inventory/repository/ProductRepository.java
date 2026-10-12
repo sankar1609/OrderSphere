@@ -12,6 +12,12 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
 
   Optional<Product> findBySku(String sku);
 
+  /** Products whose available stock is at or below their reorder threshold. */
+  @Query(
+      "SELECT COUNT(p) FROM Product p"
+          + " WHERE p.quantityOnHand - p.quantityReserved <= p.reorderThreshold")
+  long countLowStock();
+
   boolean existsBySku(String sku);
 
   @Lock(LockModeType.PESSIMISTIC_WRITE)

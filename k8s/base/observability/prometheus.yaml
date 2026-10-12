@@ -1,0 +1,100 @@
+# Prometheus: scrapes the gateway and the six services (by Service name) and evaluates the alert
+# rules. 3-day retention on a PVC. The scrape token comes from the ordersphere-secrets Secret.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-data
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/part-of: ordersphere
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/part-of: ordersphere
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: prometheus
+        app.kubernetes.io/part-of: ordersphere
+    spec:
+      enableServiceLinks: false
+      securityContext:
+        # The image runs as "nobody" (65534); let it write to the volume.
+        fsGroup: 65534
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v3.13.4
+          # Prometheus can't read a secret from the environment, so write the scrape token to the
+          # file its config points at before starting (same as docker-compose).
+          command:
+            - /bin/sh
+            - -c
+            - >-
+              printf '%s' "$METRICS_SCRAPE_TOKEN" > /prometheus/scrape-token &&
+              exec /bin/prometheus
+              --config.file=/etc/prometheus/prometheus.yml
+              --storage.tsdb.path=/prometheus
+              --storage.tsdb.retention.time=3d
+          env:
+            - name: METRICS_SCRAPE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: ordersphere-secrets
+                  key: METRICS_SCRAPE_TOKEN
+          ports:
+            - name: http
+              containerPort: 9090
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+            - name: data
+              mountPath: /prometheus
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              memory: 768Mi
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: prometheus-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/part-of: ordersphere
+spec:
+  selector:
+    app.kubernetes.io/name: prometheus
+  ports:
+    - name: http
+      port: 9090
+      targetPort: http

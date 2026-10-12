@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verify;
 
 import com.ordersphere.events.OrderConfirmedEvent;
 import com.ordersphere.events.UserRegisteredEvent;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -89,5 +90,22 @@ class DomainEventRelayTest {
     new DomainEventRelay(rabbitTemplate).onEvent(new UserRegisteredEvent(7L, "alice", "CUSTOMER"));
 
     assertThat(orderIdWhileRelaying.get()).isNull();
+  }
+
+  @Test
+  void countsEachRelayedEventByType() {
+    SimpleMeterRegistry meters = new SimpleMeterRegistry();
+    DomainEventRelay relay = new DomainEventRelay(rabbitTemplate, meters);
+
+    relay.onEvent(new OrderConfirmedEvent(1L, "alice"));
+    relay.onEvent(new OrderConfirmedEvent(2L, "bob"));
+    relay.onEvent(new UserRegisteredEvent(7L, "carol", "CUSTOMER"));
+
+    assertThat(
+            meters.counter(DomainEventRelay.EVENTS_COUNTER, "type", "OrderConfirmedEvent").count())
+        .isEqualTo(2.0);
+    assertThat(
+            meters.counter(DomainEventRelay.EVENTS_COUNTER, "type", "UserRegisteredEvent").count())
+        .isEqualTo(1.0);
   }
 }

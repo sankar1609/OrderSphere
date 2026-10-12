@@ -62,10 +62,19 @@ management:
     tracing:
       # Jaeger's OTLP/HTTP receiver (docker-compose sets OTLP_TRACING_ENDPOINT).
       endpoint: ${OTLP_TRACING_ENDPOINT:http://localhost:4318/v1/traces}
+  metrics:
+    # Scraped by Prometheus at /actuator/prometheus, which needs the scrape token
+    # (METRICS_SCRAPE_TOKEN) - the gateway routes to every service, so it must not be open.
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      # Latency buckets, so dashboards and alerts can compute percentiles.
+      percentiles-histogram:
+        http.server.requests: true
   endpoints:
     web:
       exposure:
-        include: health
+        include: health,prometheus
   endpoint:
     health:
       probes:

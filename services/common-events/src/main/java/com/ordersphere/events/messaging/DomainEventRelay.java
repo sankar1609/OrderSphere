@@ -2,6 +2,8 @@ package com.ordersphere.events.messaging;
 
 import com.ordersphere.events.BaseEvent;
 import com.ordersphere.events.OrderScoped;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -23,10 +25,23 @@ public class DomainEventRelay {
 
   private static final Logger log = LoggerFactory.getLogger(DomainEventRelay.class);
 
+  /**
+   * Counts every relayed event by type ({@code ordersphere_events_total{type="..."}} in
+   * Prometheus): the rate of orders placed, payments failed, shipments delivered and so on, for
+   * every service, from this one place.
+   */
+  public static final String EVENTS_COUNTER = "ordersphere.events";
+
   private final RabbitTemplate rabbitTemplate;
+  private final MeterRegistry meterRegistry;
 
   public DomainEventRelay(RabbitTemplate rabbitTemplate) {
+    this(rabbitTemplate, new SimpleMeterRegistry());
+  }
+
+  public DomainEventRelay(RabbitTemplate rabbitTemplate, MeterRegistry meterRegistry) {
     this.rabbitTemplate = rabbitTemplate;
+    this.meterRegistry = meterRegistry;
   }
 
   /**
@@ -51,6 +66,7 @@ public class DomainEventRelay {
   }
 
   private void relay(BaseEvent event, Long orderId) {
+    meterRegistry.counter(EVENTS_COUNTER, "type", event.getEventType()).increment();
     if (orderId != null) {
       log.info("{} for orderId {} (eventId={})", event.getEventType(), orderId, event.getEventId());
     } else {

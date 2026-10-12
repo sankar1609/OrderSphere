@@ -56,6 +56,10 @@
     {
       "key": "lokiUrl",
       "value": "http://localhost:3100"
+    },
+    {
+      "key": "prometheusUrl",
+      "value": "http://localhost:9090"
     }
   ],
   "item": [
@@ -5205,6 +5209,358 @@
                   "key": "direction",
                   "value": "forward"
                 }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "11. Metrics & Alerts (Prometheus)",
+      "item": [
+        {
+          "name": "Service Metrics Through The Gateway Without The Scrape Token [expect 401]",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('promAttempt', 0);",
+                  "pm.test('Status is 401', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{ordersBaseUrl}}/actuator/prometheus",
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "actuator",
+                "prometheus"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Service Metrics With A Customer Token [expect 401]",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('A user token is not the scrape token', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{ordersBaseUrl}}/actuator/prometheus",
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "actuator",
+                "prometheus"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Service Metrics With An Admin Token [expect 401]",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Not even an admin token opens it', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{ordersBaseUrl}}/actuator/prometheus",
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "actuator",
+                "prometheus"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Gateway's Own Metrics Without The Scrape Token [expect 401]",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 401', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayBaseUrl}}/actuator/prometheus",
+              "host": [
+                "{{gatewayBaseUrl}}"
+              ],
+              "path": [
+                "actuator",
+                "prometheus"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Prometheus Scrapes The Gateway And All Six Services",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (Number(pm.collectionVariables.get('promAttempt') || 0) > 0) { setTimeout(function () {}, 2000); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var attempt = Number(pm.collectionVariables.get('promAttempt') || 0);",
+                  "var result = (pm.response.json().data || {}).result || [];",
+                  "var ready = (function () {",
+                  "    return result.length === 7 && result.every(function (r) { return r.value[1] === '1'; });",
+                  "})();",
+                  "if (!ready && attempt < 20) {",
+                  "    pm.collectionVariables.set('promAttempt', attempt + 1);",
+                  "    postman.setNextRequest(pm.info.requestName);",
+                  "    return;",
+                  "}",
+                  "pm.collectionVariables.set('promAttempt', 0);",
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('7 targets, all up', function () {",
+                  "    var down = result.filter(function (r) { return r.value[1] !== '1'; }).map(function (r) { return r.metric.service; });",
+                  "    pm.expect(result.length, 'targets').to.eql(7);",
+                  "    pm.expect(down, 'targets down').to.eql([]);",
+                  "});",
+                  "pm.test('Targets are labelled with their service name', function () {",
+                  "    var names = result.map(function (r) { return r.metric.service; });",
+                  "    pm.expect(names).to.include.members(['ordersphere-gateway', 'ordersphere-orders', 'payment-service']);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{prometheusUrl}}/api/v1/query?query=up{job=\"ordersphere\"}",
+              "host": [
+                "{{prometheusUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "query"
+              ],
+              "query": [
+                {
+                  "key": "query",
+                  "value": "up{job=\"ordersphere\"}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Order Events Are Counted",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (Number(pm.collectionVariables.get('promAttempt') || 0) > 0) { setTimeout(function () {}, 2000); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var attempt = Number(pm.collectionVariables.get('promAttempt') || 0);",
+                  "var result = (pm.response.json().data || {}).result || [];",
+                  "var ready = (function () {",
+                  "    return result.length > 0 && Number(result[0].value[1]) > 0;",
+                  "})();",
+                  "if (!ready && attempt < 20) {",
+                  "    pm.collectionVariables.set('promAttempt', attempt + 1);",
+                  "    postman.setNextRequest(pm.info.requestName);",
+                  "    return;",
+                  "}",
+                  "pm.collectionVariables.set('promAttempt', 0);",
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Orders placed by this run show up as a counter on the orders service', function () {",
+                  "    pm.expect(result.length).to.be.above(0);",
+                  "    pm.expect(result[0].metric.service).to.eql('ordersphere-orders');",
+                  "    pm.expect(Number(result[0].value[1])).to.be.above(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{prometheusUrl}}/api/v1/query?query=sum by (service) (ordersphere_events_total{type=\"OrderCreatedEvent\"})",
+              "host": [
+                "{{prometheusUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "query"
+              ],
+              "query": [
+                {
+                  "key": "query",
+                  "value": "sum by (service) (ordersphere_events_total{type=\"OrderCreatedEvent\"})"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Backlog Gauges Are Reported",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (Number(pm.collectionVariables.get('promAttempt') || 0) > 0) { setTimeout(function () {}, 2000); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var attempt = Number(pm.collectionVariables.get('promAttempt') || 0);",
+                  "var result = (pm.response.json().data || {}).result || [];",
+                  "var ready = (function () {",
+                  "    var names = {}; result.forEach(function (r) { names[r.metric.__name__] = true; });",
+                  "    return Object.keys(names).length === 6;",
+                  "})();",
+                  "if (!ready && attempt < 20) {",
+                  "    pm.collectionVariables.set('promAttempt', attempt + 1);",
+                  "    postman.setNextRequest(pm.info.requestName);",
+                  "    return;",
+                  "}",
+                  "pm.collectionVariables.set('promAttempt', 0);",
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Orders, compensations, unshipped, pending payments, findings and low stock', function () {",
+                  "    var names = {}; result.forEach(function (r) { names[r.metric.__name__] = true; });",
+                  "    pm.expect(Object.keys(names).sort()).to.eql(['ordersphere_compensations', 'ordersphere_orders', 'ordersphere_orders_unshipped', 'ordersphere_payments_pending', 'ordersphere_products_low_stock', 'ordersphere_reconciliation_findings_open']);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{prometheusUrl}}/api/v1/query?query={__name__=~\"ordersphere_(orders|compensations|orders_unshipped|payments_pending|reconciliation_findings_open|products_low_stock)\"}",
+              "host": [
+                "{{prometheusUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "query"
+              ],
+              "query": [
+                {
+                  "key": "query",
+                  "value": "{__name__=~\"ordersphere_(orders|compensations|orders_unshipped|payments_pending|reconciliation_findings_open|products_low_stock)\"}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Alert Rules Are Loaded And Healthy",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var rules = [];",
+                  "pm.response.json().data.groups.forEach(function (g) { rules = rules.concat(g.rules); });",
+                  "pm.test('The 8 alert rules evaluate without errors', function () {",
+                  "    pm.expect(rules.map(function (r) { return r.name; })).to.include.members(['ServiceDown', 'HighErrorRate', 'SlowResponses', 'CircuitBreakerOpen', 'FailedCompensations', 'UnshippedOrdersGaveUp', 'OpenReconciliationFindings', 'PaymentFailuresHigh']);",
+                  "    var unhealthy = rules.filter(function (r) { return r.health !== 'ok'; }).map(function (r) { return r.name + ': ' + r.lastError; });",
+                  "    pm.expect(unhealthy, 'rules with errors').to.eql([]);",
+                  "});",
+                  "pm.test('No service is reported down', function () {",
+                  "    var down = rules.filter(function (r) { return r.name === 'ServiceDown'; })[0];",
+                  "    pm.expect(down.state).to.eql('inactive');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{prometheusUrl}}/api/v1/rules",
+              "host": [
+                "{{prometheusUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "rules"
               ]
             }
           }

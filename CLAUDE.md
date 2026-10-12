@@ -26,7 +26,7 @@
   - Client-side load balancing across registered instances
   - CORS for the Web UI dev server (`http://localhost:5173`; GET/POST/PUT/PATCH/DELETE/OPTIONS)
   - Rate limiting (`RequestRateLimiter`, token buckets in Redis, per client IP): 50 req/s burst 100 on every route; login/register/refresh/token 5 req/s burst 30 (`GATEWAY_*RATE_LIMIT*` env vars). Over the limit → 429 with `X-RateLimit-*` headers; if Redis is down requests are let through. The client IP is the TCP peer; `X-Forwarded-For` is only used behind trusted proxies (`GATEWAY_TRUSTED_PROXY_HOPS`, default 0 - otherwise a client could send a fake address each request and dodge the limit), and then only the entry the outermost trusted proxy appended
-- **Not implemented yet:** request validation, metrics
+- **Not implemented yet:** request validation
 - **Technology:** Spring Cloud Gateway
 - **Interacts With:** All downstream services
 
@@ -244,7 +244,7 @@ Order Placement Flow:
 ## 🚀 Deployment Architecture
 
 ### Docker Compose (Development)
-- `docker-compose.yml` - PostgreSQL, RabbitMQ (management UI on `:15672`, `ordersphere`/`ordersphere`), Redis (gateway rate limits), Jaeger (traces, UI on `:16686`), Loki + Alloy + Grafana (logs, UI on `:3000`), Eureka, the gateway, all six services and the dummy payment gateway (`:8087`)
+- `docker-compose.yml` - PostgreSQL, RabbitMQ (management UI on `:15672`, `ordersphere`/`ordersphere`), Redis (gateway rate limits), Jaeger (traces, UI on `:16686`), Prometheus (metrics and alert rules, UI on `:9090`), Loki + Alloy + Grafana (logs and dashboards, UI on `:3000`), Eureka, the gateway, all six services and the dummy payment gateway (`:8087`)
 - Each service has its own `Dockerfile` under `services/<name>/`; rebuild one with `docker compose up -d --build <service>`
 - Images are tagged `ordersphere/<service>:local`, the same tags the Kubernetes manifests use
 - The Dockerfiles build with a BuildKit cache mount for `/root/.m2` shared by every service image, so Maven dependencies are downloaded once rather than per image or per `pom.xml` change
@@ -302,7 +302,16 @@ Order Placement Flow:
 - **Grafana:** `http://localhost:3000` - the **OrderSphere logs** dashboard and *Explore* (LogQL, e.g. `{service=~".+"} | orderId="42"`); log lines link to their Jaeger trace and back
 - Every application logs JSON lines (`LOG_FORMAT=json`, `common-logging`) carrying `service`, `level`, `traceId`, `user`, `orderId`, `paymentId`; Grafana Alloy ships them to Loki (72h retention)
 - Pipeline internals, label design and the single-node Loki / Grafana memory gotchas load from `observability/CLAUDE.md` when working there
-- **Not yet:** metrics (Prometheus) and alerting.
+
+## 📈 Metrics & Alerting (Prometheus + Grafana)
+
+- **Where to look:** Grafana `http://localhost:3000` → **OrderSphere overview** (firing alerts, orders/payments per minute, backlog tiles, request rate / errors / p95 per service) and **OrderSphere services** (one service: endpoints, JVM, DB pool, RabbitMQ, circuit breakers). Prometheus itself: `http://localhost:9090` (`/targets`, `/alerts`).
+- **Scraping:** Prometheus scrapes `/actuator/prometheus` on the gateway and the six services every 15s (`observability/prometheus/prometheus.yml`; same target names under compose and k8s). Not scraped: the service registry and the dummy payment gateway.
+- **The endpoint is guarded by a scrape token, not a JWT:** `Authorization: Bearer <METRICS_SCRAPE_TOKEN>` (dev default `dev-metrics-scrape-token`; k8s Secret). The gateway routes `/{service-id}/**` to every service and its own port is public, so an open metrics endpoint would be public. Enforced by `MetricsScrapeTokenFilter` in common-security (services; their `SecurityConfig` permits the path, the filter checks) and by the gateway's own `WebFilter`. No token configured → the endpoint answers nobody. A user or admin JWT gets 401.
+- **Business metrics:** `ordersphere_events_total{type}` - `DomainEventRelay` counts every relayed domain event, so the rates of orders placed/confirmed/cancelled, payments, refunds, shipments and notifications need no counters in the services. Backlog gauges read from the database at scrape time (`OrderMetrics`, `PaymentMetrics`, `InventoryMetrics`; NaN rather than a failed scrape if the DB is down): `ordersphere_orders{status}`, `ordersphere_compensations{status}`, `ordersphere_orders_unshipped{state=retrying|gave_up}`, `ordersphere_payments_pending`, `ordersphere_reconciliation_findings_open`, `ordersphere_products_low_stock`. Every metric carries `application` and Prometheus adds `service`.
+- **Alert rules** (`observability/prometheus/alerts.yml`): `ServiceDown`, `HighErrorRate`, `SlowResponses`, `CircuitBreakerOpen`, `FailedCompensations`, `UnshippedOrdersGaveUp`, `OpenReconciliationFindings`, `PaymentFailuresHigh`. Evaluated by Prometheus and shown in Grafana and on `:9090/alerts` - **nothing is sent anywhere** (no Alertmanager).
+- **In tests** metrics export is off unless the test class has `@AutoConfigureObservability` (Spring Boot's default).
+- **Not yet:** alert delivery (Alertmanager / notifications), metrics for the registry and the dummy gateway.
 
 ## 🧪 Testing & Quality Assurance
 
@@ -311,7 +320,7 @@ Order Placement Flow:
 - **Formatting:** Spotless (google-java-format) runs `check` in the `verify` phase - fix with `mvn spotless:apply`
 - **End-to-End Tests:** Postman collections run against the docker-compose stack with newman:
   - `postman/full-order-flow.postman_collection.json` - happy path, payment decline, cancellation with refund, negative checks
-  - `postman/feature-coverage.postman_collection.json` - auth/RBAC, inventory, payments, returns, notifications, Eureka, RabbitMQ, circuit breakers, API docs, centralized logs (an order's lines found in Loki by trace id and order id)
+  - `postman/feature-coverage.postman_collection.json` - auth/RBAC, inventory, payments, returns, notifications, Eureka, RabbitMQ, circuit breakers, API docs, centralized logs (an order's lines found in Loki by trace id and order id), metrics (scrape-token guard, Prometheus targets, business metrics, alert rules)
   - `postman/api-reference.postman_collection.json` - one example request per endpoint (no assertions)
 - **UI End-to-End Tests:** Playwright in `web-ui/e2e` against the same running stack (`cd web-ui && npm run e2e`); not part of CI
 - **CI:** GitHub Actions (`.github/workflows/ci.yml`) runs `mvn verify`, the Web UI build and a Kubernetes manifest check (kustomize render + `kubeconform -strict`) on pushes and PRs to `master`/`develop`
@@ -404,5 +413,6 @@ mvn verify -pl services/shipping-service -am
 - [ ] Add Hyperledger Fabric Ledger Service
 - [ ] Implement CQRS for analytics/reporting
 - [x] Centralized logging (Loki + Alloy + Grafana instead of ELK; JSON logs linked to traces)
-- [ ] Metrics (Prometheus) and alerting
+- [x] Metrics and alerting (Prometheus scraping every service with a scrape token, business metrics, alert rules, Grafana dashboards)
+- [ ] Alert delivery (Alertmanager / notifications)
 - [ ] Performance optimization and caching (Redis)
