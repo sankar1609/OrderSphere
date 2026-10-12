@@ -1,0 +1,9 @@
+# Kubernetes manifests - guidance for working in `k8s/`
+
+- `k8s/base/`: the whole stack in the `ordersphere` namespace - one Deployment + ClusterIP Service per service (`apps/`), PostgreSQL as a StatefulSet with a 2Gi PVC plus RabbitMQ, Redis and Jaeger (`infra/`), Loki (PVC), Alloy (one replica, reads pod logs through the API with a namespaced Role) and Grafana (`observability/`), shared settings in ConfigMap `ordersphere-config` (`config.env`) and credentials in Secret `ordersphere-secrets` (`secrets.env` - **dev values**, replace before deploying anywhere real)
+- Services keep their docker-compose names, so the same env settings work in both; discovery still goes through Eureka (pods register their IPs)
+- `k8s/overlays/docker-desktop/`: Docker Desktop's built-in Kubernetes - uses the images `docker compose build` produces (no registry) and publishes the gateway (8080), checkout page (8087), Eureka (8761), Grafana (3000), Jaeger (16686) and RabbitMQ UI (15672) on localhost, so the Web UI and Postman collections work unchanged
+- `k8s/deploy.sh` builds, applies and waits until every rollout is ready; tear down with `kubectl delete namespace ordersphere`. Stop docker-compose first (same ports). See `k8s/README.md`
+- Probes: every service and the gateway expose `/actuator/health/liveness` and `/readiness` without authentication - Kubernetes uses them (plus a startup probe allowing ~3 minutes), docker-compose health checks use `/readiness`. Orders' circuit-breaker actuator endpoints are ADMIN-only.
+- `k8s/base/infra/postgres-init.sql` and `k8s/base/observability/files/*` are copies of `docker/postgres-init/01-init-databases.sql` and the `observability/` configs (kustomize can't read outside `k8s/`); CI fails if they differ
+- Docker Desktop: if Docker's disk passes ~85%, the kubelet deletes unused images - `docker buildx prune --filter until=72h` frees old build cache

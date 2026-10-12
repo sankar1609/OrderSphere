@@ -4,20 +4,15 @@
 
 **OrderSphere** is a cloud-native, microservices-based order and inventory management platform designed for enterprise environments where trust, auditability, and clear service boundaries are critical. The system supports reliable order processing, inventory control, and transparent auditability across multiple trusted organizations.
 
-**Version:** 1.0.0-SNAPSHOT  
-**Tech Stack:** Java 17 | Spring Boot 3.2.1 | Spring Cloud | PostgreSQL | RabbitMQ | Docker | React
-
 ---
 
 ## 🏗️ System Architecture
 
 ### Architectural Principles
 
-- **Microservices Pattern**: Each service is independently deployable with its own database
 - **Orchestrated Saga + Events**: the order saga is orchestrated over synchronous REST with compensation; domain events on RabbitMQ drive everything that doesn't block the request (notifications, shipment cancellation, payment progress)
 - **Blockchain for Audit (planned)**: Immutable audit trails using Hyperledger Fabric (trust layer, not transaction layer)
 - **Cloud-Native**: Containerized services, run with Docker Compose or on Kubernetes (`k8s/`, Kustomize)
-- **Service Discovery**: Eureka-based service registry for dynamic service location
 
 ---
 
@@ -239,13 +234,10 @@ Order Placement Flow:
 
 ---
 
-## 🗄️ Database Services
+## 🗄️ Databases
 
-### PostgreSQL
-- **Host:** `postgres` (containerized service)
-- **Port:** 5432
-- **Databases:** One per service (auth_db, orders_db, inventory_db, payment_db, shipping_db, notification_db) plus gateway_db for the dummy payment provider, created by `docker/postgres-init` (on an existing volume, create gateway_db once by hand: `docker exec ordersphere-postgres psql -U ordersphere -d postgres -c "CREATE DATABASE gateway_db;"`)
-- **Migrations:** Flyway, per service (`src/main/resources/db/migration`)
+- One PostgreSQL instance, one database per service plus `gateway_db` for the dummy payment provider, created by `docker/postgres-init` on a fresh volume. On an existing volume, create `gateway_db` once by hand: `docker exec ordersphere-postgres psql -U ordersphere -d postgres -c "CREATE DATABASE gateway_db;"`
+- Flyway migrations per service (`src/main/resources/db/migration`); no cross-service foreign keys
 
 ---
 
@@ -258,13 +250,8 @@ Order Placement Flow:
 - The Dockerfiles build with a BuildKit cache mount for `/root/.m2` shared by every service image, so Maven dependencies are downloaded once rather than per image or per `pom.xml` change
 
 ### Kubernetes (`k8s/`, Kustomize)
-- `k8s/base/`: the whole stack in the `ordersphere` namespace - one Deployment + ClusterIP Service per service (`apps/`), PostgreSQL as a StatefulSet with a 2Gi PVC plus RabbitMQ, Redis and Jaeger (`infra/`), Loki (PVC), Alloy (one replica, reads pod logs through the API with a namespaced Role) and Grafana (`observability/`), shared settings in ConfigMap `ordersphere-config` (`config.env`) and credentials in Secret `ordersphere-secrets` (`secrets.env` - **dev values**, replace before deploying anywhere real)
-- Services keep their docker-compose names, so the same env settings work in both; discovery still goes through Eureka (pods register their IPs)
-- `k8s/overlays/docker-desktop/`: Docker Desktop's built-in Kubernetes - uses the images `docker compose build` produces (no registry) and publishes the gateway (8080), checkout page (8087), Eureka (8761), Grafana (3000), Jaeger (16686) and RabbitMQ UI (15672) on localhost, so the Web UI and Postman collections work unchanged
-- `k8s/deploy.sh` builds, applies and waits until every rollout is ready; tear down with `kubectl delete namespace ordersphere`. Stop docker-compose first (same ports). See `k8s/README.md`
-- Probes: every service and the gateway expose `/actuator/health/liveness` and `/readiness` without authentication - Kubernetes uses them (plus a startup probe allowing ~3 minutes), docker-compose health checks use `/readiness`. Orders' circuit-breaker actuator endpoints are ADMIN-only.
-- `k8s/base/infra/postgres-init.sql` and `k8s/base/observability/files/*` are copies of `docker/postgres-init/01-init-databases.sql` and the `observability/` configs (kustomize can't read outside `k8s/`); CI fails if they differ
-- Docker Desktop: if Docker's disk passes ~85%, the kubelet deletes unused images - `docker buildx prune --filter until=72h` frees old build cache
+- `k8s/base` deploys the whole stack into the `ordersphere` namespace; `k8s/overlays/docker-desktop` runs it on Docker Desktop's Kubernetes with the images `docker compose build` produces; `k8s/deploy.sh` builds, applies and waits. Stop docker-compose first (same ports). Details and Docker Desktop troubleshooting load from `k8s/CLAUDE.md` when working there
+- Files under `k8s/` that are copies of `docker/postgres-init` and `observability/` configs must stay identical to the originals (CI checks)
 
 ---
 
@@ -286,15 +273,6 @@ Order Placement Flow:
 
 ### Gateway API Endpoints
 - **Base URL:** `http://localhost:8080/{service-id}` (e.g. `http://localhost:8080/ordersphere-orders/orders`)
-
-### Key Service Endpoints
-- **Auth Service:** `/auth/register`, `/auth/login`, `/auth/me`, `/auth/admin/users` (ADMIN: list), `/auth/admin/users/{id}/role`
-- **Orders Service:** `/orders` (create, list), `/orders/{id}`, `/orders/{id}/cancel`, `/orders/admin/compensations` (ADMIN: list, get, retry failed), `/orders/admin/unshipped` (ADMIN: list, retry)
-- **Inventory Service:** `/inventory/products` (create, list, get, restock), `/inventory/reservations` (reserve, confirm, release - internal, SERVICE/ADMIN)
-- **Payment Service:** `/payments` (initiate, status, refund), `/payments/webhooks/gateway` (provider webhook), `/payments/admin/reconciliation` (ADMIN: runs, findings, re-sync, resolve)
-- **Dummy Payment Gateway (:8087, direct):** `/checkout/{sessionId}` (hosted page), `/api/checkout-sessions`, `/api/refunds`
-- **Shipping Service:** `/shipments` (create - ADMIN), `/shipments/{id}`, `/shipments/{id}/tracking`, `/shipments/order/{orderId}`, `/shipments/{id}/return`
-- **Notifications:** `/notifications` (list, get; create - ADMIN), `/notification-preferences` (set, list, delete)
 
 ### OpenAPI / Swagger
 - **Swagger UI:** `http://localhost:8080/swagger-ui.html` (served by the gateway) - pick a service in the top-right dropdown. Click **Authorize** and paste an access token from `POST /auth-service/auth/login` (or a SERVICE token from `POST /auth-service/auth/token`); "Try it out" calls go through the gateway.
@@ -321,12 +299,9 @@ Order Placement Flow:
 
 ## 🪵 Centralized Logging (Loki + Grafana)
 
-- **Grafana:** `http://localhost:3000` (anonymous viewing; `admin`/`admin` to edit). Home is the **OrderSphere logs** dashboard: errors and warnings, volume per service and level, and a log panel filtered by `service`, `level`, `user`, `orderId` and `traceId`. *Explore* runs ad-hoc LogQL, e.g. `{service="ordersphere-orders", level="error"}` or `{service=~".+"} | orderId="42"`.
-- **Pipeline:** every application logs one JSON object per line (`LOG_FORMAT=json`, `common-logging`) → **Grafana Alloy** tails the containers (docker-compose: Docker socket, `observability/alloy/config.docker.alloy`; Kubernetes: pod logs via the API, `config.k8s.alloy`) → **Loki** (`:3100`, 72h retention, `observability/loki/loki.yaml`). Chosen over ELK: Elasticsearch alone needs more memory than this whole stack.
-- **Labels vs. metadata:** `service`, `level` (lowercased) and `container` are indexed labels; `traceId`, `spanId`, `user`, `orderId` and `paymentId` are structured metadata - filterable (`| orderId="42"`) without inflating the index. Non-JSON containers (postgres, rabbitmq, ...) are collected too, labelled by container.
-- **Logs ↔ traces:** a log line's `traceId` links to the trace in Jaeger, and a Jaeger trace links back to its log lines (`observability/grafana/provisioning/datasources/datasources.yaml`).
-- **What puts the order on a line:** `orderId` is set at each unit of work on an order - `OrderLogContext` in orders (order creation and cancel, payment events, the saga sweep, compensations, shipment retries), `PaymentLogContext` in payment-service (`orderId` + `paymentId`: initiation, refunds, webhooks, the sweep) - and by `DomainEventRelay` for every event about an order, so each service's state changes for one order can be found by its id.
-- **Single-node Loki:** the ring heartbeat timeouts in `loki.yaml` are set to a year on purpose. With the default 1m, a starved or sleeping machine makes the only ingester miss heartbeats, it is dropped from the ring and every push fails (`at least 1 live replicas required`) until Loki restarts. Don't use `0` - Loki 3.7 treats it as always timed out. Grafana 13 needs its 768m limit: below ~512m it thrashes and starves the Docker VM.
+- **Grafana:** `http://localhost:3000` - the **OrderSphere logs** dashboard and *Explore* (LogQL, e.g. `{service=~".+"} | orderId="42"`); log lines link to their Jaeger trace and back
+- Every application logs JSON lines (`LOG_FORMAT=json`, `common-logging`) carrying `service`, `level`, `traceId`, `user`, `orderId`, `paymentId`; Grafana Alloy ships them to Loki (72h retention)
+- Pipeline internals, label design and the single-node Loki / Grafana memory gotchas load from `observability/CLAUDE.md` when working there
 - **Not yet:** metrics (Prometheus) and alerting.
 
 ## 🧪 Testing & Quality Assurance
@@ -370,39 +345,13 @@ The system uses the Saga pattern to maintain consistency across distributed serv
 
 ## 📚 Additional Components
 
-### Web UI (`web-ui/` - customer, vendor and admin screens done)
-- **Technology Stack:** React 18 + Vite + React Router (no server of its own); see `web-ui/README.md`
-- **Done:** login/register as Customer or Vendor (tokens kept in `localStorage`, silent refresh, 401 → back to login), order list with totals and cancellation reasons, product catalog with prices and stock, order placement (out-of-stock products disabled, quantities capped at what's available) with redirect to the hosted payment page and back (with a "Pay now" link for unpaid orders), **order detail** (cancel with refund notice, shipment tracking timeline refreshed while in transit, return requests once delivered), **notifications** inbox with per-channel preferences, **Manage Products** for ADMIN/VENDOR (create a product, restock, low-stock highlighting; tab shown based on the token's `role` claim), **Admin** for ADMIN (users & roles with your own role locked, failed refunds/stock releases with Retry, unshipped paid orders with Retry, payment reconciliation with Run/Re-sync/Resolve)
-- **Routing:** every page has its own address (`/orders`, `/orders/:id`, `/products`, `/place-order`, `/notifications`, `/manage-products`, `/admin/<tab>`), so refresh, back/forward and links work. A logged-out or expired session goes to `/login` and returns to the page asked for; a page the role doesn't allow goes to My Orders; the payment provider's return (`/?payment=...&orderId=N`) is moved to `/orders`. Static hosting needs an SPA fallback to `index.html`
-- **UI tests:** Playwright (`web-ui/e2e`, `npm run e2e`, 18 tests, ~1 min) drives the real app against the docker-compose stack - routing and guards, order → hosted checkout → confirmed → delivered → return, declined/cancelled payments, cancellation, vendor and admin screens. Each test creates its own users and products. Local only, not in CI
+### Web UI (`web-ui/`)
+- React 18 + Vite + React Router; customer, vendor and admin screens, one address per page; Playwright end-to-end tests (`npm run e2e`, local only). Details load from `web-ui/CLAUDE.md` when working there; see also `web-ui/README.md`
 - **Not yet:** UI tests in CI, component-level tests
-- **Integration:** REST calls to the API Gateway (`VITE_GATEWAY_URL`, default `http://localhost:8080`); dev server on `http://localhost:5173`
-- **Deployment:** not decided (static hosting behind a CDN is the likely fit)
-
-### Mobile App (Future)
-- Native iOS/Android applications
-- Same backend API consumption
-- Offline support and sync
-
-### Analytics & Reporting Service (Future)
-- Real-time dashboards
-- Read-optimized views (CQRS pattern)
-- Business intelligence integration
-
-### Ledger Service (Future)
-- Hyperledger Fabric integration for audit trails
-- Immutable blockchain-based event logs
-- Multi-organizational compliance
 
 ---
 
 ## 🛠️ Development Setup
-
-### Prerequisites
-- Java 17+
-- Maven 3.8+
-- Docker & Docker Compose (also needed by the Testcontainers integration tests)
-- Node.js 20+ (Web UI, newman)
 
 ### Local Development
 ```bash
@@ -414,16 +363,6 @@ mvn spotless:apply
 
 # Start the full stack
 docker compose up -d
-
-# Services will be available at:
-# API Gateway: http://localhost:8080
-# Swagger UI (all services' API docs): http://localhost:8080/swagger-ui.html
-# Service Registry: http://localhost:8761
-# RabbitMQ management: http://localhost:15672 (ordersphere / ordersphere)
-# Dummy payment gateway (hosted checkout): http://localhost:8087
-# Jaeger (distributed traces): http://localhost:16686
-# Grafana (centralized logs, linked to Jaeger): http://localhost:3000
-# PostgreSQL: localhost:5432
 
 # Rebuild one service after a change
 docker compose up -d --build ordersphere-orders
@@ -443,78 +382,6 @@ cd web-ui && npm run e2e
 ```bash
 # -am also builds common-events/common-security; without it a stale copy in ~/.m2 can be used
 mvn verify -pl services/shipping-service -am
-```
-
----
-
-## 📖 Project Structure
-
-```
-ordersphere/
-├── services/
-│   ├── auth-service/                 # Authentication & Authorization
-│   ├── ordersphere-orders/           # Order management & saga orchestration
-│   ├── inventory-service/            # Stock & inventory management
-│   ├── payment-service/              # Payment processing
-│   ├── shipping-service/             # Shipment & logistics
-│   ├── notification-service/         # Event-driven notifications
-│   ├── dummy-payment-gateway/        # Stand-in hosted-checkout payment provider (dev/test)
-│   ├── ordersphere-gateway/          # API Gateway
-│   ├── service-registry/             # Eureka Service Registry
-│   ├── common-events/                # Shared event definitions
-│   ├── common-logging/               # Shared logback config (text / JSON lines)
-│   └── common-security/              # Shared security utilities
-├── web-ui/                           # React + Vite Web UI (e2e/: Playwright tests)
-├── postman/                          # Postman collections (flow, feature coverage, API reference)
-├── docs/                             # product-functionality.md, technical-architecture.md
-├── docker/postgres-init/             # Creates the per-service databases
-├── observability/                    # Loki, Alloy and Grafana config (docker-compose; copied into k8s/)
-├── k8s/                              # Kubernetes manifests (Kustomize base + docker-desktop overlay, deploy.sh)
-├── .github/workflows/ci.yml          # CI: mvn verify + Web UI build + k8s manifest check
-├── pom.xml                           # Parent Maven configuration (incl. Spotless)
-├── docker-compose.yml                # Local development environment
-├── README.md                         # Project overview
-└── CLAUDE.md                         # This file
-```
-
----
-
-## 🔗 Key Technologies
-
-| Component | Technology | Purpose |
-|-----------|-----------|---------|
-| **Framework** | Spring Boot 3.2.1 | Microservice framework |
-| **Service Discovery** | Netflix Eureka | Service registry |
-| **Database** | PostgreSQL | Primary data store |
-| **API Gateway** | Spring Cloud Gateway | Request routing |
-| **Authentication** | JWT + Spring Security | Auth & authorization |
-| **Events** | RabbitMQ | Async messaging |
-| **Resilience** | Resilience4j | Circuit breakers on the saga's outbound calls |
-| **Migrations** | Flyway | Per-service schema management |
-| **Web UI** | React + Vite + React Router; Playwright | Front end; end-to-end UI tests |
-| **Deployment** | Docker Compose, Kubernetes (Kustomize) | Containerization & orchestration |
-| **Audit Trail** | Hyperledger Fabric (planned) | Blockchain-based audit logs |
-| **API Docs** | springdoc-openapi | OpenAPI 3 specs + Swagger UI |
-| **Tracing** | Micrometer Tracing + OpenTelemetry, Jaeger | Distributed traces across REST, RabbitMQ and sweeps |
-| **Logging** | logstash-logback-encoder, Grafana Alloy, Loki, Grafana | JSON logs collected centrally, searchable by service/user/order/trace |
-| **Build Tool** | Maven | Dependency & build management |
-| **CI** | GitHub Actions | Build, test and format check on push/PR |
-
----
-
-## 📞 Service Communication Map
-
-```
-External Clients (browser / Web UI)
-       ↓                                        ↘ redirect to pay
-  API Gateway (8080)                      Dummy Payment Gateway (8087)
-   ↙ ↓ ↙ ↓ ↙ ↓ ↙ ↓                         ↑ merchant API   ↓ signed webhook
-Auth  Orders  Inventory  Payment  Shipping  Notification
-(8081) (8082)  (8083)    (8084)   (8085)    (8086)
-   ↓    ↓       ↓        ↓        ↓          ↓
-PostgreSQL Database (5432)
-   ↓
-Service Registry (Eureka) - 8761
 ```
 
 ---
@@ -539,16 +406,3 @@ Service Registry (Eureka) - 8761
 - [x] Centralized logging (Loki + Alloy + Grafana instead of ELK; JSON logs linked to traces)
 - [ ] Metrics (Prometheus) and alerting
 - [ ] Performance optimization and caching (Redis)
-
----
-
-## 📄 License
-
-OrderSphere is developed as an enterprise order management platform.
-
----
-
-**Last Updated:** September 2026  
-**Maintainer:** Sankar  
-**Repository:** sankar1609/OrderSphere
-
