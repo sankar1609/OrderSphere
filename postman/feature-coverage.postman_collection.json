@@ -60,6 +60,10 @@
     {
       "key": "prometheusUrl",
       "value": "http://localhost:9090"
+    },
+    {
+      "key": "auditBaseUrl",
+      "value": "{{gatewayBaseUrl}}/audit-service"
     }
   ],
   "item": [
@@ -4941,7 +4945,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
-                  "pm.test('All six service specs are listed', function () { pm.expect(pm.response.json().urls.length).to.eql(6); });"
+                  "pm.test('All seven service specs are listed', function () { pm.expect(pm.response.json().urls.length).to.eql(7); });"
                 ]
               }
             }
@@ -5342,7 +5346,7 @@
           }
         },
         {
-          "name": "Prometheus Scrapes The Gateway And All Six Services",
+          "name": "Prometheus Scrapes The Gateway And All Seven Services",
           "event": [
             {
               "listen": "prerequest",
@@ -5361,7 +5365,7 @@
                   "var attempt = Number(pm.collectionVariables.get('promAttempt') || 0);",
                   "var result = (pm.response.json().data || {}).result || [];",
                   "var ready = (function () {",
-                  "    return result.length === 7 && result.every(function (r) { return r.value[1] === '1'; });",
+                  "    return result.length === 8 && result.every(function (r) { return r.value[1] === '1'; });",
                   "})();",
                   "if (!ready && attempt < 20) {",
                   "    pm.collectionVariables.set('promAttempt', attempt + 1);",
@@ -5370,9 +5374,9 @@
                   "}",
                   "pm.collectionVariables.set('promAttempt', 0);",
                   "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
-                  "pm.test('7 targets, all up', function () {",
+                  "pm.test('8 targets, all up', function () {",
                   "    var down = result.filter(function (r) { return r.value[1] !== '1'; }).map(function (r) { return r.metric.service; });",
-                  "    pm.expect(result.length, 'targets').to.eql(7);",
+                  "    pm.expect(result.length, 'targets').to.eql(8);",
                   "    pm.expect(down, 'targets down').to.eql([]);",
                   "});",
                   "pm.test('Targets are labelled with their service name', function () {",
@@ -5536,8 +5540,8 @@
                   "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
                   "var rules = [];",
                   "pm.response.json().data.groups.forEach(function (g) { rules = rules.concat(g.rules); });",
-                  "pm.test('The 8 alert rules evaluate without errors', function () {",
-                  "    pm.expect(rules.map(function (r) { return r.name; })).to.include.members(['ServiceDown', 'HighErrorRate', 'SlowResponses', 'CircuitBreakerOpen', 'FailedCompensations', 'UnshippedOrdersGaveUp', 'OpenReconciliationFindings', 'PaymentFailuresHigh']);",
+                  "pm.test('The 9 alert rules evaluate without errors', function () {",
+                  "    pm.expect(rules.map(function (r) { return r.name; })).to.include.members(['ServiceDown', 'HighErrorRate', 'SlowResponses', 'CircuitBreakerOpen', 'FailedCompensations', 'UnshippedOrdersGaveUp', 'OpenReconciliationFindings', 'AuditChainBroken', 'PaymentFailuresHigh']);",
                   "    var unhealthy = rules.filter(function (r) { return r.health !== 'ok'; }).map(function (r) { return r.name + ': ' + r.lastError; });",
                   "    pm.expect(unhealthy, 'rules with errors').to.eql([]);",
                   "});",
@@ -5561,6 +5565,475 @@
                 "api",
                 "v1",
                 "rules"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "12. Audit Log (tamper-evident)",
+      "item": [
+        {
+          "name": "Customer Reads The Audit Log [expect 403]",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 403', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{auditBaseUrl}}/audit/entries",
+              "host": [
+                "{{auditBaseUrl}}"
+              ],
+              "path": [
+                "audit",
+                "entries"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Vendor Verifies The Chain [expect 403]",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 403', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{vendToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{auditBaseUrl}}/audit/verify",
+              "host": [
+                "{{auditBaseUrl}}"
+              ],
+              "path": [
+                "audit",
+                "verify"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Register The Future Auditor",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('auditorUserId', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/register",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"aud_{{runId}}\",\n  \"password\": \"password123\",\n  \"role\": \"CUSTOMER\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Admin Makes Them An Auditor",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Role is AUDITOR', function () { pm.expect(pm.response.json().role).to.eql('AUDITOR'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/admin/users/{{auditorUserId}}/role",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "admin",
+                "users",
+                "{{auditorUserId}}",
+                "role"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"role\": \"AUDITOR\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Login Auditor",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.collectionVariables.set('auditorToken', pm.response.json().token);",
+                  "pm.collectionVariables.set('auditAttempt', 0);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/login",
+              "host": [
+                "{{authBaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"aud_{{runId}}\",\n  \"password\": \"password123\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Auditor Sees An Order's Trail Across Services",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (Number(pm.collectionVariables.get('auditAttempt') || 0) > 0) { setTimeout(function () {}, 1000); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Events reach the audit queue asynchronously: poll briefly.",
+                  "var attempt = Number(pm.collectionVariables.get('auditAttempt') || 0);",
+                  "var trail = pm.response.code === 200 ? pm.response.json() : [];",
+                  "var types = trail.map(function (e) { return e.eventType; });",
+                  "var expected = ['OrderCreatedEvent', 'InventoryReservedEvent', 'PaymentInitiatedEvent'];",
+                  "var missing = expected.filter(function (t) { return types.indexOf(t) < 0; });",
+                  "if (missing.length > 0 && attempt < 15) {",
+                  "    pm.collectionVariables.set('auditAttempt', attempt + 1);",
+                  "    postman.setNextRequest(pm.info.requestName);",
+                  "    return;",
+                  "}",
+                  "pm.collectionVariables.set('auditAttempt', 0);",
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Order placed, stock reserved, payment opened - each recorded', function () {",
+                  "    pm.expect(missing, 'missing events').to.eql([]);",
+                  "});",
+                  "pm.test('Oldest first, in chain order', function () {",
+                  "    var seqs = trail.map(function (e) { return e.seq; });",
+                  "    pm.expect(seqs).to.eql(seqs.slice().sort(function (a, b) { return a - b; }));",
+                  "});",
+                  "function entry(type) { return trail.filter(function (e) { return e.eventType === type; })[0]; }",
+                  "pm.test('Records which service published it and who it was acting for', function () {",
+                  "    var created = entry('OrderCreatedEvent');",
+                  "    pm.expect(created.sourceService).to.eql('ordersphere-orders');",
+                  "    pm.expect(created.actor).to.eql('cust_' + pm.collectionVariables.get('runId'));",
+                  "    var reserved = entry('InventoryReservedEvent');",
+                  "    pm.expect(reserved.sourceService).to.eql('inventory-service');",
+                  "    pm.expect(reserved.actor, 'the saga calls inventory as itself').to.eql('orders-service');",
+                  "    pm.expect(created.traceId).to.eql(pm.collectionVariables.get('logTraceId'));",
+                  "});",
+                  "pm.test('Lists carry no payloads', function () { pm.expect(trail[0].payload).to.eql(null); });",
+                  "pm.collectionVariables.set('auditSeq', entry('OrderCreatedEvent').seq);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auditorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{auditBaseUrl}}/audit/orders/{{logOrderId}}",
+              "host": [
+                "{{auditBaseUrl}}"
+              ],
+              "path": [
+                "audit",
+                "orders",
+                "{{logOrderId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Auditor Opens One Entry",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('The event as published, and its place in the chain', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(JSON.parse(b.payload).orderId).to.eql(pm.collectionVariables.get('logOrderId'));",
+                  "    pm.expect(b.hash).to.match(/^[0-9a-f]{64}$/);",
+                  "    pm.expect(b.prevHash).to.match(/^[0-9a-f]{64}$/);",
+                  "    pm.expect(b.hash).to.not.eql(b.prevHash);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auditorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{auditBaseUrl}}/audit/entries/{{auditSeq}}",
+              "host": [
+                "{{auditBaseUrl}}"
+              ],
+              "path": [
+                "audit",
+                "entries",
+                "{{auditSeq}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Auditor Finds Their Own Registration",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Exactly one registration for that username, from auth-service', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.total).to.eql(1);",
+                  "    pm.expect(b.items[0].sourceService).to.eql('auth-service');",
+                  "    pm.expect(b.items[0].subjectUsername).to.eql('aud_' + pm.collectionVariables.get('runId'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auditorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{auditBaseUrl}}/audit/entries?eventType=UserRegisteredEvent&username=aud_{{runId}}",
+              "host": [
+                "{{auditBaseUrl}}"
+              ],
+              "path": [
+                "audit",
+                "entries"
+              ],
+              "query": [
+                {
+                  "key": "eventType",
+                  "value": "UserRegisteredEvent"
+                },
+                {
+                  "key": "username",
+                  "value": "aud_{{runId}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Auditor Verifies The Chain",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Chain is intact', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.valid, b.reason).to.eql(true);",
+                  "    pm.expect(b.entriesChecked).to.be.above(0);",
+                  "    pm.expect(b.headSeq).to.eql(b.entriesChecked);",
+                  "    pm.expect(b.firstBrokenSeq).to.eql(null);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auditorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{auditBaseUrl}}/audit/verify",
+              "host": [
+                "{{auditBaseUrl}}"
+              ],
+              "path": [
+                "audit",
+                "verify"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Chain Status",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Reports length and the last verification', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.entries).to.eql(b.headSeq);",
+                  "    pm.expect(b.lastVerification.valid).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auditorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{auditBaseUrl}}/audit/status",
+              "host": [
+                "{{auditBaseUrl}}"
+              ],
+              "path": [
+                "audit",
+                "status"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Nobody Can Delete An Entry - Not Even An Admin [expect 405]",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('There is no such operation', function () { pm.response.to.have.status(405); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{auditBaseUrl}}/audit/entries/{{auditSeq}}",
+              "host": [
+                "{{auditBaseUrl}}"
+              ],
+              "path": [
+                "audit",
+                "entries",
+                "{{auditSeq}}"
               ]
             }
           }

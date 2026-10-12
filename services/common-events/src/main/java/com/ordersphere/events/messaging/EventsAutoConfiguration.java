@@ -10,6 +10,7 @@ import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
 import org.springframework.amqp.support.converter.MessageConverter;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
@@ -49,8 +50,10 @@ public class EventsAutoConfiguration {
   @Bean
   @ConditionalOnMissingBean
   public DomainEventRelay domainEventRelay(
-      RabbitTemplate rabbitTemplate, ObjectProvider<MeterRegistry> meterRegistry) {
+      RabbitTemplate rabbitTemplate,
+      ObjectProvider<MeterRegistry> meterRegistry,
+      @Value("${spring.application.name:unknown}") String applicationName) {
     return new DomainEventRelay(
-        rabbitTemplate, meterRegistry.getIfAvailable(SimpleMeterRegistry::new));
+        rabbitTemplate, meterRegistry.getIfAvailable(SimpleMeterRegistry::new), applicationName);
   }
 }

@@ -39,7 +39,7 @@ class OrdersphereGatewayApplicationTests {
         .isOk()
         .expectBody()
         .jsonPath("$.urls.length()")
-        .isEqualTo(6)
+        .isEqualTo(7)
         .jsonPath("$.urls[?(@.name == 'orders')].url")
         .isEqualTo("/ordersphere-orders/v3/api-docs");
   }

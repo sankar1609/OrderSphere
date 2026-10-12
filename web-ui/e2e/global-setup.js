@@ -2,7 +2,13 @@ import { GATEWAY } from "./helpers.js";
 
 /** Fails fast, with what to do about it, when the backend stack isn't up. */
 export default async function globalSetup() {
-  const services = ["auth-service", "ordersphere-orders", "inventory-service", "payment-service"];
+  const services = [
+    "auth-service",
+    "ordersphere-orders",
+    "inventory-service",
+    "payment-service",
+    "audit-service",
+  ];
   for (const service of services) {
     let status;
     try {

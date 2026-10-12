@@ -8,7 +8,7 @@ This document describes how OrderSphere is actually built today — architecture
 
 ## 1. Overview
 
-OrderSphere is a cloud-native order and inventory management platform built as twelve Maven modules — nine independently deployable Spring Boot applications (eight platform services plus a stand-in payment provider) and three shared libraries. It exists to demonstrate — and exercise — the hard parts of distributed order processing: reserving stock without overselling, keeping payment and fulfillment eventually consistent, giving every state transition a compensating path back out, and — the part that's easy to get wrong — making sure the two independent things that can each try to finish the same step don't race each other into a lost update.
+OrderSphere is a cloud-native order and inventory management platform built as thirteen Maven modules — ten independently deployable Spring Boot applications (nine platform services plus a stand-in payment provider) and three shared libraries. It exists to demonstrate — and exercise — the hard parts of distributed order processing: reserving stock without overselling, keeping payment and fulfillment eventually consistent, giving every state transition a compensating path back out, and — the part that's easy to get wrong — making sure the two independent things that can each try to finish the same step don't race each other into a lost update.
 
 The system runs as a full Docker Compose stack or on Kubernetes (Kustomize manifests in `k8s/`): a Eureka service registry, an API gateway, six business services, a dummy hosted-checkout payment provider, PostgreSQL (one database per service), RabbitMQ for asynchronous fan-out, Redis for gateway rate limits, Jaeger for distributed traces, Prometheus for metrics and alert rules, and Loki, Alloy and Grafana for centralized logs and dashboards. Every service builds, has a Flyway-managed schema and carries its own test suite; the six business services publish OpenAPI specs.
 
@@ -56,9 +56,17 @@ The dummy provider behaves like a real one in the ways that matter: it keeps ses
 
 Swapping in a real provider means replacing `DummyPaymentGatewayClient` (including its settlement-report call) and the webhook's signature check; the rest of the flow stays the same.
 
+### Audit: a tamper-evident log of every event
+
+The platform's stated goal is trust and auditability, and until `audit-service` nothing recorded what happened durably: logs expire and can be edited, and half the domain events had no consumer. The audit service binds one queue to every routing key on the event exchange and stores each message as an entry in an append-only table - reading the raw message rather than binding to event classes, so a new event type is audited without a change here. `DomainEventRelay` stamps every message with the publishing service and with who it was acting for (the caller the JWT filter put in the logging context: a username, or `orders-service` for saga calls), so an entry says not just what happened but who caused it.
+
+What makes it tamper-evident is the chain: each entry stores the SHA-256 of the previous entry's hash together with its own content (fields length-prefixed, so no two different entries hash alike). Change an entry, delete one or swap two, and from that point the stored hashes stop matching what `AuditVerifier` recomputes; it reports the first broken sequence number and why. Appends serialize on a one-row chain-head lock so the chain stays linear with several instances, and a redelivered event is recognised by its id. The tables also reject UPDATE, DELETE and TRUNCATE by trigger - a second layer, since someone with enough database rights can disable a trigger, which is precisely the case the chain exposes.
+
+A chain inside one database has one weakness: whoever controls the database could rewrite all of it consistently. So the head is periodically *anchored* - published through the `AuditAnchor` interface and remembered - and verification checks the chain still passes through every anchor. Today the anchor is the application log (collected in Loki, a separate store). This interface is the place a ledger shared with other organizations (Hyperledger Fabric) plugs in: that step only pays for itself once someone outside the operator has to trust the records, and it then needs no change to the rest of the service. Verification runs on a schedule and on demand; a break raises the `AuditChainBroken` alert. The API is read-only and limited to `AUDITOR` and `ADMIN`.
+
 ### Events as the async layer
 
-Every state change Orders, Payment, or Shipping makes is also published locally as a Spring `ApplicationEvent` and relayed onto a RabbitMQ topic exchange by a shared `DomainEventRelay`. Three things consume off that bus today: Notification service, which reacts to order, payment, and shipment events to trigger customer messages; Orders itself, listening for `PaymentCompletedEvent`/`PaymentFailedEvent` as a low-latency shortcut around its own polling sweep job; and Shipping, which halts an in-flight shipment when it hears `OrderCancelledEvent`. Inventory and Payment are not message consumers — every service publishes into the same exchange (see §4), but only 9 of the 18 event types have a bound queue reading them.
+Every state change Orders, Payment, or Shipping makes is also published locally as a Spring `ApplicationEvent` and relayed onto a RabbitMQ topic exchange by a shared `DomainEventRelay`. Three things consume off that bus today: Notification service, which reacts to order, payment, and shipment events to trigger customer messages; Orders itself, listening for `PaymentCompletedEvent`/`PaymentFailedEvent` as a low-latency shortcut around its own polling sweep job; and Shipping, which halts an in-flight shipment when it hears `OrderCancelledEvent`. Inventory and Payment are not message consumers — every service publishes into the same exchange (see §4), but 9 of the 18 event types have a consumer that acts on them; audit-service additionally records all 18.
 
 ### Request topology
 
@@ -103,7 +111,7 @@ All API traffic enters through the gateway; every service resolves its peers (an
 
 ## 3. Service catalog
 
-Nine runtime applications plus three shared libraries. Ports match the Docker Compose configuration and are stable across local and containerized runs.
+Ten runtime applications plus three shared libraries. Ports match the Docker Compose configuration and are stable across local and containerized runs.
 
 | Service | Port | Responsibility | Database |
 |---|---|---|---|
@@ -114,6 +122,7 @@ Nine runtime applications plus three shared libraries. Ports match the Docker Co
 | `payment-service` | 8084 | Hosted-checkout payments (checkout sessions, signed provider webhooks, reconciliation), refunds | `payment_db` |
 | `shipping-service` | 8085 | Shipment creation, tracking-stage progression, returns | `shipping_db` |
 | `notification-service` | 8086 | Multi-channel notification delivery, per-channel preferences, retry | `notification_db` |
+| `audit-service` | 8088 | Tamper-evident audit log: every domain event in an append-only hash chain; verification, anchoring, read-only API for AUDITOR/ADMIN | `audit_db` |
 | `service-registry` | 8761 | Eureka server — service discovery for every service above | — |
 | `dummy-payment-gateway` | 8087 | Stand-in external payment provider: hosted checkout page, merchant API, settlement report, HMAC-signed webhooks. Not in Eureka, not behind the gateway | `gateway_db` |
 | `common-events` | — | Shared library: event POJOs, topic-exchange auto-configuration, routing-key derivation, domain-event relay, RabbitMQ and `@Scheduled` tracing | — |
@@ -132,15 +141,16 @@ Each of the 18 event types defined in `common-events` (`OrderCreatedEvent`, `Pay
 
 ### Consumers
 
-Three durable queues exist today, each with its own dead-letter exchange and queue for redelivery failures:
+Four durable queues exist today, each with its own dead-letter exchange and queue for redelivery failures:
 
 | Queue | Owner | Bound routing keys |
 |---|---|---|
 | `ordersphere-orders.payment-events` | `ordersphere-orders` | `payment.completed`, `payment.failed` |
 | `shipping-service.order-events` | `shipping-service` | `order.cancelled` |
 | `notification-service.events` | `notification-service` | `order.confirmed`, `order.cancelled`, `payment.completed`, `payment.failed`, `shipment.created`, `shipment.picked`, `shipment.in.transit`, `delivery.confirmed`, `stock.low` |
+| `audit-service.events` | `audit-service` | `#` (every event, recorded in the audit chain) |
 
-That's 9 of the 18 published event types reaching a consumer. The other 9 — `OrderCreatedEvent`, `InventoryReservedEvent`, `InventoryReleasedEvent`, `PaymentInitiatedEvent`, `RefundIssuedEvent`, `NotificationSentEvent`, `NotificationFailedEvent`, `UserRegisteredEvent`, `UserAuthenticatedEvent` — reach the exchange and go nowhere; there's no bound queue to route them to.
+That's 9 of the 18 published event types reaching a consumer that acts on them (audit-service records all 18). The other 9 — `OrderCreatedEvent`, `InventoryReservedEvent`, `InventoryReleasedEvent`, `PaymentInitiatedEvent`, `RefundIssuedEvent`, `NotificationSentEvent`, `NotificationFailedEvent`, `UserRegisteredEvent`, `UserAuthenticatedEvent` — are recorded by audit-service and otherwise drive nothing.
 
 `stock.low` is the one inventory event with a consumer: Inventory publishes `StockLowEvent` once when a reservation takes a product's available stock from above its reorder threshold to at or below it (not again while it stays low; restock, release and expiry re-arm it), and Notification sends an IN_APP alert to the product's owner (`products.created_by`, carried on the event) or, for products without one, to `LOW_STOCK_FALLBACK_RECIPIENT`.
 
@@ -213,7 +223,7 @@ What every service is actually built on, confirmed against each module's `pom.xm
 | Technology | Role |
 |---|---|
 | Java 17 | Language baseline, parent POM |
-| Spring Boot 3.2.1 | Service framework across all twelve modules |
+| Spring Boot 3.2.1 | Service framework across all thirteen modules |
 | Spring Cloud Gateway | API gateway routing |
 | Netflix Eureka | Service discovery, client + server |
 | Spring Cloud LoadBalancer | Client-side balancing for Orders' outbound calls |
@@ -249,7 +259,7 @@ What every service is actually built on, confirmed against each module's `pom.xm
 
 Two deployment paths share the same images and configuration: Docker Compose for everyday development, and Kubernetes manifests in `k8s/`.
 
-- `mvn verify` builds all twelve modules from the root parent POM and runs every test plus the Spotless check - exactly what CI runs.
+- `mvn verify` builds all thirteen modules from the root parent POM and runs every test plus the Spotless check - exactly what CI runs.
 - Each of the nine runtime applications has its own `Dockerfile`; `docker-compose.yml` builds them as `ordersphere/<service>:local` and wires them with `postgres`, `rabbitmq`, `redis` and `jaeger`.
 - **Kubernetes:** `k8s/base` holds a Deployment + ClusterIP Service per application (startup, readiness and liveness probes; memory requests/limits), Postgres as a StatefulSet with a PVC, RabbitMQ, Redis and Jaeger, a ConfigMap (`ordersphere-config`) for shared settings and a Secret (`ordersphere-secrets`, dev values) for credentials. Services keep their compose names, so the same settings work in both, and discovery still goes through Eureka (pods register their IPs). Pods set `enableServiceLinks: false` - Kubernetes' injected `REDIS_PORT=tcp://...`-style variables would otherwise clash with the services' own `*_PORT` settings. The `docker-desktop` overlay uses the locally built images and publishes the gateway, checkout page, Eureka, Jaeger and RabbitMQ UI on localhost; `k8s/deploy.sh` builds, applies and waits for every rollout.
 - Configuration is environment-variable driven throughout — `DB_HOST`, `EUREKA_URI`, `RABBITMQ_HOST`, `JWT_JWKS_URI`, `ORDERS_CLIENT_SECRET`, `PAYMENT_GATEWAY_*`, `OTLP_TRACING_ENDPOINT` — the same images run under Compose or Kubernetes without rebuilding.
@@ -305,7 +315,8 @@ What's shipped versus what's still ahead, per the project's own tracked roadmap.
 - [x] Distributed tracing (Micrometer Tracing + OpenTelemetry, Jaeger)
 - [x] Kubernetes manifests (Kustomize)
 - [ ] OAuth2/OIDC, request validation at the gateway
-- [ ] Hyperledger Fabric ledger service for immutable audit trails
+- [x] Audit trail: hash-chained, append-only log of every domain event (audit-service)
+- [ ] Anchor the audit chain in a shared ledger (Hyperledger Fabric) when a second organization needs to trust it
 - [ ] CQRS-based analytics/reporting
 - [x] Centralized logging (Loki + Alloy + Grafana; JSON logs linked to traces)
 - [x] Metrics and alerting (Prometheus, business metrics, alert rules, Grafana dashboards)

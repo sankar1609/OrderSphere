@@ -1,4 +1,4 @@
-# Prometheus: scrapes the gateway and the six services every 15s. The targets are the service
+# Prometheus: scrapes the gateway and the seven services every 15s. The targets are the service
 # names, which are the same under docker-compose and Kubernetes, so one file serves both.
 global:
   scrape_interval: 15s
@@ -24,6 +24,7 @@ scrape_configs:
           - payment-service:8084
           - shipping-service:8085
           - notification-service:8086
+          - audit-service:8088
     relabel_configs:
       # "service" as in the logs: the host part of the target, e.g. "ordersphere-orders".
       - source_labels: [__address__]

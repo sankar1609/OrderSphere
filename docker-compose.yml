@@ -410,6 +410,44 @@ services:
       retries: 3
       start_period: 60s
 
+
+  audit-service:
+    # Same tag the Kubernetes manifests use (k8s/), so one build serves both.
+    image: ordersphere/audit-service:local
+    build:
+      context: .
+      dockerfile: services/audit-service/Dockerfile
+    container_name: ordersphere-audit-service
+    ports:
+      - "8088:8088"
+      - "5011:5011"
+    environment:
+      # One JSON object per line (common-logging), collected into Loki by Alloy.
+      LOG_FORMAT: json
+      # Shared secret Prometheus presents to /actuator/prometheus.
+      METRICS_SCRAPE_TOKEN: ${METRICS_SCRAPE_TOKEN:-dev-metrics-scrape-token}
+      OTLP_TRACING_ENDPOINT: http://jaeger:4318/v1/traces
+      DB_HOST: postgres
+      DB_NAME: audit_db
+      DB_USERNAME: ordersphere
+      DB_PASSWORD: ordersphere
+      JWT_JWKS_URI: http://auth-service:8081/auth/.well-known/jwks.json
+      EUREKA_URI: http://service-registry:8761/eureka
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USERNAME: ordersphere
+      RABBITMQ_PASSWORD: ordersphere
+      JAVA_TOOL_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5011"
+    depends_on:
+      - postgres
+      - service-registry
+      - rabbitmq
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:8088/actuator/health/readiness"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 60s
+
 volumes:
   postgres-data:
   loki-data:

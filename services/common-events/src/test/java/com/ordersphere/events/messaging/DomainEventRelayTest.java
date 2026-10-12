@@ -14,10 +14,14 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.MDC;
 import org.springframework.amqp.AmqpException;
+import org.springframework.amqp.core.Message;
+import org.springframework.amqp.core.MessagePostProcessor;
+import org.springframework.amqp.core.MessageProperties;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 
 @ExtendWith(MockitoExtension.class)
@@ -33,21 +37,29 @@ class DomainEventRelayTest {
     relay.onEvent(event);
 
     verify(rabbitTemplate)
-        .convertAndSend(EventsAutoConfiguration.EVENTS_EXCHANGE, "order.confirmed", event);
+        .convertAndSend(
+            eq(EventsAutoConfiguration.EVENTS_EXCHANGE),
+            eq("order.confirmed"),
+            eq((Object) event),
+            any(MessagePostProcessor.class));
   }
 
   @Test
   void swallowsBrokerFailuresRatherThanPropagating() {
     doThrow(new AmqpException("broker down"))
         .when(rabbitTemplate)
-        .convertAndSend(anyString(), anyString(), any(Object.class));
+        .convertAndSend(
+            anyString(), anyString(), any(Object.class), any(MessagePostProcessor.class));
     DomainEventRelay relay = new DomainEventRelay(rabbitTemplate);
 
     relay.onEvent(new OrderConfirmedEvent(1L, "alice"));
 
     verify(rabbitTemplate)
         .convertAndSend(
-            eq(EventsAutoConfiguration.EVENTS_EXCHANGE), eq("order.confirmed"), any(Object.class));
+            eq(EventsAutoConfiguration.EVENTS_EXCHANGE),
+            eq("order.confirmed"),
+            any(Object.class),
+            any(MessagePostProcessor.class));
   }
 
   @Test
@@ -59,7 +71,8 @@ class DomainEventRelayTest {
               return null;
             })
         .when(rabbitTemplate)
-        .convertAndSend(anyString(), anyString(), any(Object.class));
+        .convertAndSend(
+            anyString(), anyString(), any(Object.class), any(MessagePostProcessor.class));
 
     new DomainEventRelay(rabbitTemplate).onEvent(new OrderConfirmedEvent(42L, "alice"));
 
@@ -85,7 +98,8 @@ class DomainEventRelayTest {
               return null;
             })
         .when(rabbitTemplate)
-        .convertAndSend(anyString(), anyString(), any(Object.class));
+        .convertAndSend(
+            anyString(), anyString(), any(Object.class), any(MessagePostProcessor.class));
 
     new DomainEventRelay(rabbitTemplate).onEvent(new UserRegisteredEvent(7L, "alice", "CUSTOMER"));
 
@@ -107,5 +121,43 @@ class DomainEventRelayTest {
     assertThat(
             meters.counter(DomainEventRelay.EVENTS_COUNTER, "type", "UserRegisteredEvent").count())
         .isEqualTo(1.0);
+  }
+
+  @Test
+  void stampsTheMessageWithThePublishingServiceAndTheCaller() {
+    DomainEventRelay relay =
+        new DomainEventRelay(rabbitTemplate, new SimpleMeterRegistry(), "ordersphere-orders");
+
+    Message message;
+    try (var user = MDC.putCloseable("user", "alice")) {
+      relay.onEvent(new OrderConfirmedEvent(1L, "alice"));
+      message = postProcessed();
+    }
+
+    assertThat((Object) message.getMessageProperties().getHeader("x-source-service"))
+        .isEqualTo("ordersphere-orders");
+    assertThat((Object) message.getMessageProperties().getHeader("x-actor")).isEqualTo("alice");
+  }
+
+  @Test
+  void leavesTheActorOffWhenNoRequestIsInProgress() {
+    new DomainEventRelay(rabbitTemplate, new SimpleMeterRegistry(), "shipping-service")
+        .onEvent(new OrderConfirmedEvent(1L, "alice"));
+
+    Message message = postProcessed();
+    assertThat((Object) message.getMessageProperties().getHeader("x-source-service"))
+        .isEqualTo("shipping-service");
+    assertThat(message.getMessageProperties().getHeaders()).doesNotContainKey("x-actor");
+  }
+
+  /** Runs the post-processor the relay handed to RabbitTemplate against an empty message. */
+  private Message postProcessed() {
+    ArgumentCaptor<MessagePostProcessor> processor =
+        ArgumentCaptor.forClass(MessagePostProcessor.class);
+    verify(rabbitTemplate)
+        .convertAndSend(anyString(), anyString(), any(Object.class), processor.capture());
+    return processor
+        .getValue()
+        .postProcessMessage(new Message(new byte[0], new MessageProperties()));
   }
 }

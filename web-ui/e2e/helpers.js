@@ -43,6 +43,20 @@ export async function newUser(request, role) {
   return { ...user, ...(await loginApi(request, user)) };
 }
 
+/** A fresh user whom the admin has made an AUDITOR (nobody can self-register as one). */
+export async function newAuditor(request) {
+  const user = { username: unique("e2e_aud"), password: PASSWORD };
+  const registered = await api(request, "POST", "/auth-service/auth/register", {
+    data: { ...user, role: "CUSTOMER" },
+  });
+  const admin = await loginApi(request, ADMIN);
+  await api(request, "PATCH", `/auth-service/auth/admin/users/${registered.id}/role`, {
+    token: admin.token,
+    data: { role: "AUDITOR" },
+  });
+  return { ...user, ...(await loginApi(request, user)) };
+}
+
 /** A new vendor with one product in stock; returns { vendor, sku }. */
 export async function newProduct(request, { stock = 5, price = 4.0 } = {}) {
   const vendor = await newUser(request, "VENDOR");

@@ -1,0 +1,73 @@
+server:
+  port: 8088
+
+spring:
+  application:
+    name: audit-service
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:audit_db}
+    username: ${DB_USERNAME:ordersphere}
+    password: ${DB_PASSWORD:ordersphere}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:ordersphere}
+    password: ${RABBITMQ_PASSWORD:ordersphere}
+    listener:
+      simple:
+        retry:
+          enabled: true
+          max-attempts: 3
+          initial-interval: 1000ms
+
+jwt:
+  # Tokens are verified with auth-service's public keys (RS256); nothing here can sign one.
+  jwks-uri: ${JWT_JWKS_URI:http://localhost:8081/auth/.well-known/jwks.json}
+
+audit:
+  verify:
+    # How often the whole chain is re-verified (also once at startup, and on demand via the API).
+    interval: ${AUDIT_VERIFY_INTERVAL:PT5M}
+  anchor:
+    # How often the chain head is anchored (see AuditAnchor) when new entries exist.
+    interval: ${AUDIT_ANCHOR_INTERVAL:PT10M}
+
+management:
+  tracing:
+    # Every request traced in dev; lower in production (TRACING_SAMPLING_PROBABILITY).
+    sampling:
+      probability: ${TRACING_SAMPLING_PROBABILITY:1.0}
+  otlp:
+    tracing:
+      # Jaeger's OTLP/HTTP receiver (docker-compose sets OTLP_TRACING_ENDPOINT).
+      endpoint: ${OTLP_TRACING_ENDPOINT:http://localhost:4318/v1/traces}
+  metrics:
+    # Scraped by Prometheus at /actuator/prometheus, which needs the scrape token
+    # (METRICS_SCRAPE_TOKEN) - the gateway routes to every service, so it must not be open.
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      # Latency buckets, so dashboards and alerts can compute percentiles.
+      percentiles-histogram:
+        http.server.requests: true
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URI:http://localhost:8761/eureka}
+  instance:
+    prefer-ip-address: true

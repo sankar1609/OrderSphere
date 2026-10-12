@@ -29,3 +29,8 @@ export function usernameOf(token) {
 export function isAdmin(role) {
   return role === "ADMIN";
 }
+
+/** Roles that may read the audit log (see audit-service's AuditController). */
+export function canAudit(role) {
+  return role === "ADMIN" || role === "AUDITOR";
+}
