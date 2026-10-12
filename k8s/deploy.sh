@@ -21,12 +21,30 @@ for deployment in $(kubectl --context "$CONTEXT" -n "$NAMESPACE" get deployments
   kubectl --context "$CONTEXT" -n "$NAMESPACE" rollout status "$deployment" --timeout=600s
 done
 
+# Ready pods aren't reachable yet: each service still has to register with Eureka and the gateway
+# has to fetch the registry (up to ~1 minute). Until then the gateway answers 503.
+echo "Waiting for the gateway to route to every service..."
+for attempt in $(seq 1 60); do
+  routed=0
+  for service in auth-service ordersphere-orders inventory-service payment-service shipping-service notification-service; do
+    code=$(curl -s -m 3 -o /dev/null -w '%{http_code}' "http://localhost:8080/$service/actuator/health/readiness" || true)
+    if [[ "$code" == "200" ]]; then routed=$((routed + 1)); fi
+  done
+  if [[ "$routed" == "6" ]]; then break; fi
+  sleep 5
+done
+if [[ "$routed" != "6" ]]; then
+  echo "Only $routed of 6 services are reachable through the gateway on localhost:8080 - check 'kubectl -n $NAMESPACE get pods' and the gateway's logs." >&2
+  exit 1
+fi
+
 kubectl --context "$CONTEXT" -n "$NAMESPACE" get pods
 cat <<URLS
 
 OrderSphere is up:
   API gateway           http://localhost:8080   (Swagger UI: /webjars/swagger-ui/index.html)
-  Grafana (logs)        http://localhost:3000
+  Grafana (logs, metrics) http://localhost:3000
+  Prometheus            http://localhost:9090
   Payment checkout      http://localhost:8087
   Eureka                http://localhost:8761
   Jaeger                http://localhost:16686

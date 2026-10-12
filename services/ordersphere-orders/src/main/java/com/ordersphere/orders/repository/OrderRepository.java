@@ -19,6 +19,14 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
 
   List<Order> findByStatus(OrderStatus status);
 
+  long countByStatus(OrderStatus status);
+
+  /** Paid orders without a shipment that the saga sweep is still retrying. */
+  long countByStatusAndShipmentIdIsNullAndShipmentNextAttemptAtIsNotNull(OrderStatus status);
+
+  /** Paid orders without a shipment that retries have given up on - they need an admin. */
+  long countByStatusAndShipmentIdIsNullAndShipmentNextAttemptAtIsNull(OrderStatus status);
+
   /** CONFIRMED orders still without a shipment whose next creation attempt is due. */
   @Query(
       "select o.id from Order o where o.status = com.ordersphere.orders.domain.OrderStatus.CONFIRMED"

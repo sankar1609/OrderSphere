@@ -42,6 +42,8 @@ public class SecurityConfig {
                     .requestMatchers(
                         "/actuator/health",
                         "/actuator/health/**",
+                        // Prometheus scrapes; MetricsScrapeTokenFilter checks its token.
+                        "/actuator/prometheus",
                         "/v3/api-docs",
                         "/v3/api-docs/**")
                     .permitAll()

@@ -1,4 +1,4 @@
-# Loki (logs) and Jaeger (traces), linked both ways: a log line's traceId opens its trace, and a
+# Prometheus (metrics), and Loki (logs) and Jaeger (traces) linked both ways: a log line's traceId opens its trace, and a
 # trace's spans link back to the log lines with that traceId. "$$" escapes Grafana's own
 # environment-variable interpolation in provisioning files.
 apiVersion: 1
@@ -31,3 +31,11 @@ datasources:
         spanEndTimeShift: '5m'
         customQuery: true
         query: '{service=~".+"} | traceId = "$${__trace.traceId}"'
+
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    jsonData:
+      timeInterval: 15s

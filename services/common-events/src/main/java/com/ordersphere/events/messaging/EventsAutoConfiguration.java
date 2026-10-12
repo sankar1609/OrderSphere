@@ -3,10 +3,13 @@ package com.ordersphere.events.messaging;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.fasterxml.jackson.module.paramnames.ParameterNamesModule;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.springframework.amqp.core.TopicExchange;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
 import org.springframework.amqp.support.converter.MessageConverter;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
@@ -45,7 +48,9 @@ public class EventsAutoConfiguration {
 
   @Bean
   @ConditionalOnMissingBean
-  public DomainEventRelay domainEventRelay(RabbitTemplate rabbitTemplate) {
-    return new DomainEventRelay(rabbitTemplate);
+  public DomainEventRelay domainEventRelay(
+      RabbitTemplate rabbitTemplate, ObjectProvider<MeterRegistry> meterRegistry) {
+    return new DomainEventRelay(
+        rabbitTemplate, meterRegistry.getIfAvailable(SimpleMeterRegistry::new));
   }
 }

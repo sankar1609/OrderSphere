@@ -2,8 +2,8 @@
   "uid": "ordersphere-logs",
   "title": "OrderSphere logs",
   "tags": [
-    "ordersphere",
-    "logs"
+    "logs",
+    "ordersphere"
   ],
   "timezone": "browser",
   "schemaVersion": 39,
@@ -390,6 +390,18 @@
         "prettifyLogMessage": false,
         "dedupStrategy": "none"
       }
+    }
+  ],
+  "links": [
+    {
+      "type": "dashboards",
+      "tags": [
+        "ordersphere"
+      ],
+      "title": "OrderSphere dashboards",
+      "asDropdown": true,
+      "includeVars": false,
+      "keepTime": true
     }
   ]
 }

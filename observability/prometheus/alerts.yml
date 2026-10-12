@@ -1,0 +1,90 @@
+# Alert rules. Prometheus evaluates them; firing alerts show on Grafana's "OrderSphere overview"
+# dashboard and on Prometheus's own Alerts page (:9090/alerts). Nothing is sent anywhere - there is
+# no Alertmanager.
+groups:
+  - name: availability
+    rules:
+      - alert: ServiceDown
+        expr: up{job="ordersphere"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.service }} is not answering Prometheus"
+          description: "No successful scrape for 2 minutes. Check the container/pod and its logs in Grafana ({service=\"{{ $labels.service }}\"})."
+
+      - alert: HighErrorRate
+        expr: |
+          sum by (service) (rate(http_server_requests_seconds_count{outcome="SERVER_ERROR"}[5m]))
+            / sum by (service) (rate(http_server_requests_seconds_count[5m])) > 0.05
+          and sum by (service) (rate(http_server_requests_seconds_count[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.service }} is answering more than 5% of requests with a 5xx"
+          description: "Look at the service's error logs in Grafana and the traces of failing requests in Jaeger."
+
+      - alert: SlowResponses
+        expr: |
+          histogram_quantile(0.95,
+            sum by (service, le) (rate(http_server_requests_seconds_bucket{uri!~"/actuator.*"}[5m]))) > 1
+          and sum by (service) (rate(http_server_requests_seconds_count{uri!~"/actuator.*"}[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.service }}: 95% of requests take longer than 1s"
+          description: "Check the slow endpoints on the 'OrderSphere services' dashboard and their traces in Jaeger."
+
+      - alert: CircuitBreakerOpen
+        expr: resilience4j_circuitbreaker_state{state="open"} == 1
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Orders' circuit breaker to {{ $labels.name }} is open"
+          description: "Orders has stopped calling {{ $labels.name }} because its calls kept failing. Orders that need it are failing fast until it recovers."
+
+  - name: business
+    rules:
+      - alert: FailedCompensations
+        expr: ordersphere_compensations{status="FAILED"} > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $value }} refund(s) or stock release(s) have failed for good"
+          description: "A cancelled order may still hold a customer's money or stock. Retry them on the Web UI's Admin > Refunds & stock releases page."
+
+      - alert: UnshippedOrdersGaveUp
+        expr: ordersphere_orders_unshipped{state="gave_up"} > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $value }} paid order(s) have no shipment and retries have stopped"
+          description: "Customers have paid but nothing will ship. Retry them on the Web UI's Admin > Unshipped orders page."
+
+      - alert: OpenReconciliationFindings
+        expr: ordersphere_reconciliation_findings_open > 0
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value }} payment mismatch(es) with the provider have been open for an hour"
+          description: "Our payment records disagree with the provider's. Re-sync or resolve them on the Web UI's Admin > Payment reconciliation page."
+
+      - alert: PaymentFailuresHigh
+        expr: |
+          sum(increase(ordersphere_events_total{type="PaymentFailedEvent"}[15m]))
+            / (sum(increase(ordersphere_events_total{type="PaymentFailedEvent"}[15m]))
+               + sum(increase(ordersphere_events_total{type="PaymentCompletedEvent"}[15m]))) > 0.5
+          and (sum(increase(ordersphere_events_total{type="PaymentFailedEvent"}[15m]))
+               + sum(increase(ordersphere_events_total{type="PaymentCompletedEvent"}[15m]))) >= 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than half of the payments in the last 15 minutes failed"
+          description: "Failures include cancelled and expired checkouts. If it isn't customers backing out, check payment-service's logs and the payment provider."

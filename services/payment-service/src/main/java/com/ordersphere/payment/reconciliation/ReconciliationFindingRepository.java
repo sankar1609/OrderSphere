@@ -17,6 +17,8 @@ public interface ReconciliationFindingRepository
 
   List<ReconciliationFinding> findByStatus(ReconciliationFinding.Status status);
 
+  long countByStatus(ReconciliationFinding.Status status);
+
   boolean existsByTypeAndCheckoutSessionIdAndResolution(
       ReconciliationFinding.Type type,
       String checkoutSessionId,

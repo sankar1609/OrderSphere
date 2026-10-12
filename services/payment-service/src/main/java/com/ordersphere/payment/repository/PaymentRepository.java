@@ -24,6 +24,8 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
 
   List<Payment> findByStatus(PaymentStatus status);
 
+  long countByStatus(PaymentStatus status);
+
   /** Row lock so the webhook and the reconciliation sweep can't both settle one payment. */
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("select p from Payment p where p.id = :id")

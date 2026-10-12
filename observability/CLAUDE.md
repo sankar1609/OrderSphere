@@ -1,0 +1,16 @@
+# Logging and metrics stack - guidance for working in `observability/`
+
+- **Grafana:** `http://localhost:3000` (anonymous viewing; `admin`/`admin` to edit). Home is the **OrderSphere logs** dashboard: errors and warnings, volume per service and level, and a log panel filtered by `service`, `level`, `user`, `orderId` and `traceId`. *Explore* runs ad-hoc LogQL, e.g. `{service="ordersphere-orders", level="error"}` or `{service=~".+"} | orderId="42"`.
+- **Pipeline:** every application logs one JSON object per line (`LOG_FORMAT=json`, `common-logging`) → **Grafana Alloy** tails the containers (docker-compose: Docker socket, `observability/alloy/config.docker.alloy`; Kubernetes: pod logs via the API, `config.k8s.alloy`) → **Loki** (`:3100`, 72h retention, `observability/loki/loki.yaml`). Chosen over ELK: Elasticsearch alone needs more memory than this whole stack.
+- **Labels vs. metadata:** `service`, `level` (lowercased) and `container` are indexed labels; `traceId`, `spanId`, `user`, `orderId` and `paymentId` are structured metadata - filterable (`| orderId="42"`) without inflating the index. Non-JSON containers (postgres, rabbitmq, ...) are collected too, labelled by container.
+- **Logs ↔ traces:** a log line's `traceId` links to the trace in Jaeger, and a Jaeger trace links back to its log lines (`observability/grafana/provisioning/datasources/datasources.yaml`).
+- **What puts the order on a line:** `orderId` is set at each unit of work on an order - `OrderLogContext` in orders (order creation and cancel, payment events, the saga sweep, compensations, shipment retries), `PaymentLogContext` in payment-service (`orderId` + `paymentId`: initiation, refunds, webhooks, the sweep) - and by `DomainEventRelay` for every event about an order, so each service's state changes for one order can be found by its id.
+- **Single-node Loki:** the ring heartbeat timeouts in `loki.yaml` are set to a year on purpose. With the default 1m, a starved or sleeping machine makes the only ingester miss heartbeats, it is dropped from the ring and every push fails (`at least 1 live replicas required`) until Loki restarts. Don't use `0` - Loki 3.7 treats it as always timed out. Grafana 13 needs its 768m limit: below ~512m it thrashes and starves the Docker VM.
+- **Not yet:** metrics (Prometheus) and alerting.
+
+## Prometheus and dashboards
+
+- `prometheus/prometheus.yml` and `prometheus/alerts.yml` are mounted into the `prometheus` container; check rule changes with `docker run --rm --entrypoint /bin/promtool -v "$PWD/observability/prometheus:/etc/prometheus:ro" prom/prometheus:v3.13.4 check rules /etc/prometheus/alerts.yml`.
+- Prometheus can't read a secret from the environment: the container's start command writes `METRICS_SCRAPE_TOKEN` to `/prometheus/scrape-token`, which the scrape config's `credentials_file` points at (same under compose and k8s).
+- The Grafana dashboards are generated JSON; keep the `ordersphere` tag on each (the dashboards link to each other by it). Panels filter out `/actuator` requests so the scrapes don't count as traffic.
+- Every file here that k8s also needs has a copy under `k8s/base/observability/files/` - update both (CI diffs them).

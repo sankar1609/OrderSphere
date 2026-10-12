@@ -18,6 +18,13 @@
     <description>Asynchronous payment processing, payment methods, and refunds</description>
 
     <dependencies>
+        <!-- /actuator/prometheus for Prometheus to scrape (guarded by the metrics scrape token). -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
         <!-- Shared logback config: readable text by default, JSON lines with LOG_FORMAT=json. -->
         <dependency>
             <groupId>com.ordersphere</groupId>

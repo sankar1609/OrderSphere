@@ -67,6 +67,31 @@ services:
       - loki
     mem_limit: 256m
 
+  # Metrics: scrapes the gateway and the six services, evaluates the alert rules. UI on :9090.
+  prometheus:
+    image: prom/prometheus:v3.13.4
+    container_name: ordersphere-prometheus
+    environment:
+      METRICS_SCRAPE_TOKEN: ${METRICS_SCRAPE_TOKEN:-dev-metrics-scrape-token}
+    # Prometheus can't read a secret from the environment, so write the scrape token to the file
+    # its config points at before starting.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        printf '%s' "$$METRICS_SCRAPE_TOKEN" > /prometheus/scrape-token &&
+        exec /bin/prometheus
+        --config.file=/etc/prometheus/prometheus.yml
+        --storage.tsdb.path=/prometheus
+        --storage.tsdb.retention.time=3d
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    mem_limit: 768m
+
   grafana:
     image: grafana/grafana:13.2.3
     container_name: ordersphere-grafana
@@ -87,6 +112,7 @@ services:
     depends_on:
       - loki
       - jaeger
+      - prometheus
     # Grafana 13 thrashes (and starves the Docker VM) below ~512m.
     mem_limit: 768m
 
@@ -115,6 +141,8 @@ services:
     environment:
       # One JSON object per line (common-logging), collected into Loki by Alloy.
       LOG_FORMAT: json
+      # Shared secret Prometheus presents to /actuator/prometheus.
+      METRICS_SCRAPE_TOKEN: ${METRICS_SCRAPE_TOKEN:-dev-metrics-scrape-token}
       OTLP_TRACING_ENDPOINT: http://jaeger:4318/v1/traces
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://service-registry:8761/eureka
       REDIS_HOST: redis
@@ -141,6 +169,8 @@ services:
     environment:
       # One JSON object per line (common-logging), collected into Loki by Alloy.
       LOG_FORMAT: json
+      # Shared secret Prometheus presents to /actuator/prometheus.
+      METRICS_SCRAPE_TOKEN: ${METRICS_SCRAPE_TOKEN:-dev-metrics-scrape-token}
       OTLP_TRACING_ENDPOINT: http://jaeger:4318/v1/traces
       DB_HOST: postgres
       DB_NAME: auth_db
@@ -176,6 +206,8 @@ services:
     environment:
       # One JSON object per line (common-logging), collected into Loki by Alloy.
       LOG_FORMAT: json
+      # Shared secret Prometheus presents to /actuator/prometheus.
+      METRICS_SCRAPE_TOKEN: ${METRICS_SCRAPE_TOKEN:-dev-metrics-scrape-token}
       OTLP_TRACING_ENDPOINT: http://jaeger:4318/v1/traces
       DB_HOST: postgres
       DB_NAME: inventory_db
@@ -211,6 +243,8 @@ services:
     environment:
       # One JSON object per line (common-logging), collected into Loki by Alloy.
       LOG_FORMAT: json
+      # Shared secret Prometheus presents to /actuator/prometheus.
+      METRICS_SCRAPE_TOKEN: ${METRICS_SCRAPE_TOKEN:-dev-metrics-scrape-token}
       OTLP_TRACING_ENDPOINT: http://jaeger:4318/v1/traces
       DB_HOST: postgres
       DB_NAME: orders_db
@@ -247,6 +281,8 @@ services:
     environment:
       # One JSON object per line (common-logging), collected into Loki by Alloy.
       LOG_FORMAT: json
+      # Shared secret Prometheus presents to /actuator/prometheus.
+      METRICS_SCRAPE_TOKEN: ${METRICS_SCRAPE_TOKEN:-dev-metrics-scrape-token}
       OTLP_TRACING_ENDPOINT: http://jaeger:4318/v1/traces
       DB_HOST: postgres
       DB_NAME: payment_db
@@ -313,6 +349,8 @@ services:
     environment:
       # One JSON object per line (common-logging), collected into Loki by Alloy.
       LOG_FORMAT: json
+      # Shared secret Prometheus presents to /actuator/prometheus.
+      METRICS_SCRAPE_TOKEN: ${METRICS_SCRAPE_TOKEN:-dev-metrics-scrape-token}
       OTLP_TRACING_ENDPOINT: http://jaeger:4318/v1/traces
       DB_HOST: postgres
       DB_NAME: shipping_db
@@ -348,6 +386,8 @@ services:
     environment:
       # One JSON object per line (common-logging), collected into Loki by Alloy.
       LOG_FORMAT: json
+      # Shared secret Prometheus presents to /actuator/prometheus.
+      METRICS_SCRAPE_TOKEN: ${METRICS_SCRAPE_TOKEN:-dev-metrics-scrape-token}
       OTLP_TRACING_ENDPOINT: http://jaeger:4318/v1/traces
       DB_HOST: postgres
       DB_NAME: notification_db
@@ -373,3 +413,4 @@ services:
 volumes:
   postgres-data:
   loki-data:
+  prometheus-data:
