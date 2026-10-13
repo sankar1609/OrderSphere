@@ -27,6 +27,7 @@ Opens on `http://localhost:5173`. Log in with an existing account, or register a
 | `/notifications` | Notifications and channel preferences | any user |
 | `/manage-products` | Add and restock products | ADMIN, VENDOR |
 | `/admin/users`, `/admin/compensations`, `/admin/unshipped`, `/admin/reconciliation` | Admin tabs (`/admin` opens the first) | ADMIN |
+| `/audit` (`?orderId=&eventType=&actor=`) | The audit log: every recorded event, entry detail, Verify chain | ADMIN, AUDITOR |
 | `/` | Where the payment provider returns to; goes on to `/orders` | |
 | anything else | "Page not found" | |
 
@@ -40,7 +41,7 @@ Opening a page while logged out (or after the session expires) shows the login p
 
 ```bash
 npx playwright install chromium   # once
-npm run e2e                       # ~1 minute, 18 tests
+npm run e2e                       # ~1 minute, 21 tests
 npm run e2e:ui                    # Playwright's interactive runner
 ```
 
@@ -49,6 +50,7 @@ npm run e2e:ui                    # Playwright's interactive runner
 - `order-cancel.spec.js` — cancelling a paid order (refund notice) and an unpaid one; someone else's or a made-up order isn't shown.
 - `vendor.spec.js` — create a product, restock it, duplicate SKU rejected.
 - `admin.spec.js` — every admin tab at its own address across a refresh, a role change, a reconciliation run.
+- `audit.spec.js` — an auditor follows an order's trail (which service, which actor), opens an entry and verifies the chain; an admin reaches the trail from the order page; customers have neither the page nor the link.
 
 Each test registers its own users and products with unique names (`e2e/helpers.js`), so runs don't depend on existing data or on each other - but they do leave those users, products and orders behind in the development database. The admin is the bootstrapped development admin (`E2E_ADMIN_USERNAME` / `E2E_ADMIN_PASSWORD` to override). On a failure, `test-results/` has a screenshot and a trace (`npx playwright show-trace <trace.zip>`). Not run in CI - it needs the whole stack.
 
@@ -67,6 +69,7 @@ Each test registers its own users and products with unique names (`e2e/helpers.j
   - `Users.jsx` — every user (`GET /auth-service/auth/admin/users`) with a username filter and a role picker per row (`PATCH /auth-service/auth/admin/users/{id}/role`; that user's sessions end and the new role applies at their next login). Your own row is locked — the backend refuses a self role change with 409.
   - `Compensations.jsx` — refunds and stock releases the saga owes (`GET /ordersphere-orders/orders/admin/compensations?status=FAILED|PENDING|DONE`), with Retry on FAILED ones (`POST .../{id}/retry`).
   - `Unshipped.jsx` — paid orders with no shipment (`GET /ordersphere-orders/orders/admin/unshipped`), marked "retrying" or "gave up", with Retry now (`POST .../{orderId}/retry`).
+- `src/components/Audit.jsx` — ADMIN/AUDITOR only. The audit log from audit-service (`GET /audit-service/audit/entries`, filters mirrored in the address), an entry's recorded event and hashes (`GET .../entries/{seq}`) with a link to its trace in Jaeger (`VITE_JAEGER_URL`, default `http://localhost:16686`), the chain's status, and **Verify chain** (`POST .../verify`), which says whether any entry has been altered, removed or reordered - and which one.
 - `src/components/ProductsList.jsx` — calls `GET /inventory-service/inventory/products` with the bearer token; shows SKU, name, price, and stock levels.
 - `src/components/PlaceOrder.jsx` — builds an item list from the product catalog (out-of-stock products can't be picked, and a product can't be added beyond its available quantity minus what's already in the cart; if stock runs out before the order is placed, Inventory rejects the whole order and the page shows why) (showing each line's unit price and subtotal plus an estimated total) and calls `POST /ordersphere-orders/orders`. The estimate is display-only: the request carries no amount, and the backend calculates the total it charges from Inventory's prices. The response carries the order's `checkoutUrl`, and the browser is sent there (`window.location.assign`) to pay on the payment provider's page — in development the dummy payment gateway on `http://localhost:8087` (test card `4242 4242 4242 4242` succeeds, `4000 0000 0000 0002` is declined). Card details never pass through this app.
 - `src/App.jsx` — holds the access and refresh tokens (synced to `localStorage` on every change, read back on load; "Log out" also ends the session server-side via `POST /auth-service/auth/logout`) and declares the routes (see **Pages and addresses**). `RequireAuth` sends a logged-out visitor to `/login` and remembers the page they asked for; `RequireRole` sends a user without the role to My Orders; `Home` (`/`) turns the payment provider's return query (`?payment=success|cancelled&orderId=N`) into router state and moves on to `/orders`, so the query leaves the address bar. The login token survives the round trip to the payment page because it lives in `localStorage`. Also owns session-expiry handling: `api.js`'s fetch wrapper tags a non-2xx response's thrown `Error` with `error.status`, and each authenticated screen calls the `onUnauthorized` prop it's given when a call still comes back `401` after a token refresh — `App.jsx` clears the tokens, and the login page returns to the same address afterwards.

@@ -93,7 +93,7 @@
     {
       "id": 2,
       "type": "stat",
-      "title": "Services up /7",
+      "title": "Services up /8",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -130,7 +130,7 @@
               },
               {
                 "color": "green",
-                "value": 7
+                "value": 8
               }
             ]
           },
@@ -148,7 +148,7 @@
         "graphMode": "none",
         "textMode": "value"
       },
-      "description": "Scrape targets answering, out of 7"
+      "description": "Scrape targets answering, out of 8"
     },
     {
       "id": 3,
@@ -449,7 +449,7 @@
     {
       "id": 8,
       "type": "stat",
-      "title": "Low stock",
+      "title": "Audit chain",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -467,7 +467,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(ordersphere_products_low_stock) or vector(0)",
+          "expr": "min(ordersphere_audit_chain_valid)",
           "instant": true
         }
       ],
@@ -481,12 +481,29 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "blue",
+                "color": "red",
                 "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
               }
             ]
           },
-          "noValue": "0"
+          "noValue": "?",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "BROKEN"
+                },
+                "1": {
+                  "text": "OK"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -500,7 +517,7 @@
         "graphMode": "none",
         "textMode": "value"
       },
-      "description": "Products at or below their reorder threshold"
+      "description": "1 = the audit log verified intact at its last check; 0 = tampered or damaged (Audit page > Verify)"
     },
     {
       "id": 9,

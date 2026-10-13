@@ -14,6 +14,7 @@ COPY services/ordersphere-orders/pom.xml services/ordersphere-orders/pom.xml
 COPY services/payment-service/pom.xml services/payment-service/pom.xml
 COPY services/shipping-service/pom.xml services/shipping-service/pom.xml
 COPY services/notification-service/pom.xml services/notification-service/pom.xml
+COPY services/audit-service/pom.xml services/audit-service/pom.xml
 COPY services/dummy-payment-gateway/pom.xml services/dummy-payment-gateway/pom.xml
 COPY services/common-logging/src services/common-logging/src
 COPY services/dummy-payment-gateway/src services/dummy-payment-gateway/src

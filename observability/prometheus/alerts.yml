@@ -75,6 +75,15 @@ groups:
           summary: "{{ $value }} payment mismatch(es) with the provider have been open for an hour"
           description: "Our payment records disagree with the provider's. Re-sync or resolve them on the Web UI's Admin > Payment reconciliation page."
 
+      - alert: AuditChainBroken
+        expr: ordersphere_audit_chain_valid == 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The audit log has been tampered with or damaged"
+          description: "The last verification found the hash chain broken: an entry was altered, removed or reordered. POST /audit-service/audit/verify (or the Web UI's Audit page) says which entry; the chain-head anchors in the logs (\"AUDIT ANCHOR\") show what it should be."
+
       - alert: PaymentFailuresHigh
         expr: |
           sum(increase(ordersphere_events_total{type="PaymentFailedEvent"}[15m]))

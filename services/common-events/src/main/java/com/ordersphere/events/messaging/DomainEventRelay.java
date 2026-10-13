@@ -32,16 +32,36 @@ public class DomainEventRelay {
    */
   public static final String EVENTS_COUNTER = "ordersphere.events";
 
+  /** Message header: the service that published the event (its spring.application.name). */
+  public static final String HEADER_SOURCE_SERVICE = "x-source-service";
+
+  /**
+   * Message header: who the publishing service was acting for when it raised the event - the
+   * username of the request it was handling, or a service identity such as "orders-service" for a
+   * saga call. Absent when no request was in progress (scheduled jobs). Read by audit-service.
+   */
+  public static final String HEADER_ACTOR = "x-actor";
+
+  /** MDC key the JWT filter (common-security) puts the authenticated caller under. */
+  static final String MDC_USER = "user";
+
   private final RabbitTemplate rabbitTemplate;
   private final MeterRegistry meterRegistry;
+  private final String sourceService;
 
   public DomainEventRelay(RabbitTemplate rabbitTemplate) {
-    this(rabbitTemplate, new SimpleMeterRegistry());
+    this(rabbitTemplate, new SimpleMeterRegistry(), "unknown");
   }
 
   public DomainEventRelay(RabbitTemplate rabbitTemplate, MeterRegistry meterRegistry) {
+    this(rabbitTemplate, meterRegistry, "unknown");
+  }
+
+  public DomainEventRelay(
+      RabbitTemplate rabbitTemplate, MeterRegistry meterRegistry, String sourceService) {
     this.rabbitTemplate = rabbitTemplate;
     this.meterRegistry = meterRegistry;
+    this.sourceService = sourceService;
   }
 
   /**
@@ -73,8 +93,20 @@ public class DomainEventRelay {
       log.info("{} (eventId={})", event.getEventType(), event.getEventId());
     }
     String routingKey = RoutingKeys.forEventType(event.getEventType());
+    // Captured here, on the publishing thread: the post-processor may not run on it.
+    String actor = MDC.get(MDC_USER);
     try {
-      rabbitTemplate.convertAndSend(EventsAutoConfiguration.EVENTS_EXCHANGE, routingKey, event);
+      rabbitTemplate.convertAndSend(
+          EventsAutoConfiguration.EVENTS_EXCHANGE,
+          routingKey,
+          event,
+          message -> {
+            message.getMessageProperties().setHeader(HEADER_SOURCE_SERVICE, sourceService);
+            if (actor != null) {
+              message.getMessageProperties().setHeader(HEADER_ACTOR, actor);
+            }
+            return message;
+          });
     } catch (Exception ex) {
       log.warn(
           "Failed to relay {} (eventId={}) to the event exchange: {}",

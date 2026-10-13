@@ -9,8 +9,9 @@ import ManageProducts from "./components/ManageProducts";
 import OrderDetail from "./components/OrderDetail";
 import Notifications from "./components/Notifications";
 import Admin from "./components/Admin";
+import Audit from "./components/Audit";
 import { configureAuth, logout } from "./api";
-import { canManageProducts, isAdmin, roleOf, usernameOf } from "./auth";
+import { canAudit, canManageProducts, isAdmin, roleOf, usernameOf } from "./auth";
 import { usePageTitle } from "./usePageTitle";
 
 function readStored(key) {
@@ -80,7 +81,7 @@ const navLinkStyle = ({ isActive }) => ({
   color: isActive ? "#000" : "#0645ad",
 });
 
-function Layout({ showManageProducts, showAdmin, onLogout }) {
+function Layout({ showManageProducts, showAdmin, showAudit, onLogout }) {
   return (
     <div style={{ maxWidth: 720, margin: "40px auto", fontFamily: "sans-serif" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -110,6 +111,11 @@ function Layout({ showManageProducts, showAdmin, onLogout }) {
         {showAdmin && (
           <NavLink to="/admin" style={navLinkStyle}>
             Admin
+          </NavLink>
+        )}
+        {showAudit && (
+          <NavLink to="/audit" style={navLinkStyle}>
+            Audit
           </NavLink>
         )}
       </nav>
@@ -176,6 +182,7 @@ export default function App() {
   const role = token ? roleOf(token) : null;
   const showManageProducts = canManageProducts(role);
   const showAdmin = isAdmin(role);
+  const showAudit = canAudit(role);
   const session = { token, onUnauthorized: handleUnauthorized };
 
   return (
@@ -195,6 +202,7 @@ export default function App() {
             <Layout
               showManageProducts={showManageProducts}
               showAdmin={showAdmin}
+              showAudit={showAudit}
               onLogout={handleLogout}
             />
           }
@@ -221,6 +229,9 @@ export default function App() {
               path="/admin/*"
               element={<Admin {...session} currentUsername={usernameOf(token)} />}
             />
+          </Route>
+          <Route element={<RequireRole allowed={showAudit} />}>
+            <Route path="/audit" element={<Audit {...session} />} />
           </Route>
           <Route path="*" element={<NotFound />} />
         </Route>

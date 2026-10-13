@@ -255,3 +255,26 @@ export function resolveFinding(token, id, note) {
     body: { note },
   });
 }
+
+/** Audit log (AUDITOR/ADMIN). Filters are optional: {orderId, eventType, actor}. */
+export function searchAudit(token, filters = {}, page = 0, size = 50) {
+  const params = new URLSearchParams({ page: String(page), size: String(size) });
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== null && String(value).trim() !== "") {
+      params.set(key, String(value).trim());
+    }
+  }
+  return request(`/audit-service/audit/entries?${params}`, { token });
+}
+
+export function getAuditEntry(token, seq) {
+  return request(`/audit-service/audit/entries/${seq}`, { token });
+}
+
+export function getAuditStatus(token) {
+  return request("/audit-service/audit/status", { token });
+}
+
+export function verifyAuditChain(token) {
+  return request("/audit-service/audit/verify", { method: "POST", token });
+}

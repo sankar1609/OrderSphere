@@ -75,6 +75,8 @@ springdoc:
         url: /shipping-service/v3/api-docs
       - name: notifications
         url: /notification-service/v3/api-docs
+      - name: audit
+        url: /audit-service/v3/api-docs
 
 management:
   tracing:

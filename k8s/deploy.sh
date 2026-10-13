@@ -26,15 +26,15 @@ done
 echo "Waiting for the gateway to route to every service..."
 for attempt in $(seq 1 60); do
   routed=0
-  for service in auth-service ordersphere-orders inventory-service payment-service shipping-service notification-service; do
+  for service in auth-service ordersphere-orders inventory-service payment-service shipping-service notification-service audit-service; do
     code=$(curl -s -m 3 -o /dev/null -w '%{http_code}' "http://localhost:8080/$service/actuator/health/readiness" || true)
     if [[ "$code" == "200" ]]; then routed=$((routed + 1)); fi
   done
-  if [[ "$routed" == "6" ]]; then break; fi
+  if [[ "$routed" == "7" ]]; then break; fi
   sleep 5
 done
-if [[ "$routed" != "6" ]]; then
-  echo "Only $routed of 6 services are reachable through the gateway on localhost:8080 - check 'kubectl -n $NAMESPACE get pods' and the gateway's logs." >&2
+if [[ "$routed" != "7" ]]; then
+  echo "Only $routed of 7 services are reachable through the gateway on localhost:8080 - check 'kubectl -n $NAMESPACE get pods' and the gateway's logs." >&2
   exit 1
 fi
 

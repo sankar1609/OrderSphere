@@ -9,4 +9,5 @@ resources:
   - payment-service.yaml
   - shipping-service.yaml
   - notification-service.yaml
+  - audit-service.yaml
   - dummy-payment-gateway.yaml

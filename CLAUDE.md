@@ -11,7 +11,7 @@
 ### Architectural Principles
 
 - **Orchestrated Saga + Events**: the order saga is orchestrated over synchronous REST with compensation; domain events on RabbitMQ drive everything that doesn't block the request (notifications, shipment cancellation, payment progress)
-- **Blockchain for Audit (planned)**: Immutable audit trails using Hyperledger Fabric (trust layer, not transaction layer)
+- **Audit as a trust layer**: every domain event goes into audit-service's tamper-evident hash chain; anchoring that chain in a shared ledger (Hyperledger Fabric) is planned - a trust layer, not the transaction layer
 - **Cloud-Native**: Containerized services, run with Docker Compose or on Kubernetes (`k8s/`, Kustomize)
 
 ---
@@ -170,6 +170,22 @@
 
 ---
 
+### 7a. **Audit Service** (`audit-service`)
+- **Port:** 8088
+- **Purpose:** Tamper-evident record of everything that happened - the audit trail the platform's "trust and auditability" goal calls for
+- **Responsibilities:**
+  - Records **every** domain event (queue `audit-service.events` bound to `#`; the raw message, so new event types are recorded without touching this service) as an entry in an append-only log: event, publishing service (`x-source-service` header), who it was acting for (`x-actor`: the username, or `orders-service` for saga calls, absent for scheduled jobs), order id, trace id, the payload exactly as published
+  - **Hash chain:** each entry's `hash` = SHA-256 over the previous entry's hash and its own content (`ChainHasher`, length-prefixed fields), so an altered, removed or reordered entry no longer verifies. Appends serialize on the one-row `audit_chain_head` lock; a redelivered event (same `event_id`) is recorded once
+  - **Verification** (`AuditVerifier`; every `AUDIT_VERIFY_INTERVAL`, default 5 min, at startup, and on demand) walks the chain and reports the first broken `seq` and why
+  - **Anchoring** (`AuditAnchor`, every `AUDIT_ANCHOR_INTERVAL`): the chain head is published outside the database and remembered in `audit_anchors`, so a tail that was cut off and rebuilt still fails verification. Today the anchor is the application log (`AUDIT ANCHOR seq=.. hash=..`, in Loki); **this interface is where a shared ledger (Hyperledger Fabric) plugs in** once another organization needs to trust the records
+  - Read-only API for `AUDITOR` and `ADMIN` (everyone else 403): `GET /audit/entries?orderId=&eventType=&actor=&username=&from=&to=&page=&size=`, `GET /audit/entries/{seq}` (payload + hashes), `GET /audit/orders/{orderId}` (an order's timeline), `POST /audit/verify`, `GET /audit/status`. There is no endpoint that writes, edits or deletes an entry
+- **Database:** PostgreSQL (audit_db). `audit_entries` and `audit_anchors` reject UPDATE/DELETE/TRUNCATE by trigger; someone who disables the trigger is what the chain then exposes
+- **Metrics / alert:** `ordersphere_audit_entries`, `ordersphere_audit_chain_valid` → alert `AuditChainBroken` (critical)
+- **Events Produced:** None
+- **Events Consumed:** all of them
+
+---
+
 ### 8. **Service Registry** (`service-registry`)
 - **Port:** 8761
 - **Purpose:** Service discovery and registration center
@@ -196,7 +212,7 @@
 - Event definitions (POJOs)
 - Event serialization/deserialization
 - Base event classes
-- Event publisher utilities; `DomainEventRelay` logs one INFO line per relayed event, tagged with the order id for events about an order (`OrderScoped`)
+- Event publisher utilities; `DomainEventRelay` logs one INFO line per relayed event, tagged with the order id for events about an order (`OrderScoped`), and stamps each message with `x-source-service` and `x-actor` headers (read by audit-service)
 
 #### `common-logging`
 - The shared `logback-spring.xml` every application picks up: `LOG_FORMAT=text` (default - Spring Boot's readable console pattern, for local runs and tests) or `json` (one JSON object per line via logstash-logback-encoder, set in docker-compose and k8s)
@@ -210,7 +226,7 @@
 The order saga is **orchestrated** by the Orders service over synchronous, load-balanced REST (resolved through Eureka, wrapped in Resilience4j circuit breakers). Domain events are published to RabbitMQ for everything that doesn't need to block the request.
 
 - **Broker:** RabbitMQ, topic exchange `ordersphere.events` (routing keys like `payment.completed`), dead-letter exchange `ordersphere.events.dlx`
-- **Queues:** `notification-service.events`, `ordersphere-orders.payment-events`, `shipping-service.order-events` - each with a `.dlq`
+- **Queues:** `notification-service.events`, `ordersphere-orders.payment-events`, `shipping-service.order-events`, `audit-service.events` (everything, `#`) - each with a `.dlq`
 - **Publishing:** services raise Spring application events; `DomainEventRelay` (common-events) forwards them to the exchange
 
 ```
@@ -236,7 +252,7 @@ Order Placement Flow:
 
 ## 🗄️ Databases
 
-- One PostgreSQL instance, one database per service plus `gateway_db` for the dummy payment provider, created by `docker/postgres-init` on a fresh volume. On an existing volume, create `gateway_db` once by hand: `docker exec ordersphere-postgres psql -U ordersphere -d postgres -c "CREATE DATABASE gateway_db;"`
+- One PostgreSQL instance, one database per service (including `audit_db`) plus `gateway_db` for the dummy payment provider, created by `docker/postgres-init` on a fresh volume. On an existing volume, create a newly added one once by hand, e.g. `docker exec ordersphere-postgres psql -U ordersphere -d postgres -c "CREATE DATABASE audit_db;"`
 - Flyway migrations per service (`src/main/resources/db/migration`); no cross-service foreign keys
 
 ---
@@ -244,7 +260,7 @@ Order Placement Flow:
 ## 🚀 Deployment Architecture
 
 ### Docker Compose (Development)
-- `docker-compose.yml` - PostgreSQL, RabbitMQ (management UI on `:15672`, `ordersphere`/`ordersphere`), Redis (gateway rate limits), Jaeger (traces, UI on `:16686`), Prometheus (metrics and alert rules, UI on `:9090`), Loki + Alloy + Grafana (logs and dashboards, UI on `:3000`), Eureka, the gateway, all six services and the dummy payment gateway (`:8087`)
+- `docker-compose.yml` - PostgreSQL, RabbitMQ (management UI on `:15672`, `ordersphere`/`ordersphere`), Redis (gateway rate limits), Jaeger (traces, UI on `:16686`), Prometheus (metrics and alert rules, UI on `:9090`), Loki + Alloy + Grafana (logs and dashboards, UI on `:3000`), Eureka, the gateway, all seven services and the dummy payment gateway (`:8087`)
 - Each service has its own `Dockerfile` under `services/<name>/`; rebuild one with `docker compose up -d --build <service>`
 - Images are tagged `ordersphere/<service>:local`, the same tags the Kubernetes manifests use
 - The Dockerfiles build with a BuildKit cache mount for `/root/.m2` shared by every service image, so Maven dependencies are downloaded once rather than per image or per `pom.xml` change
@@ -265,7 +281,7 @@ Order Placement Flow:
 - **Password Security:** Bcrypt hashing with salt
 - **Token Expiration & Revocation:** 15-minute access tokens plus rotating, revocable refresh tokens. Logout/role changes stop a session from refreshing; an access token already issued stays valid until it expires (at most 15 minutes)
 - **Service-to-Service Auth:** the orders saga calls every downstream service with its own `SERVICE`-role token, never the customer's. `ServiceTokenProvider` obtains it from auth-service via client credentials (`POST /auth/token`) and caches it until shortly before expiry
-- **Audit Trail (Planned):** Blockchain-based immutable audit logs via Hyperledger Fabric
+- **Audit Trail:** audit-service's hash-chained, append-only log of every domain event, readable by `AUDITOR`/`ADMIN` only (the `AUDITOR` role exists for this; assign it via the admin role change). Anchoring it in a ledger shared with other organizations (Hyperledger Fabric) is the planned next step
 
 ---
 
@@ -306,10 +322,10 @@ Order Placement Flow:
 ## 📈 Metrics & Alerting (Prometheus + Grafana)
 
 - **Where to look:** Grafana `http://localhost:3000` → **OrderSphere overview** (firing alerts, orders/payments per minute, backlog tiles, request rate / errors / p95 per service) and **OrderSphere services** (one service: endpoints, JVM, DB pool, RabbitMQ, circuit breakers). Prometheus itself: `http://localhost:9090` (`/targets`, `/alerts`).
-- **Scraping:** Prometheus scrapes `/actuator/prometheus` on the gateway and the six services every 15s (`observability/prometheus/prometheus.yml`; same target names under compose and k8s). Not scraped: the service registry and the dummy payment gateway.
+- **Scraping:** Prometheus scrapes `/actuator/prometheus` on the gateway and the seven services every 15s (`observability/prometheus/prometheus.yml`; same target names under compose and k8s). Not scraped: the service registry and the dummy payment gateway.
 - **The endpoint is guarded by a scrape token, not a JWT:** `Authorization: Bearer <METRICS_SCRAPE_TOKEN>` (dev default `dev-metrics-scrape-token`; k8s Secret). The gateway routes `/{service-id}/**` to every service and its own port is public, so an open metrics endpoint would be public. Enforced by `MetricsScrapeTokenFilter` in common-security (services; their `SecurityConfig` permits the path, the filter checks) and by the gateway's own `WebFilter`. No token configured → the endpoint answers nobody. A user or admin JWT gets 401.
 - **Business metrics:** `ordersphere_events_total{type}` - `DomainEventRelay` counts every relayed domain event, so the rates of orders placed/confirmed/cancelled, payments, refunds, shipments and notifications need no counters in the services. Backlog gauges read from the database at scrape time (`OrderMetrics`, `PaymentMetrics`, `InventoryMetrics`; NaN rather than a failed scrape if the DB is down): `ordersphere_orders{status}`, `ordersphere_compensations{status}`, `ordersphere_orders_unshipped{state=retrying|gave_up}`, `ordersphere_payments_pending`, `ordersphere_reconciliation_findings_open`, `ordersphere_products_low_stock`. Every metric carries `application` and Prometheus adds `service`.
-- **Alert rules** (`observability/prometheus/alerts.yml`): `ServiceDown`, `HighErrorRate`, `SlowResponses`, `CircuitBreakerOpen`, `FailedCompensations`, `UnshippedOrdersGaveUp`, `OpenReconciliationFindings`, `PaymentFailuresHigh`. Evaluated by Prometheus and shown in Grafana and on `:9090/alerts` - **nothing is sent anywhere** (no Alertmanager).
+- **Alert rules** (`observability/prometheus/alerts.yml`): `ServiceDown`, `HighErrorRate`, `SlowResponses`, `CircuitBreakerOpen`, `FailedCompensations`, `UnshippedOrdersGaveUp`, `OpenReconciliationFindings`, `AuditChainBroken`, `PaymentFailuresHigh`. Evaluated by Prometheus and shown in Grafana and on `:9090/alerts` - **nothing is sent anywhere** (no Alertmanager).
 - **In tests** metrics export is off unless the test class has `@AutoConfigureObservability` (Spring Boot's default).
 - **Not yet:** alert delivery (Alertmanager / notifications), metrics for the registry and the dummy gateway.
 
@@ -320,7 +336,7 @@ Order Placement Flow:
 - **Formatting:** Spotless (google-java-format) runs `check` in the `verify` phase - fix with `mvn spotless:apply`
 - **End-to-End Tests:** Postman collections run against the docker-compose stack with newman:
   - `postman/full-order-flow.postman_collection.json` - happy path, payment decline, cancellation with refund, negative checks
-  - `postman/feature-coverage.postman_collection.json` - auth/RBAC, inventory, payments, returns, notifications, Eureka, RabbitMQ, circuit breakers, API docs, centralized logs (an order's lines found in Loki by trace id and order id), metrics (scrape-token guard, Prometheus targets, business metrics, alert rules)
+  - `postman/feature-coverage.postman_collection.json` - auth/RBAC, inventory, payments, returns, notifications, Eureka, RabbitMQ, circuit breakers, API docs, centralized logs (an order's lines found in Loki by trace id and order id), metrics (scrape-token guard, Prometheus targets, business metrics, alert rules), audit log (RBAC, an order's trail across services with actors, chain verification)
   - `postman/api-reference.postman_collection.json` - one example request per endpoint (no assertions)
 - **UI End-to-End Tests:** Playwright in `web-ui/e2e` against the same running stack (`cd web-ui && npm run e2e`); not part of CI
 - **CI:** GitHub Actions (`.github/workflows/ci.yml`) runs `mvn verify`, the Web UI build and a Kubernetes manifest check (kustomize render + `kubeconform -strict`) on pushes and PRs to `master`/`develop`
@@ -355,7 +371,7 @@ The system uses the Saga pattern to maintain consistency across distributed serv
 ## 📚 Additional Components
 
 ### Web UI (`web-ui/`)
-- React 18 + Vite + React Router; customer, vendor and admin screens, one address per page; Playwright end-to-end tests (`npm run e2e`, local only). Details load from `web-ui/CLAUDE.md` when working there; see also `web-ui/README.md`
+- React 18 + Vite + React Router; customer, vendor, admin and auditor screens, one address per page; Playwright end-to-end tests (`npm run e2e`, local only). Details load from `web-ui/CLAUDE.md` when working there; see also `web-ui/README.md`
 - **Not yet:** UI tests in CI, component-level tests
 
 ---
@@ -410,7 +426,8 @@ mvn verify -pl services/shipping-service -am
 - [x] API documentation: OpenAPI specs per service, one Swagger UI at the gateway
 - [x] Distributed tracing (Micrometer Tracing + OpenTelemetry, Jaeger)
 - [x] Kubernetes manifests (Kustomize, verified on Docker Desktop Kubernetes)
-- [ ] Add Hyperledger Fabric Ledger Service
+- [x] Audit trail: audit-service records every domain event in a hash-chained, append-only log (AUDITOR/ADMIN API and Web UI page, verification, alert)
+- [ ] Anchor the audit chain in a shared ledger (Hyperledger Fabric) when a second organization needs to trust it - implement `AuditAnchor`
 - [ ] Implement CQRS for analytics/reporting
 - [x] Centralized logging (Loki + Alloy + Grafana instead of ELK; JSON logs linked to traces)
 - [x] Metrics and alerting (Prometheus scraping every service with a scrape token, business metrics, alert rules, Grafana dashboards)

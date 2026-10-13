@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router";
 import { cancelOrder, getOrder, getTracking, listShipmentsForOrder, requestReturn } from "../api";
 import { cellStyle } from "../styles";
+import { canAudit, roleOf } from "../auth";
 import { usePageTitle } from "../usePageTitle";
 import { formatMoney } from "../format";
 
@@ -179,6 +180,11 @@ export default function OrderDetail({ token, onUnauthorized }) {
     <div>
       {backLink}
       <h2>Order #{order.id}</h2>
+      {canAudit(roleOf(token)) && (
+        <p>
+          <Link to={`/audit?orderId=${order.id}`}>View audit trail</Link>
+        </p>
+      )}
 
       <p>
         <strong>Status:</strong> {order.status}
