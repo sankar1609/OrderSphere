@@ -64,6 +64,14 @@ What makes it tamper-evident is the chain: each entry stores the SHA-256 of the 
 
 A chain inside one database has one weakness: whoever controls the database could rewrite all of it consistently. So the head is periodically *anchored* - published through the `AuditAnchor` interface and remembered - and verification checks the chain still passes through every anchor. Today the anchor is the application log (collected in Loki, a separate store). This interface is the place a ledger shared with other organizations (Hyperledger Fabric) plugs in: that step only pays for itself once someone outside the operator has to trust the records, and it then needs no change to the rest of the service. Verification runs on a schedule and on demand; a break raises the `AuditChainBroken` alert. The API is read-only and limited to `AUDITOR` and `ADMIN`.
 
+### Catalog cache: in-memory copies, one version token in Redis
+
+The catalog reads (`GET /inventory/products`, `/{sku}`) are the most-called endpoints and used to read every product from Postgres each time. `CatalogCache` now keeps the response - the ready-made JSON - in each inventory-service instance's memory. Redis holds a single small value, the catalog's version token. A read fetches the token and serves its copy if the copy carries the same one; a JPA entity listener on `Product` writes a new token after any transaction that changed a product commits, which makes every instance's copy stale at once. So create, restock, reserve, release and reservation expiry all invalidate without each remembering to, and a rolled-back change invalidates nothing.
+
+Three details matter. A copy is stamped with the token read *before* the database was read, so a copy loaded while a change was committing is never served as current. Only one thread reloads after a change; the rest wait for its result. And the cache fails open: with Redis unreachable, reads go to the database, a token that couldn't be written is written when Redis answers again, and copies expire after 30 seconds regardless. The cache only speeds reads up - a reservation still checks stock in the database under a row lock, so a stale number can't oversell.
+
+The JSON itself is deliberately not stored in Redis: that would move 42 KB over one Redis connection on every read, where the token is a few bytes. Under the load test, inventory-service with the cache on serves about 2.4 times the catalog reads (about 1.5 times measured through the gateway, which then becomes the limit). Numbers and method: `loadtest/README.md`.
+
 ### Events as the async layer
 
 Every state change Orders, Payment, or Shipping makes is also published locally as a Spring `ApplicationEvent` and relayed onto a RabbitMQ topic exchange by a shared `DomainEventRelay`. Three things consume off that bus today: Notification service, which reacts to order, payment, and shipment events to trigger customer messages; Orders itself, listening for `PaymentCompletedEvent`/`PaymentFailedEvent` as a low-latency shortcut around its own polling sweep job; and Shipping, which halts an in-flight shipment when it hears `OrderCancelledEvent`. Inventory and Payment are not message consumers — every service publishes into the same exchange (see §4), but 9 of the 18 event types have a consumer that acts on them; audit-service additionally records all 18.
@@ -88,8 +96,9 @@ flowchart TB
     ship --> pg
     notif --> pg
 
-    redis[("Redis\nrate-limit buckets")]
+    redis[("Redis\nrate-limit buckets,\ncatalog version")]
     gw --> redis
+    inv --> redis
     client -. hosted checkout .-> dpg["dummy-payment-gateway :8087"]
     pay -- merchant API --> dpg
     dpg -- signed webhook --> pay
@@ -230,6 +239,8 @@ What every service is actually built on, confirmed against each module's `pom.xm
 | Resilience4j (Spring Cloud Circuit Breaker) | Per-dependency circuit breakers on Orders' inventory/payment/shipping clients |
 | Spring Boot Actuator | Health, liveness and readiness probes on every application; circuit-breaker endpoints on Orders |
 | Spring Data Redis (reactive) | Gateway rate-limit token buckets |
+| Spring Data Redis (Lettuce) | inventory-service: the catalog cache's version token |
+| k6 | Load test of the catalog (`loadtest/`), run from its Docker image |
 | Spring Data JPA | Persistence layer, every business service |
 | PostgreSQL 16 | System of record, one schema per service |
 | Flyway | Schema migrations |
@@ -285,7 +296,7 @@ Every module carries its own test suite; `common-events` is the most heavily cov
 | `notification-service` | 7 |
 | `auth-service` | 5 |
 | `common-security` | 5 |
-| `inventory-service` | 5 |
+| `inventory-service` | 7 |
 | `payment-service` | 5 |
 | `shipping-service` | 5 |
 | `ordersphere-gateway` | 4 |
@@ -293,6 +304,8 @@ Every module carries its own test suite; `common-events` is the most heavily cov
 | `service-registry` | 1 |
 
 Integration coverage runs against real dependencies via Testcontainers (Postgres and RabbitMQ), rather than mocking the database or broker — the suites in `ordersphere-orders` and `common-events` in particular exercise actual message publish/consume round-trips. Every `@SpringBootTest`-based integration test class carries `@DirtiesContext(classMode = AFTER_CLASS)`: without it, Testcontainers tears down the Postgres/RabbitMQ containers right after the test class finishes, but the cached Spring context (and its live `@Scheduled` jobs and AMQP listeners) can outlive them until the JVM exits — the mismatch shows up as retry-spam against dead containers and, eventually, Surefire force-killing the fork after a 30s hang.
+
+A k6 load test (`loadtest/run.sh`, local only) reads the catalog with the cache off and on while stock keeps changing, and fails if any read after a restock is stale; see `loadtest/README.md`.
 
 End to end, three Postman collections run against a live stack with newman - `full-order-flow` (happy path, decline, cancellation with refund, negative checks), `feature-coverage` (auth/RBAC, inventory, payments and reconciliation, returns, notifications, Eureka, RabbitMQ, circuit breakers, an order's lines found in Loki by trace and order id) and `api-reference` (one example per endpoint). The first two pass against both the Compose stack and the Kubernetes deployment. The Web UI has its own end-to-end suite: Playwright (`web-ui/e2e`, 18 tests) drives the real app in Chromium against the same running stack - routing and guards, order → hosted checkout → confirmed → delivered → return, declined and cancelled payments, vendor and admin screens - with each test creating its own users and products. CI (GitHub Actions) runs `mvn verify`, the Web UI build and a Kubernetes manifest check on every push and PR to `master`/`develop`; the Postman and Playwright suites need the full stack and are run locally.
 
@@ -321,4 +334,5 @@ What's shipped versus what's still ahead, per the project's own tracked roadmap.
 - [x] Centralized logging (Loki + Alloy + Grafana; JSON logs linked to traces)
 - [x] Metrics and alerting (Prometheus, business metrics, alert rules, Grafana dashboards)
 - [ ] Alert delivery (Alertmanager / notifications)
-- [ ] Caching layer (Redis)
+- [x] Catalog caching (in-memory copies invalidated through a Redis version token) and a k6 load test
+- [ ] Performance: other hot paths (order list, catalog pagination)

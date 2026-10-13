@@ -35,8 +35,12 @@ services:
   jaeger:
     image: jaegertracing/all-in-one:1.57
     container_name: ordersphere-jaeger
+    mem_limit: 768m
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
+      # In-memory storage keeps every trace forever unless capped. With every request traced, a
+      # load test fills this in seconds - 5,000 traces fit comfortably in the limit below.
+      MEMORY_MAX_TRACES: "5000"
     ports:
       - "16686:16686"
       - "4318:4318"
@@ -123,9 +127,13 @@ services:
       context: .
       dockerfile: services/service-registry/Dockerfile
     container_name: ordersphere-service-registry
+    # Bounded like the Kubernetes pods: an unbounded JVM grows its heap to a quarter of the
+    # Docker VM, and ten of them starve it (the load test got inventory-service OOM-killed).
+    mem_limit: 448m
     ports:
       - "8761:8761"
     environment:
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=60"
       # One JSON object per line (common-logging), collected into Loki by Alloy.
       LOG_FORMAT: json
 
@@ -136,9 +144,11 @@ services:
       context: .
       dockerfile: services/ordersphere-gateway/Dockerfile
     container_name: ordersphere-gateway
+    mem_limit: 640m
     ports:
       - "8080:8080"
     environment:
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=60"
       # One JSON object per line (common-logging), collected into Loki by Alloy.
       LOG_FORMAT: json
       # Shared secret Prometheus presents to /actuator/prometheus.
@@ -146,6 +156,9 @@ services:
       OTLP_TRACING_ENDPOINT: http://jaeger:4318/v1/traces
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://service-registry:8761/eureka
       REDIS_HOST: redis
+      # Per-client-IP limits (defaults 50/s burst 100). The load test raises them for its run.
+      GATEWAY_RATE_LIMIT_PER_SECOND: ${GATEWAY_RATE_LIMIT_PER_SECOND:-50}
+      GATEWAY_RATE_LIMIT_BURST: ${GATEWAY_RATE_LIMIT_BURST:-100}
     depends_on:
       - service-registry
       - redis
@@ -163,6 +176,7 @@ services:
       context: .
       dockerfile: services/auth-service/Dockerfile
     container_name: ordersphere-auth-service
+    mem_limit: 640m
     ports:
       - "8081:8081"
       - "5005:5005"
@@ -181,7 +195,7 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USERNAME: ordersphere
       RABBITMQ_PASSWORD: ordersphere
-      JAVA_TOOL_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005"
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=60 -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005"
     depends_on:
       - postgres
       - service-registry
@@ -200,6 +214,7 @@ services:
       context: .
       dockerfile: services/inventory-service/Dockerfile
     container_name: ordersphere-inventory-service
+    mem_limit: 640m
     ports:
       - "8083:8083"
       - "5006:5006"
@@ -211,6 +226,9 @@ services:
       OTLP_TRACING_ENDPOINT: http://jaeger:4318/v1/traces
       DB_HOST: postgres
       DB_NAME: inventory_db
+      # Catalog cache (see CatalogCache). CATALOG_CACHE_ENABLED=false reads the database every time.
+      REDIS_HOST: redis
+      CATALOG_CACHE_ENABLED: ${CATALOG_CACHE_ENABLED:-true}
       DB_USERNAME: ordersphere
       DB_PASSWORD: ordersphere
       JWT_JWKS_URI: http://auth-service:8081/auth/.well-known/jwks.json
@@ -218,8 +236,9 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USERNAME: ordersphere
       RABBITMQ_PASSWORD: ordersphere
-      JAVA_TOOL_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5006"
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=60 -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5006"
     depends_on:
+      - redis
       - postgres
       - service-registry
       - rabbitmq
@@ -237,6 +256,7 @@ services:
       context: .
       dockerfile: services/ordersphere-orders/Dockerfile
     container_name: ordersphere-orders
+    mem_limit: 640m
     ports:
       - "8082:8082"
       - "5007:5007"
@@ -256,7 +276,7 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USERNAME: ordersphere
       RABBITMQ_PASSWORD: ordersphere
-      JAVA_TOOL_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5007"
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=60 -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5007"
     depends_on:
       - postgres
       - service-registry
@@ -275,6 +295,7 @@ services:
       context: .
       dockerfile: services/payment-service/Dockerfile
     container_name: ordersphere-payment-service
+    mem_limit: 640m
     ports:
       - "8084:8084"
       - "5008:5008"
@@ -298,7 +319,7 @@ services:
       PAYMENT_GATEWAY_WEBHOOK_SECRET: ${PAYMENT_GATEWAY_WEBHOOK_SECRET:-dpg_test_webhook_secret}
       PAYMENT_WEBHOOK_URL: http://payment-service:8084/payments/webhooks/gateway
       PAYMENT_RETURN_URL: ${WEB_UI_URL:-http://localhost:5173/}
-      JAVA_TOOL_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5008"
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=60 -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5008"
     depends_on:
       - postgres
       - service-registry
@@ -322,9 +343,11 @@ services:
       context: .
       dockerfile: services/dummy-payment-gateway/Dockerfile
     container_name: ordersphere-dummy-payment-gateway
+    mem_limit: 448m
     ports:
       - "8087:8087"
     environment:
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=60"
       # One JSON object per line (common-logging), collected into Loki by Alloy.
       LOG_FORMAT: json
       GATEWAY_PUBLIC_URL: http://localhost:8087
@@ -343,6 +366,7 @@ services:
       context: .
       dockerfile: services/shipping-service/Dockerfile
     container_name: ordersphere-shipping-service
+    mem_limit: 640m
     ports:
       - "8085:8085"
       - "5009:5009"
@@ -361,7 +385,7 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USERNAME: ordersphere
       RABBITMQ_PASSWORD: ordersphere
-      JAVA_TOOL_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5009"
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=60 -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5009"
     depends_on:
       - postgres
       - service-registry
@@ -380,6 +404,7 @@ services:
       context: .
       dockerfile: services/notification-service/Dockerfile
     container_name: ordersphere-notification-service
+    mem_limit: 640m
     ports:
       - "8086:8086"
       - "5010:5010"
@@ -398,7 +423,7 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USERNAME: ordersphere
       RABBITMQ_PASSWORD: ordersphere
-      JAVA_TOOL_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5010"
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=60 -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5010"
     depends_on:
       - postgres
       - service-registry
@@ -418,6 +443,7 @@ services:
       context: .
       dockerfile: services/audit-service/Dockerfile
     container_name: ordersphere-audit-service
+    mem_limit: 640m
     ports:
       - "8088:8088"
       - "5011:5011"
@@ -436,7 +462,7 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USERNAME: ordersphere
       RABBITMQ_PASSWORD: ordersphere
-      JAVA_TOOL_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5011"
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=60 -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5011"
     depends_on:
       - postgres
       - service-registry

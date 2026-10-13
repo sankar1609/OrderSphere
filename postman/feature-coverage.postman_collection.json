@@ -2360,6 +2360,43 @@
           ]
         },
         {
+          "name": "List Products Again (served from the catalog cache)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/products",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "inventory",
+                "products"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"Catalog shows 10 on hand before the restock\", function () {",
+                  "    var p = pm.response.json().filter(function (x) { return x.sku === pm.collectionVariables.get('sku'); })[0];",
+                  "    pm.expect(p.quantityOnHand).to.eql(10);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Vendor Restocks +5",
           "request": {
             "method": "POST",
@@ -2401,6 +2438,81 @@
                   "    var b = pm.response.json();",
                   "    pm.expect(b.quantityOnHand).to.eql(15);",
                   "    pm.expect(b.availableQuantity).to.eql(15);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Catalog Shows the Restock Immediately",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/products",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "inventory",
+                "products"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"Cached catalog was invalidated: 15 on hand\", function () {",
+                  "    var p = pm.response.json().filter(function (x) { return x.sku === pm.collectionVariables.get('sku'); })[0];",
+                  "    pm.expect(p.quantityOnHand).to.eql(15);",
+                  "    pm.expect(p.availableQuantity).to.eql(15);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Product Shows the Restock Immediately",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/products/{{sku}}",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "inventory",
+                "products",
+                "{{sku}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"15 on hand\", function () {",
+                  "    pm.expect(pm.response.json().quantityOnHand).to.eql(15);",
                   "});"
                 ]
               }

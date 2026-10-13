@@ -6,6 +6,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ordersphere.inventory.cache.CatalogCache;
 import com.ordersphere.inventory.domain.Product;
 import com.ordersphere.inventory.dto.CreateProductRequest;
 import com.ordersphere.inventory.dto.InventoryLimits;
@@ -14,7 +16,9 @@ import com.ordersphere.inventory.exception.DuplicateSkuException;
 import com.ordersphere.inventory.exception.ProductOwnershipException;
 import com.ordersphere.inventory.exception.StockLimitExceededException;
 import com.ordersphere.inventory.repository.ProductRepository;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -31,7 +35,11 @@ class ProductServiceTest {
 
   @BeforeEach
   void setUp() {
-    productService = new ProductService(productRepository);
+    // The cache switched off: these tests are about the service's own rules.
+    CatalogCache noCache =
+        new CatalogCache(null, new ObjectMapper(), new SimpleMeterRegistry(), false, Duration.ZERO);
+    productService =
+        new ProductService(productRepository, new CatalogReader(productRepository), noCache);
   }
 
   @Test

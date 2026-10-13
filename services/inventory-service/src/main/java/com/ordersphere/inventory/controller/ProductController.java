@@ -4,11 +4,15 @@ import com.ordersphere.inventory.dto.CreateProductRequest;
 import com.ordersphere.inventory.dto.ProductResponse;
 import com.ordersphere.inventory.dto.RestockRequest;
 import com.ordersphere.inventory.service.ProductService;
+import io.swagger.v3.oas.annotations.media.ArraySchema;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.security.Principal;
-import java.util.List;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
@@ -38,14 +42,32 @@ public class ProductController {
         .body(productService.createProduct(request, principal.getName()));
   }
 
-  @GetMapping
-  public List<ProductResponse> listProducts() {
-    return productService.listProducts();
+  // The two read endpoints return ready-made JSON (possibly straight from the catalog cache), so
+  // their response schema is declared by hand.
+  @ApiResponse(
+      responseCode = "200",
+      content =
+          @Content(
+              mediaType = MediaType.APPLICATION_JSON_VALUE,
+              array = @ArraySchema(schema = @Schema(implementation = ProductResponse.class))))
+  @GetMapping(produces = MediaType.APPLICATION_JSON_VALUE)
+  public ResponseEntity<String> listProducts() {
+    return ResponseEntity.ok()
+        .contentType(MediaType.APPLICATION_JSON)
+        .body(productService.listProductsJson());
   }
 
-  @GetMapping("/{sku}")
-  public ProductResponse getProduct(@PathVariable String sku) {
-    return productService.getProduct(sku);
+  @ApiResponse(
+      responseCode = "200",
+      content =
+          @Content(
+              mediaType = MediaType.APPLICATION_JSON_VALUE,
+              schema = @Schema(implementation = ProductResponse.class)))
+  @GetMapping(value = "/{sku}", produces = MediaType.APPLICATION_JSON_VALUE)
+  public ResponseEntity<String> getProduct(@PathVariable String sku) {
+    return ResponseEntity.ok()
+        .contentType(MediaType.APPLICATION_JSON)
+        .body(productService.getProductJson(sku));
   }
 
   @PostMapping("/{sku}/restock")

@@ -25,7 +25,7 @@
   - Request routing via Eureka discovery locator: `/{service-id}/**` → that service (e.g. `/ordersphere-orders/orders`)
   - Client-side load balancing across registered instances
   - CORS for the Web UI dev server (`http://localhost:5173`; GET/POST/PUT/PATCH/DELETE/OPTIONS)
-  - Rate limiting (`RequestRateLimiter`, token buckets in Redis, per client IP): 50 req/s burst 100 on every route; login/register/refresh/token 5 req/s burst 30 (`GATEWAY_*RATE_LIMIT*` env vars). Over the limit → 429 with `X-RateLimit-*` headers; if Redis is down requests are let through. The client IP is the TCP peer; `X-Forwarded-For` is only used behind trusted proxies (`GATEWAY_TRUSTED_PROXY_HOPS`, default 0 - otherwise a client could send a fake address each request and dodge the limit), and then only the entry the outermost trusted proxy appended
+  - Rate limiting (`RequestRateLimiter`, token buckets in Redis, per client IP): 50 req/s burst 100 on every route; login/register/refresh/token 5 req/s burst 30 (`GATEWAY_*RATE_LIMIT*` env vars). Over the limit → 429 with `X-RateLimit-*` headers; if Redis is down requests are let through (the Redis client has 500ms timeouts and rejects commands while disconnected - without them every request waited on the outage). The client IP is the TCP peer; `X-Forwarded-For` is only used behind trusted proxies (`GATEWAY_TRUSTED_PROXY_HOPS`, default 0 - otherwise a client could send a fake address each request and dodge the limit), and then only the entry the outermost trusted proxy appended
 - **Not implemented yet:** request validation
 - **Technology:** Spring Cloud Gateway
 - **Interacts With:** All downstream services
@@ -95,6 +95,7 @@
   - Real-time stock availability checks
   - Saga compensation via reservation release
   - Reservation holds expire after 15 minutes (`ReservationExpiryJob`, 60s sweep)
+  - **Catalog cache** (`CatalogCache`): `GET /inventory/products` and `/{sku}` are served as ready-made JSON from the instance's memory. Redis holds only a version token (`inventory:catalog:version`); every committed change to a `Product` (JPA listener `ProductCacheInvalidator`, after commit - so create, restock, reserve, release and expiry are all covered, and a rollback changes nothing) writes a new token, which makes every instance's copy stale at once. Copies also expire after `CATALOG_CACHE_TTL` (30s). Redis down → reads go to the database (one warning per outage). `CATALOG_CACHE_ENABLED=false` switches it off. Reads only: a reservation still checks stock in the database under its row lock, so the cache can't cause an oversell
 - **Events Produced:** InventoryReservedEvent, InventoryReleasedEvent, StockLowEvent
 - **Events Consumed:** None (driven by REST calls from Orders)
 
@@ -260,7 +261,7 @@ Order Placement Flow:
 ## 🚀 Deployment Architecture
 
 ### Docker Compose (Development)
-- `docker-compose.yml` - PostgreSQL, RabbitMQ (management UI on `:15672`, `ordersphere`/`ordersphere`), Redis (gateway rate limits), Jaeger (traces, UI on `:16686`), Prometheus (metrics and alert rules, UI on `:9090`), Loki + Alloy + Grafana (logs and dashboards, UI on `:3000`), Eureka, the gateway, all seven services and the dummy payment gateway (`:8087`)
+- `docker-compose.yml` - PostgreSQL, RabbitMQ (management UI on `:15672`, `ordersphere`/`ordersphere`), Redis (gateway rate limits, catalog cache version), Jaeger (traces, UI on `:16686`), Prometheus (metrics and alert rules, UI on `:9090`), Loki + Alloy + Grafana (logs and dashboards, UI on `:3000`), Eureka, the gateway, all seven services and the dummy payment gateway (`:8087`)
 - Each service has its own `Dockerfile` under `services/<name>/`; rebuild one with `docker compose up -d --build <service>`
 - Images are tagged `ordersphere/<service>:local`, the same tags the Kubernetes manifests use
 - The Dockerfiles build with a BuildKit cache mount for `/root/.m2` shared by every service image, so Maven dependencies are downloaded once rather than per image or per `pom.xml` change
@@ -340,7 +341,9 @@ Order Placement Flow:
   - `postman/api-reference.postman_collection.json` - one example request per endpoint (no assertions)
 - **UI End-to-End Tests:** Playwright in `web-ui/e2e` against the same running stack (`cd web-ui && npm run e2e`); not part of CI
 - **CI:** GitHub Actions (`.github/workflows/ci.yml`) runs `mvn verify`, the Web UI build and a Kubernetes manifest check (kustomize render + `kubeconform -strict`) on pushes and PRs to `master`/`develop`
-- **Not yet:** contract tests, load tests
+- **Load test:** `loadtest/run.sh` (k6 from its Docker image) reads the catalog with the cache off, then on, while a vendor restocks every 2s, and prints the comparison; `THINK=0 VUS=100` for saturation, `DIRECT=1` to bypass the gateway. Local only; the machine must stay awake and otherwise idle. Measured results and what they mean: `loadtest/README.md` (cache on: ~2.4x the catalog reads from the service itself, ~1.5x through the gateway)
+- Every JVM in `docker-compose.yml` has a `mem_limit` and `-XX:MaxRAMPercentage=60`; without them the Docker VM runs out of memory under load and containers are OOM-killed
+- **Not yet:** contract tests, load tests of the order flow
 
 ---
 
@@ -432,4 +435,5 @@ mvn verify -pl services/shipping-service -am
 - [x] Centralized logging (Loki + Alloy + Grafana instead of ELK; JSON logs linked to traces)
 - [x] Metrics and alerting (Prometheus scraping every service with a scrape token, business metrics, alert rules, Grafana dashboards)
 - [ ] Alert delivery (Alertmanager / notifications)
-- [ ] Performance optimization and caching (Redis)
+- [x] Catalog caching (Redis version token + in-memory copies) and a k6 load test (`loadtest/`)
+- [ ] Performance: other hot paths (order list, pagination of the catalog)

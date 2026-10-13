@@ -1,8 +1,10 @@
 package com.ordersphere.gateway;
 
+import io.lettuce.core.ClientOptions;
 import java.net.InetSocketAddress;
 import java.util.Optional;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.data.redis.LettuceClientConfigurationBuilderCustomizer;
 import org.springframework.cloud.gateway.filter.ratelimit.KeyResolver;
 import org.springframework.cloud.gateway.filter.ratelimit.RedisRateLimiter;
 import org.springframework.context.annotation.Bean;
@@ -18,6 +20,19 @@ import reactor.core.publisher.Mono;
  */
 @Configuration
 public class RateLimitConfig {
+
+  /**
+   * While Redis is unreachable, fail a rate-limit check at once instead of queueing it: the limiter
+   * lets the request through when the check fails, so requests don't wait on a Redis outage.
+   */
+  @Bean
+  public LettuceClientConfigurationBuilderCustomizer rejectCommandsWhileDisconnected() {
+    return builder ->
+        builder.clientOptions(
+            ClientOptions.builder()
+                .disconnectedBehavior(ClientOptions.DisconnectedBehavior.REJECT_COMMANDS)
+                .build());
+  }
 
   /**
    * Separate limiter beans on purpose: a RedisRateLimiter keeps its per-route settings keyed by

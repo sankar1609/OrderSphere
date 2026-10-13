@@ -34,8 +34,6 @@ spec:
             - secretRef:
                 name: ordersphere-secrets
           env:
-            - name: REDIS_HOST
-              value: "redis"
             - name: JAVA_TOOL_OPTIONS
               value: "-XX:MaxRAMPercentage=75"
           resources:

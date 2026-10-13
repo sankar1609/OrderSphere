@@ -1,5 +1,6 @@
 package com.ordersphere.inventory.service;
 
+import com.ordersphere.inventory.cache.CatalogCache;
 import com.ordersphere.inventory.domain.Product;
 import com.ordersphere.inventory.dto.CreateProductRequest;
 import com.ordersphere.inventory.dto.InventoryLimits;
@@ -9,7 +10,6 @@ import com.ordersphere.inventory.exception.ProductNotFoundException;
 import com.ordersphere.inventory.exception.ProductOwnershipException;
 import com.ordersphere.inventory.exception.StockLimitExceededException;
 import com.ordersphere.inventory.repository.ProductRepository;
-import java.util.List;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -17,9 +17,14 @@ import org.springframework.transaction.annotation.Transactional;
 public class ProductService {
 
   private final ProductRepository productRepository;
+  private final CatalogReader catalogReader;
+  private final CatalogCache catalogCache;
 
-  public ProductService(ProductRepository productRepository) {
+  public ProductService(
+      ProductRepository productRepository, CatalogReader catalogReader, CatalogCache catalogCache) {
     this.productRepository = productRepository;
+    this.catalogReader = catalogReader;
+    this.catalogCache = catalogCache;
   }
 
   public ProductResponse createProduct(CreateProductRequest request, String createdBy) {
@@ -37,14 +42,17 @@ public class ProductService {
     return ProductResponse.from(productRepository.save(product));
   }
 
-  @Transactional(readOnly = true)
-  public List<ProductResponse> listProducts() {
-    return productRepository.findAll().stream().map(ProductResponse::from).toList();
+  /**
+   * The catalog as JSON, served from the catalog cache; the database is only read on a miss (see
+   * CatalogCache).
+   */
+  public String listProductsJson() {
+    return catalogCache.listJson(catalogReader::loadAll);
   }
 
-  @Transactional(readOnly = true)
-  public ProductResponse getProduct(String sku) {
-    return ProductResponse.from(findProductOrThrow(sku));
+  /** One product as JSON, served from the catalog cache; 404 for an unknown SKU. */
+  public String getProductJson(String sku) {
+    return catalogCache.productJson(sku, () -> catalogReader.load(sku));
   }
 
   /**
@@ -68,9 +76,5 @@ public class ProductService {
     productRepository.save(product);
 
     return ProductResponse.from(product);
-  }
-
-  private Product findProductOrThrow(String sku) {
-    return productRepository.findBySku(sku).orElseThrow(() -> new ProductNotFoundException(sku));
   }
 }
