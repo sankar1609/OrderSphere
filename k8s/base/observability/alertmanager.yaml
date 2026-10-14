@@ -1,0 +1,87 @@
+# Alertmanager: groups and repeats the alerts Prometheus fires and posts them to
+# notification-service (in-app notifications for the admins). The webhook token comes from the
+# ordersphere-secrets Secret. Silences and the notification log are kept in an emptyDir: losing
+# them on a restart only means a still-firing alert is delivered again.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager
+  labels:
+    app.kubernetes.io/name: alertmanager
+    app.kubernetes.io/part-of: ordersphere
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: alertmanager
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: alertmanager
+        app.kubernetes.io/part-of: ordersphere
+    spec:
+      enableServiceLinks: false
+      securityContext:
+        # The image runs as "nobody" (65534); let it write to the volume.
+        fsGroup: 65534
+      containers:
+        - name: alertmanager
+          image: prom/alertmanager:v0.34.1
+          # Like Prometheus's scrape token: written to the file the config points at before
+          # starting (same as docker-compose).
+          command:
+            - /bin/sh
+            - -c
+            - >-
+              printf '%s' "$ALERT_WEBHOOK_TOKEN" > /alertmanager/webhook-token &&
+              exec /bin/alertmanager
+              --config.file=/etc/alertmanager/alertmanager.yml
+              --storage.path=/alertmanager
+          env:
+            - name: ALERT_WEBHOOK_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: ordersphere-secrets
+                  key: ALERT_WEBHOOK_TOKEN
+          ports:
+            - name: http
+              containerPort: 9093
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alertmanager
+            - name: data
+              mountPath: /alertmanager
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+      volumes:
+        - name: config
+          configMap:
+            name: alertmanager-config
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager
+  labels:
+    app.kubernetes.io/name: alertmanager
+    app.kubernetes.io/part-of: ordersphere
+spec:
+  selector:
+    app.kubernetes.io/name: alertmanager
+  ports:
+    - name: http
+      port: 9093
+      targetPort: http

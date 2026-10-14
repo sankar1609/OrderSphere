@@ -1,6 +1,7 @@
 # Alert rules. Prometheus evaluates them; firing alerts show on Grafana's "OrderSphere overview"
-# dashboard and on Prometheus's own Alerts page (:9090/alerts). Nothing is sent anywhere - there is
-# no Alertmanager.
+# dashboard and on Prometheus's own Alerts page (:9090/alerts), and are sent to Alertmanager, which
+# delivers them to the admins' notifications (observability/alertmanager/alertmanager.yml). The
+# summary and description are what the admin reads.
 groups:
   - name: availability
     rules:

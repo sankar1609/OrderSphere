@@ -71,7 +71,8 @@ services:
       - loki
     mem_limit: 256m
 
-  # Metrics: scrapes the gateway and the six services, evaluates the alert rules. UI on :9090.
+  # Metrics: scrapes the gateway and the seven services, evaluates the alert rules and sends firing
+  # alerts to Alertmanager. UI on :9090.
   prometheus:
     image: prom/prometheus:v3.13.4
     container_name: ordersphere-prometheus
@@ -94,7 +95,32 @@ services:
       - prometheus-data:/prometheus
     ports:
       - "9090:9090"
+    depends_on:
+      - alertmanager
     mem_limit: 768m
+
+  # Alert delivery: groups and repeats the alerts Prometheus fires and posts them to
+  # notification-service, which shows them to the admins. UI on :9093.
+  alertmanager:
+    image: prom/alertmanager:v0.34.1
+    container_name: ordersphere-alertmanager
+    environment:
+      ALERT_WEBHOOK_TOKEN: ${ALERT_WEBHOOK_TOKEN:-dev-alert-webhook-token}
+    # Like Prometheus's scrape token: written to the file the config points at before starting.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        printf '%s' "$$ALERT_WEBHOOK_TOKEN" > /alertmanager/webhook-token &&
+        exec /bin/alertmanager
+        --config.file=/etc/alertmanager/alertmanager.yml
+        --storage.path=/alertmanager
+    volumes:
+      - ./observability/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    ports:
+      - "9093:9093"
+    mem_limit: 128m
 
   grafana:
     image: grafana/grafana:13.2.3
@@ -413,6 +439,10 @@ services:
       LOG_FORMAT: json
       # Shared secret Prometheus presents to /actuator/prometheus.
       METRICS_SCRAPE_TOKEN: ${METRICS_SCRAPE_TOKEN:-dev-metrics-scrape-token}
+      # Shared secret Alertmanager presents to POST /notifications/alerts.
+      ALERT_WEBHOOK_TOKEN: ${ALERT_WEBHOOK_TOKEN:-dev-alert-webhook-token}
+      # Who gets the alerts as in-app notifications (comma-separated usernames).
+      ALERT_RECIPIENTS: ${ALERT_RECIPIENTS:-admin}
       OTLP_TRACING_ENDPOINT: http://jaeger:4318/v1/traces
       DB_HOST: postgres
       DB_NAME: notification_db
@@ -478,3 +508,4 @@ volumes:
   postgres-data:
   loki-data:
   prometheus-data:
+  alertmanager-data:

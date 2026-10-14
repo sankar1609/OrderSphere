@@ -160,6 +160,7 @@
   - Order, payment and shipment notifications, triggered by domain events
   - Notification preference management per channel (EMAIL, SMS, IN_APP, PUSH); a disabled channel marks notifications SKIPPED
   - Notifications sent directly (`POST /notifications`, SERVICE/ADMIN only)
+  - Operational alerts: Alertmanager posts the alerts Prometheus fires to `POST /notifications/alerts` (`AlertWebhookController`); each becomes an IN_APP notification (`SYSTEM_ALERT`, and `SYSTEM_ALERT_RESOLVED` when it clears) for every username in `ALERT_RECIPIENTS` (default `admin`). The endpoint takes the shared `ALERT_WEBHOOK_TOKEN` as its Bearer credential, not a JWT (Alertmanager has no login, and the gateway makes the path public); no token configured → it answers nobody
 - **Database:** PostgreSQL (notification_db)
 - **Key Features:**
   - Template-based message composition (`NotificationTemplateRenderer`)
@@ -261,7 +262,7 @@ Order Placement Flow:
 ## 🚀 Deployment Architecture
 
 ### Docker Compose (Development)
-- `docker-compose.yml` - PostgreSQL, RabbitMQ (management UI on `:15672`, `ordersphere`/`ordersphere`), Redis (gateway rate limits, catalog cache version), Jaeger (traces, UI on `:16686`), Prometheus (metrics and alert rules, UI on `:9090`), Loki + Alloy + Grafana (logs and dashboards, UI on `:3000`), Eureka, the gateway, all seven services and the dummy payment gateway (`:8087`)
+- `docker-compose.yml` - PostgreSQL, RabbitMQ (management UI on `:15672`, `ordersphere`/`ordersphere`), Redis (gateway rate limits, catalog cache version), Jaeger (traces, UI on `:16686`), Prometheus (metrics and alert rules, UI on `:9090`), Alertmanager (alert delivery, UI on `:9093`), Loki + Alloy + Grafana (logs and dashboards, UI on `:3000`), Eureka, the gateway, all seven services and the dummy payment gateway (`:8087`)
 - Each service has its own `Dockerfile` under `services/<name>/`; rebuild one with `docker compose up -d --build <service>`
 - Images are tagged `ordersphere/<service>:local`, the same tags the Kubernetes manifests use
 - The Dockerfiles build with a BuildKit cache mount for `/root/.m2` shared by every service image, so Maven dependencies are downloaded once rather than per image or per `pom.xml` change
@@ -322,13 +323,14 @@ Order Placement Flow:
 
 ## 📈 Metrics & Alerting (Prometheus + Grafana)
 
-- **Where to look:** Grafana `http://localhost:3000` → **OrderSphere overview** (firing alerts, orders/payments per minute, backlog tiles, request rate / errors / p95 per service) and **OrderSphere services** (one service: endpoints, JVM, DB pool, RabbitMQ, circuit breakers). Prometheus itself: `http://localhost:9090` (`/targets`, `/alerts`).
+- **Where to look:** Grafana `http://localhost:3000` → **OrderSphere overview** (firing alerts, orders/payments per minute, backlog tiles, request rate / errors / p95 per service) and **OrderSphere services** (one service: endpoints, JVM, DB pool, RabbitMQ, circuit breakers). Prometheus itself: `http://localhost:9090` (`/targets`, `/alerts`); Alertmanager: `http://localhost:9093` (what is firing, silences).
 - **Scraping:** Prometheus scrapes `/actuator/prometheus` on the gateway and the seven services every 15s (`observability/prometheus/prometheus.yml`; same target names under compose and k8s). Not scraped: the service registry and the dummy payment gateway.
 - **The endpoint is guarded by a scrape token, not a JWT:** `Authorization: Bearer <METRICS_SCRAPE_TOKEN>` (dev default `dev-metrics-scrape-token`; k8s Secret). The gateway routes `/{service-id}/**` to every service and its own port is public, so an open metrics endpoint would be public. Enforced by `MetricsScrapeTokenFilter` in common-security (services; their `SecurityConfig` permits the path, the filter checks) and by the gateway's own `WebFilter`. No token configured → the endpoint answers nobody. A user or admin JWT gets 401.
 - **Business metrics:** `ordersphere_events_total{type}` - `DomainEventRelay` counts every relayed domain event, so the rates of orders placed/confirmed/cancelled, payments, refunds, shipments and notifications need no counters in the services. Backlog gauges read from the database at scrape time (`OrderMetrics`, `PaymentMetrics`, `InventoryMetrics`; NaN rather than a failed scrape if the DB is down): `ordersphere_orders{status}`, `ordersphere_compensations{status}`, `ordersphere_orders_unshipped{state=retrying|gave_up}`, `ordersphere_payments_pending`, `ordersphere_reconciliation_findings_open`, `ordersphere_products_low_stock`. Every metric carries `application` and Prometheus adds `service`.
-- **Alert rules** (`observability/prometheus/alerts.yml`): `ServiceDown`, `HighErrorRate`, `SlowResponses`, `CircuitBreakerOpen`, `FailedCompensations`, `UnshippedOrdersGaveUp`, `OpenReconciliationFindings`, `AuditChainBroken`, `PaymentFailuresHigh`. Evaluated by Prometheus and shown in Grafana and on `:9090/alerts` - **nothing is sent anywhere** (no Alertmanager).
+- **Alert rules** (`observability/prometheus/alerts.yml`): `ServiceDown`, `HighErrorRate`, `SlowResponses`, `CircuitBreakerOpen`, `FailedCompensations`, `UnshippedOrdersGaveUp`, `OpenReconciliationFindings`, `AuditChainBroken`, `PaymentFailuresHigh`. Evaluated by Prometheus and shown in Grafana and on `:9090/alerts`.
+- **Alert delivery:** Prometheus sends firing alerts to **Alertmanager** (`observability/alertmanager/alertmanager.yml`), which groups them per alert and service, waits 10s, repeats a still-firing alert every 4h, reports when it resolves (within ~5 min), and mutes `HighErrorRate`/`SlowResponses` for a service that is `ServiceDown`. Its one receiver is notification-service's webhook, so alerts land in the admins' Notifications inbox in the Web UI (`[critical] ServiceDown: ...`). Nothing leaves the system yet: a real destination (Slack, email, pager) is one more receiver in that file - there is a commented example.
 - **In tests** metrics export is off unless the test class has `@AutoConfigureObservability` (Spring Boot's default).
-- **Not yet:** alert delivery (Alertmanager / notifications), metrics for the registry and the dummy gateway.
+- **Not yet:** an alert destination outside the system (Slack/email/pager), metrics for the registry and the dummy gateway.
 
 ## 🧪 Testing & Quality Assurance
 
@@ -337,7 +339,7 @@ Order Placement Flow:
 - **Formatting:** Spotless (google-java-format) runs `check` in the `verify` phase - fix with `mvn spotless:apply`
 - **End-to-End Tests:** Postman collections run against the docker-compose stack with newman:
   - `postman/full-order-flow.postman_collection.json` - happy path, payment decline, cancellation with refund, negative checks
-  - `postman/feature-coverage.postman_collection.json` - auth/RBAC, inventory, payments, returns, notifications, Eureka, RabbitMQ, circuit breakers, API docs, centralized logs (an order's lines found in Loki by trace id and order id), metrics (scrape-token guard, Prometheus targets, business metrics, alert rules), audit log (RBAC, an order's trail across services with actors, chain verification)
+  - `postman/feature-coverage.postman_collection.json` - auth/RBAC, inventory, payments, returns, notifications, Eureka, RabbitMQ, circuit breakers, API docs, centralized logs (an order's lines found in Loki by trace id and order id), metrics (scrape-token guard, Prometheus targets, business metrics, alert rules), alert delivery (webhook token guard, a test alert through Alertmanager into the admin's notifications), audit log (RBAC, an order's trail across services with actors, chain verification)
   - `postman/api-reference.postman_collection.json` - one example request per endpoint (no assertions)
 - **UI End-to-End Tests:** Playwright in `web-ui/e2e` against the same running stack (`cd web-ui && npm run e2e`); not part of CI
 - **CI:** GitHub Actions (`.github/workflows/ci.yml`) runs `mvn verify`, the Web UI build and a Kubernetes manifest check (kustomize render + `kubeconform -strict`) on pushes and PRs to `master`/`develop`
@@ -434,6 +436,7 @@ mvn verify -pl services/shipping-service -am
 - [ ] Implement CQRS for analytics/reporting
 - [x] Centralized logging (Loki + Alloy + Grafana instead of ELK; JSON logs linked to traces)
 - [x] Metrics and alerting (Prometheus scraping every service with a scrape token, business metrics, alert rules, Grafana dashboards)
-- [ ] Alert delivery (Alertmanager / notifications)
+- [x] Alert delivery: Alertmanager → notification-service → in-app notifications for the admins
+- [ ] Alert delivery outside the system (Slack / email / pager receiver in Alertmanager)
 - [x] Catalog caching (Redis version token + in-memory copies) and a k6 load test (`loadtest/`)
 - [ ] Performance: other hot paths (order list, pagination of the catalog)
