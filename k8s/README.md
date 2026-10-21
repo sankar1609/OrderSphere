@@ -2,7 +2,7 @@
 
 Kustomize manifests for the whole stack: the eight Spring Boot services (API gateway, Eureka, auth,
 orders, inventory, payment, shipping, notification), the dummy payment gateway, PostgreSQL,
-RabbitMQ, Redis, Jaeger, and Loki + Alloy + Grafana for centralized logs - all in the
+RabbitMQ, Redis, Jaeger, Prometheus + Alertmanager, and Loki + Alloy + Grafana for centralized logs - all in the
 `ordersphere` namespace.
 
 ```
@@ -10,7 +10,7 @@ k8s/
 ├── base/                     # everything, environment-neutral
 │   ├── apps/                 # one Deployment + ClusterIP Service per service
 │   ├── infra/                # postgres (StatefulSet + PVC), rabbitmq, redis, jaeger
-│   ├── observability/        # prometheus (PVC), loki (PVC), alloy (reads pod logs via the API), grafana
+│   ├── observability/        # prometheus (PVC), alertmanager, loki (PVC), alloy (reads pod logs via the API), grafana
 │   ├── config.env            # shared settings -> ConfigMap ordersphere-config
 │   └── secrets.env           # DEV credentials -> Secret ordersphere-secrets
 ├── overlays/docker-desktop/  # publishes the gateway, checkout page and UIs on localhost
@@ -43,6 +43,7 @@ service: `docker compose build <service>` and
 | Eureka | http://localhost:8761 |
 | Grafana (logs, metrics dashboards, alerts; `admin`/`admin`) | http://localhost:3000 |
 | Prometheus (targets, alerts) | http://localhost:9090 |
+| Alertmanager (firing alerts, silences) | http://localhost:9093 |
 | Jaeger | http://localhost:16686 |
 | RabbitMQ management (`ordersphere`/`ordersphere`) | http://localhost:15672 |
 

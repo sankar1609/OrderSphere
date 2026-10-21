@@ -45,6 +45,7 @@ OrderSphere is up:
   API gateway           http://localhost:8080   (Swagger UI: /webjars/swagger-ui/index.html)
   Grafana (logs, metrics) http://localhost:3000
   Prometheus            http://localhost:9090
+  Alertmanager          http://localhost:9093
   Payment checkout      http://localhost:8087
   Eureka                http://localhost:8761
   Jaeger                http://localhost:16686

@@ -11,6 +11,10 @@ spring:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+      # Without these a rate-limit check waits a minute on an unreachable Redis, and with it every
+      # request through the gateway. The limiter lets a request through when the check fails.
+      timeout: 500ms
+      connect-timeout: 500ms
   cloud:
     gateway:
       discovery:

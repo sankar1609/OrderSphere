@@ -1,4 +1,4 @@
-# Observability: logs (Alloy -> Loki), metrics (Prometheus) and Grafana for both. The files/ are copies of ../../../observability/
+# Observability: logs (Alloy -> Loki), metrics (Prometheus), alert delivery (Alertmanager) and Grafana. The files/ are copies of ../../../observability/
 # (kustomize can't read outside k8s/); CI fails if they differ.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -7,6 +7,7 @@ resources:
   - alloy.yaml
   - grafana.yaml
   - prometheus.yaml
+  - alertmanager.yaml
 configMapGenerator:
   - name: loki-config
     files:
@@ -27,3 +28,6 @@ configMapGenerator:
     files:
       - files/prometheus.yml
       - files/alerts.yml
+  - name: alertmanager-config
+    files:
+      - files/alertmanager.yml

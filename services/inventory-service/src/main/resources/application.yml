@@ -14,6 +14,14 @@ spring:
     open-in-view: false
   flyway:
     enabled: true
+  data:
+    redis:
+      # Catalog cache only (see CatalogCache). Short timeouts: the cache is optional, so a slow
+      # Redis must not slow the catalog down.
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 500ms
+      connect-timeout: 500ms
   rabbitmq:
     host: ${RABBITMQ_HOST:localhost}
     port: ${RABBITMQ_PORT:5672}
@@ -34,6 +42,12 @@ inventory:
   reservation:
     hold-ttl-minutes: ${RESERVATION_HOLD_TTL_MINUTES:15}
     expiry-sweep-interval-ms: ${RESERVATION_EXPIRY_SWEEP_INTERVAL_MS:60000}
+  catalog-cache:
+    # The product catalog (list and single products) is served from Redis. Off = always read the
+    # database (the load test's baseline, and a kill switch).
+    enabled: ${CATALOG_CACHE_ENABLED:true}
+    # Safety net for a missed eviction; every product change evicts right after it commits.
+    ttl: ${CATALOG_CACHE_TTL:PT30S}
 
 
 management:
@@ -62,6 +76,10 @@ management:
     health:
       probes:
         enabled: true
+  health:
+    redis:
+      # The cache is optional (it fails open): Redis being down doesn't make this service unhealthy.
+      enabled: false
 
 eureka:
   client:

@@ -38,7 +38,12 @@ notification:
     # Who gets low-stock alerts for products with no recorded creator (created before V3 in
     # inventory-service).
     fallback-recipient: ${LOW_STOCK_FALLBACK_RECIPIENT:admin}
-
+  alerts:
+    # Shared secret Alertmanager presents to POST /notifications/alerts. Empty = the endpoint
+    # answers nobody.
+    webhook-token: ${ALERT_WEBHOOK_TOKEN:}
+    # Who gets Prometheus's alerts as in-app notifications (comma-separated usernames).
+    recipients: ${ALERT_RECIPIENTS:admin}
 
 management:
   tracing:
@@ -73,3 +78,8 @@ eureka:
       defaultZone: ${EUREKA_URI:http://localhost:8761/eureka}
   instance:
     prefer-ip-address: true
+
+ordersphere:
+  openapi:
+    # Endpoints that don't need a Bearer JWT (see SecurityConfig); the spec marks them as open.
+    public-paths: /notifications/alerts

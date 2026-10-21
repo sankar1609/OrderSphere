@@ -40,3 +40,6 @@ build/
 ### Playwright (web-ui/e2e) ###
 web-ui/test-results/
 web-ui/playwright-report/
+
+### Load test output ###
+loadtest/results/

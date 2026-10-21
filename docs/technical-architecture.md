@@ -10,7 +10,7 @@ This document describes how OrderSphere is actually built today — architecture
 
 OrderSphere is a cloud-native order and inventory management platform built as thirteen Maven modules — ten independently deployable Spring Boot applications (nine platform services plus a stand-in payment provider) and three shared libraries. It exists to demonstrate — and exercise — the hard parts of distributed order processing: reserving stock without overselling, keeping payment and fulfillment eventually consistent, giving every state transition a compensating path back out, and — the part that's easy to get wrong — making sure the two independent things that can each try to finish the same step don't race each other into a lost update.
 
-The system runs as a full Docker Compose stack or on Kubernetes (Kustomize manifests in `k8s/`): a Eureka service registry, an API gateway, six business services, a dummy hosted-checkout payment provider, PostgreSQL (one database per service), RabbitMQ for asynchronous fan-out, Redis for gateway rate limits, Jaeger for distributed traces, Prometheus for metrics and alert rules, and Loki, Alloy and Grafana for centralized logs and dashboards. Every service builds, has a Flyway-managed schema and carries its own test suite; the six business services publish OpenAPI specs.
+The system runs as a full Docker Compose stack or on Kubernetes (Kustomize manifests in `k8s/`): a Eureka service registry, an API gateway, six business services, a dummy hosted-checkout payment provider, PostgreSQL (one database per service), RabbitMQ for asynchronous fan-out, Redis for gateway rate limits, Jaeger for distributed traces, Prometheus for metrics and alert rules, Alertmanager for delivering the alerts, and Loki, Alloy and Grafana for centralized logs and dashboards. Every service builds, has a Flyway-managed schema and carries its own test suite; the six business services publish OpenAPI specs.
 
 ---
 
@@ -64,6 +64,14 @@ What makes it tamper-evident is the chain: each entry stores the SHA-256 of the 
 
 A chain inside one database has one weakness: whoever controls the database could rewrite all of it consistently. So the head is periodically *anchored* - published through the `AuditAnchor` interface and remembered - and verification checks the chain still passes through every anchor. Today the anchor is the application log (collected in Loki, a separate store). This interface is the place a ledger shared with other organizations (Hyperledger Fabric) plugs in: that step only pays for itself once someone outside the operator has to trust the records, and it then needs no change to the rest of the service. Verification runs on a schedule and on demand; a break raises the `AuditChainBroken` alert. The API is read-only and limited to `AUDITOR` and `ADMIN`.
 
+### Catalog cache: in-memory copies, one version token in Redis
+
+The catalog reads (`GET /inventory/products`, `/{sku}`) are the most-called endpoints and used to read every product from Postgres each time. `CatalogCache` now keeps the response - the ready-made JSON - in each inventory-service instance's memory. Redis holds a single small value, the catalog's version token. A read fetches the token and serves its copy if the copy carries the same one; a JPA entity listener on `Product` writes a new token after any transaction that changed a product commits, which makes every instance's copy stale at once. So create, restock, reserve, release and reservation expiry all invalidate without each remembering to, and a rolled-back change invalidates nothing.
+
+Three details matter. A copy is stamped with the token read *before* the database was read, so a copy loaded while a change was committing is never served as current. Only one thread reloads after a change; the rest wait for its result. And the cache fails open: with Redis unreachable, reads go to the database, a token that couldn't be written is written when Redis answers again, and copies expire after 30 seconds regardless. The cache only speeds reads up - a reservation still checks stock in the database under a row lock, so a stale number can't oversell.
+
+The JSON itself is deliberately not stored in Redis: that would move 42 KB over one Redis connection on every read, where the token is a few bytes. Under the load test, inventory-service with the cache on serves about 2.4 times the catalog reads (about 1.5 times measured through the gateway, which then becomes the limit). Numbers and method: `loadtest/README.md`.
+
 ### Events as the async layer
 
 Every state change Orders, Payment, or Shipping makes is also published locally as a Spring `ApplicationEvent` and relayed onto a RabbitMQ topic exchange by a shared `DomainEventRelay`. Three things consume off that bus today: Notification service, which reacts to order, payment, and shipment events to trigger customer messages; Orders itself, listening for `PaymentCompletedEvent`/`PaymentFailedEvent` as a low-latency shortcut around its own polling sweep job; and Shipping, which halts an in-flight shipment when it hears `OrderCancelledEvent`. Inventory and Payment are not message consumers — every service publishes into the same exchange (see §4), but 9 of the 18 event types have a consumer that acts on them; audit-service additionally records all 18.
@@ -88,8 +96,9 @@ flowchart TB
     ship --> pg
     notif --> pg
 
-    redis[("Redis\nrate-limit buckets")]
+    redis[("Redis\nrate-limit buckets,\ncatalog version")]
     gw --> redis
+    inv --> redis
     client -. hosted checkout .-> dpg["dummy-payment-gateway :8087"]
     pay -- merchant API --> dpg
     dpg -- signed webhook --> pay
@@ -230,6 +239,8 @@ What every service is actually built on, confirmed against each module's `pom.xm
 | Resilience4j (Spring Cloud Circuit Breaker) | Per-dependency circuit breakers on Orders' inventory/payment/shipping clients |
 | Spring Boot Actuator | Health, liveness and readiness probes on every application; circuit-breaker endpoints on Orders |
 | Spring Data Redis (reactive) | Gateway rate-limit token buckets |
+| Spring Data Redis (Lettuce) | inventory-service: the catalog cache's version token |
+| k6 | Load test of the catalog (`loadtest/`), run from its Docker image |
 | Spring Data JPA | Persistence layer, every business service |
 | PostgreSQL 16 | System of record, one schema per service |
 | Flyway | Schema migrations |
@@ -240,6 +251,7 @@ What every service is actually built on, confirmed against each module's `pom.xm
 | Micrometer Tracing + OpenTelemetry (OTLP), Jaeger | Distributed traces across REST, RabbitMQ and scheduled sweeps |
 | logstash-logback-encoder, Grafana Alloy, Loki, Grafana | JSON logs, collected centrally, searchable by service, user, order and trace |
 | Micrometer + Prometheus | Service and business metrics, alert rules; dashboards in Grafana |
+| Alertmanager | Groups, repeats and delivers alerts to notification-service |
 | Jackson + jsr310 | Event (de)serialization, incl. `java.time` types |
 | Lombok | Boilerplate reduction across domain/DTO classes |
 | JUnit 5 + Testcontainers | Unit and integration tests against real Postgres/RabbitMQ |
@@ -269,7 +281,7 @@ Two deployment paths share the same images and configuration: Docker Compose for
 
 - **Tracing:** Micrometer Tracing over OpenTelemetry, exported over OTLP to Jaeger (`http://localhost:16686`). Traced: every request through the gateway, the saga's REST calls (`RestClientConfig` hands its load-balanced builder the `ObservationRegistry`), RabbitMQ events from publish to consume (`RabbitObservationPostProcessor` in `common-events`, since Boot 3.2 has no property for it), and every run of a `@Scheduled` sweep as its own trace. Log lines carry `[service,traceId,spanId]`, responses an `X-Trace-Id` header. The dummy provider is deliberately untraced, like an external provider: its webhook starts a new trace, linked to the order by `orderId`.
 - **Centralized logs:** with `LOG_FORMAT=json` (set under Compose and Kubernetes) every application writes one JSON object per line through `common-logging`'s logback config: `service`, `level`, `logger`, `message`, a shortened `stack_trace`, and every MDC entry — Micrometer's `traceId`/`spanId`, the caller (`user`, set by `JwtAuthenticationFilter`; the client id for SERVICE tokens), and `orderId`/`paymentId`. The order id is set at each unit of work on an order (`OrderLogContext` in Orders, `PaymentLogContext` in Payment) and by `DomainEventRelay`, which also logs one INFO line per relayed domain event — so every service's state changes for an order can be found by its id. Grafana Alloy tails the containers (Docker socket under Compose; pod logs through the Kubernetes API, with a namespaced Role, on Kubernetes) and ships to Loki (72h retention). `service`, `level` and `container` are indexed labels; the per-request ids are structured metadata, filterable without growing the index. Grafana (`:3000`) provisions Loki and Jaeger linked both ways — a log line's `traceId` opens its trace, a trace links back to its lines — and an "OrderSphere logs" dashboard. Loki was chosen over ELK for its footprint: it indexes labels only, and the whole logging stack needs less memory than Elasticsearch alone.
-- **Metrics and alerts:** Prometheus scrapes `/actuator/prometheus` on the gateway and the six services every 15s. The endpoint answers only a shared scrape token (`METRICS_SCRAPE_TOKEN`), not a user JWT: the gateway routes `/{service-id}/**` to every service, so an open endpoint would be public (`MetricsScrapeTokenFilter` in `common-security`, a `WebFilter` in the gateway). Business rates come from one place — `DomainEventRelay` counts every relayed event as `ordersphere_events_total{type}` — and backlog gauges are read from the database at scrape time (orders per status, refunds/stock releases pending or failed, paid orders unshipped, pending payments, open reconciliation findings, low-stock products). Eight alert rules (service down, 5xx rate, slow responses, open circuit breaker, failed compensations, unshipped orders given up, open reconciliation findings, payment failures) are evaluated by Prometheus and shown on Grafana's overview dashboard; nothing is delivered anywhere yet (no Alertmanager).
+- **Metrics and alerts:** Prometheus scrapes `/actuator/prometheus` on the gateway and the seven services every 15s. The endpoint answers only a shared scrape token (`METRICS_SCRAPE_TOKEN`), not a user JWT: the gateway routes `/{service-id}/**` to every service, so an open endpoint would be public (`MetricsScrapeTokenFilter` in `common-security`, a `WebFilter` in the gateway). Business rates come from one place — `DomainEventRelay` counts every relayed event as `ordersphere_events_total{type}` — and backlog gauges are read from the database at scrape time (orders per status, refunds/stock releases pending or failed, paid orders unshipped, pending payments, open reconciliation findings, low-stock products). Nine alert rules (service down, 5xx rate, slow responses, open circuit breaker, failed compensations, unshipped orders given up, open reconciliation findings, broken audit chain, payment failures) are evaluated by Prometheus and shown on Grafana's overview dashboard. Firing alerts go to Alertmanager, which groups and repeats them and posts them to notification-service (`POST /notifications/alerts`, guarded by a shared webhook token); each becomes an in-app notification for the admins, and another when it resolves. A destination outside the system (Slack, email, pager) is one more Alertmanager receiver.
 - **API docs:** each of the six business services serves an OpenAPI 3 spec at `/v3/api-docs`, generated by springdoc; `common-security`'s `OpenApiAutoConfiguration` applies the shared conventions (gateway server URL, Bearer JWT, a shared `ErrorResponse` schema, 401/403 responses). The gateway serves one Swagger UI for all of them.
 
 ---
@@ -285,7 +297,7 @@ Every module carries its own test suite; `common-events` is the most heavily cov
 | `notification-service` | 7 |
 | `auth-service` | 5 |
 | `common-security` | 5 |
-| `inventory-service` | 5 |
+| `inventory-service` | 7 |
 | `payment-service` | 5 |
 | `shipping-service` | 5 |
 | `ordersphere-gateway` | 4 |
@@ -293,6 +305,8 @@ Every module carries its own test suite; `common-events` is the most heavily cov
 | `service-registry` | 1 |
 
 Integration coverage runs against real dependencies via Testcontainers (Postgres and RabbitMQ), rather than mocking the database or broker — the suites in `ordersphere-orders` and `common-events` in particular exercise actual message publish/consume round-trips. Every `@SpringBootTest`-based integration test class carries `@DirtiesContext(classMode = AFTER_CLASS)`: without it, Testcontainers tears down the Postgres/RabbitMQ containers right after the test class finishes, but the cached Spring context (and its live `@Scheduled` jobs and AMQP listeners) can outlive them until the JVM exits — the mismatch shows up as retry-spam against dead containers and, eventually, Surefire force-killing the fork after a 30s hang.
+
+A k6 load test (`loadtest/run.sh`, local only) reads the catalog with the cache off and on while stock keeps changing, and fails if any read after a restock is stale; see `loadtest/README.md`.
 
 End to end, three Postman collections run against a live stack with newman - `full-order-flow` (happy path, decline, cancellation with refund, negative checks), `feature-coverage` (auth/RBAC, inventory, payments and reconciliation, returns, notifications, Eureka, RabbitMQ, circuit breakers, an order's lines found in Loki by trace and order id) and `api-reference` (one example per endpoint). The first two pass against both the Compose stack and the Kubernetes deployment. The Web UI has its own end-to-end suite: Playwright (`web-ui/e2e`, 18 tests) drives the real app in Chromium against the same running stack - routing and guards, order → hosted checkout → confirmed → delivered → return, declined and cancelled payments, vendor and admin screens - with each test creating its own users and products. CI (GitHub Actions) runs `mvn verify`, the Web UI build and a Kubernetes manifest check on every push and PR to `master`/`develop`; the Postman and Playwright suites need the full stack and are run locally.
 
@@ -320,5 +334,7 @@ What's shipped versus what's still ahead, per the project's own tracked roadmap.
 - [ ] CQRS-based analytics/reporting
 - [x] Centralized logging (Loki + Alloy + Grafana; JSON logs linked to traces)
 - [x] Metrics and alerting (Prometheus, business metrics, alert rules, Grafana dashboards)
-- [ ] Alert delivery (Alertmanager / notifications)
-- [ ] Caching layer (Redis)
+- [x] Alert delivery (Alertmanager → notification-service → in-app notifications for the admins)
+- [ ] Alert delivery outside the system (Slack / email / pager)
+- [x] Catalog caching (in-memory copies invalidated through a Redis version token) and a k6 load test
+- [ ] Performance: other hot paths (order list, catalog pagination)

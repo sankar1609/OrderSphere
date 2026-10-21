@@ -64,6 +64,10 @@
     {
       "key": "auditBaseUrl",
       "value": "{{gatewayBaseUrl}}/audit-service"
+    },
+    {
+      "key": "alertmanagerUrl",
+      "value": "http://localhost:9093"
     }
   ],
   "item": [
@@ -2360,6 +2364,43 @@
           ]
         },
         {
+          "name": "List Products Again (served from the catalog cache)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/products",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "inventory",
+                "products"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"Catalog shows 10 on hand before the restock\", function () {",
+                  "    var p = pm.response.json().filter(function (x) { return x.sku === pm.collectionVariables.get('sku'); })[0];",
+                  "    pm.expect(p.quantityOnHand).to.eql(10);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Vendor Restocks +5",
           "request": {
             "method": "POST",
@@ -2401,6 +2442,81 @@
                   "    var b = pm.response.json();",
                   "    pm.expect(b.quantityOnHand).to.eql(15);",
                   "    pm.expect(b.availableQuantity).to.eql(15);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Catalog Shows the Restock Immediately",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/products",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "inventory",
+                "products"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"Cached catalog was invalidated: 15 on hand\", function () {",
+                  "    var p = pm.response.json().filter(function (x) { return x.sku === pm.collectionVariables.get('sku'); })[0];",
+                  "    pm.expect(p.quantityOnHand).to.eql(15);",
+                  "    pm.expect(p.availableQuantity).to.eql(15);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Product Shows the Restock Immediately",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/products/{{sku}}",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "inventory",
+                "products",
+                "{{sku}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"15 on hand\", function () {",
+                  "    pm.expect(pm.response.json().quantityOnHand).to.eql(15);",
                   "});"
                 ]
               }
@@ -5220,7 +5336,7 @@
       ]
     },
     {
-      "name": "11. Metrics & Alerts (Prometheus)",
+      "name": "11. Metrics & Alerts (Prometheus, Alertmanager)",
       "item": [
         {
           "name": "Service Metrics Through The Gateway Without The Scrape Token [expect 401]",
@@ -5565,6 +5681,218 @@
                 "api",
                 "v1",
                 "rules"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Alert Webhook Without The Token [expect 401]",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 401', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"alerts\": [\n    {\n      \"status\": \"firing\",\n      \"labels\": {\n        \"alertname\": \"Forged-{{runId}}\",\n        \"severity\": \"critical\"\n      },\n      \"annotations\": {\n        \"summary\": \"Should never be delivered\"\n      }\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{notificationBaseUrl}}/notifications/alerts",
+              "host": [
+                "{{notificationBaseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "alerts"
+              ]
+            },
+            "description": "Alertmanager's webhook is reachable through the gateway, so it only answers the shared webhook token (ALERT_WEBHOOK_TOKEN)."
+          }
+        },
+        {
+          "name": "Alert Webhook With An Admin Token [expect 401]",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 401', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"alerts\": [\n    {\n      \"status\": \"firing\",\n      \"labels\": {\n        \"alertname\": \"Forged-{{runId}}\",\n        \"severity\": \"critical\"\n      },\n      \"annotations\": {\n        \"summary\": \"Should never be delivered\"\n      }\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{notificationBaseUrl}}/notifications/alerts",
+              "host": [
+                "{{notificationBaseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "alerts"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Prometheus Sends Alerts To Alertmanager",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('One active Alertmanager', function () {",
+                  "    var active = pm.response.json().data.activeAlertmanagers.map(function (a) { return a.url; });",
+                  "    pm.expect(active).to.eql(['http://alertmanager:9093/api/v2/alerts']);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{prometheusUrl}}/api/v1/alertmanagers",
+              "host": [
+                "{{prometheusUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alertmanagers"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Fire A Test Alert In Alertmanager",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('alertAttempt', 0);",
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "[\n  {\n    \"labels\": {\n      \"alertname\": \"PostmanAlert-{{runId}}\",\n      \"severity\": \"warning\",\n      \"service\": \"postman\"\n    },\n    \"annotations\": {\n      \"summary\": \"Test alert from the feature-coverage collection\",\n      \"description\": \"Posted straight to Alertmanager; nothing is wrong.\"\n    }\n  }\n]"
+            },
+            "url": {
+              "raw": "{{alertmanagerUrl}}/api/v2/alerts",
+              "host": [
+                "{{alertmanagerUrl}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "alerts"
+              ]
+            },
+            "description": "Stands in for Prometheus firing a rule: Alertmanager treats it like any other alert and delivers it to notification-service after its group_wait (10s)."
+          }
+        },
+        {
+          "name": "The Alert Reaches The Admin's Notifications",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (Number(pm.collectionVariables.get('alertAttempt') || 0) > 0) { setTimeout(function () {}, 3000); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var attempt = Number(pm.collectionVariables.get('alertAttempt') || 0);",
+                  "var name = 'PostmanAlert-' + pm.collectionVariables.get('runId');",
+                  "var mine = pm.response.code === 200 ? pm.response.json().filter(function (n) { return n.message.indexOf(name) !== -1; }) : [];",
+                  "if (mine.length === 0 && attempt < 20) {",
+                  "    pm.collectionVariables.set('alertAttempt', attempt + 1);",
+                  "    postman.setNextRequest(pm.info.requestName);",
+                  "    return;",
+                  "}",
+                  "pm.collectionVariables.set('alertAttempt', 0);",
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('The alert is an in-app notification for the admin', function () {",
+                  "    pm.expect(mine.length, 'notifications for ' + name).to.eql(1);",
+                  "    pm.expect(mine[0].templateKey).to.eql('SYSTEM_ALERT');",
+                  "    pm.expect(mine[0].channel).to.eql('IN_APP');",
+                  "    pm.expect(mine[0].message).to.eql('[warning] ' + name + ': Test alert from the feature-coverage collection. Posted straight to Alertmanager; nothing is wrong.');",
+                  "});",
+                  "pm.test('The forged alerts were not delivered', function () {",
+                  "    var forged = pm.response.json().filter(function (n) { return n.message.indexOf('Forged-' + pm.collectionVariables.get('runId')) !== -1; });",
+                  "    pm.expect(forged).to.eql([]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{notificationBaseUrl}}/notifications",
+              "host": [
+                "{{notificationBaseUrl}}"
+              ],
+              "path": [
+                "notifications"
               ]
             }
           }

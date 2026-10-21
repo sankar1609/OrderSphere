@@ -84,6 +84,7 @@ jobs:
           diff observability/grafana/provisioning/dashboards/ordersphere-services.json k8s/base/observability/files/ordersphere-services.json
           diff observability/prometheus/prometheus.yml k8s/base/observability/files/prometheus.yml
           diff observability/prometheus/alerts.yml k8s/base/observability/files/alerts.yml
+          diff observability/alertmanager/alertmanager.yml k8s/base/observability/files/alertmanager.yml
 
       # kubectl (with built-in kustomize) is preinstalled on ubuntu-latest runners.
       - name: Render the docker-desktop overlay
