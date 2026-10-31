@@ -9,14 +9,16 @@ import com.ordersphere.notification.domain.NotificationPreference;
 import com.ordersphere.notification.domain.NotificationStatus;
 import com.ordersphere.notification.dto.CreateNotificationRequest;
 import com.ordersphere.notification.dto.NotificationResponse;
+import com.ordersphere.notification.dto.PageResponse;
 import com.ordersphere.notification.exception.NotificationNotFoundException;
 import com.ordersphere.notification.repository.NotificationPreferenceRepository;
 import com.ordersphere.notification.repository.NotificationRepository;
 import com.ordersphere.notification.template.NotificationTemplateRenderer;
-import java.util.List;
 import java.util.Map;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -72,11 +74,14 @@ public class NotificationService {
     return NotificationResponse.from(findNotificationOrThrow(username, isAdmin, id));
   }
 
+  /** Newest first. */
   @Transactional(readOnly = true)
-  public List<NotificationResponse> listOwn(String username) {
-    return notificationRepository.findByRecipientUsername(username).stream()
-        .map(NotificationResponse::from)
-        .toList();
+  public PageResponse<NotificationResponse> listOwn(String username, int page, int size) {
+    return PageResponse.of(
+        notificationRepository
+            .findByRecipientUsername(
+                username, PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "id")))
+            .map(NotificationResponse::from));
   }
 
   @Transactional

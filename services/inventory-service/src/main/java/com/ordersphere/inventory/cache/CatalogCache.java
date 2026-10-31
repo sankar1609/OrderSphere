@@ -7,7 +7,6 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -61,8 +60,9 @@ public class CatalogCache {
 
   private static final Logger log = LoggerFactory.getLogger(CatalogCache.class);
   private static final Object PENDING_EVICTION = new Object();
-  private static final String LIST = "*";
-  private static final int MAX_PRODUCT_ENTRIES = 10_000;
+
+  /** Bounds the memory a client walking every page (or SKU) could make this instance hold. */
+  private static final int MAX_ENTRIES = 10_000;
 
   private record Entry(String version, String json, Instant loadedAt) {}
 
@@ -73,7 +73,7 @@ public class CatalogCache {
   private final Duration ttl;
   private final Clock clock;
 
-  /** Key: {@link #LIST} for the whole catalog, otherwise a SKU. */
+  /** Key: {@code page:<page>:<size>} for a page of the catalog, otherwise a SKU (no ':' in it). */
   private final ConcurrentHashMap<String, Entry> entries = new ConcurrentHashMap<>();
 
   private final ConcurrentHashMap<String, Object> loadLocks = new ConcurrentHashMap<>();
@@ -107,9 +107,14 @@ public class CatalogCache {
     this.clock = clock;
   }
 
-  /** The whole catalog as the JSON the endpoint returns. */
-  public String listJson(Supplier<List<ProductResponse>> loader) {
-    return json(LIST, loader);
+  /** One page of the catalog as the JSON the endpoint returns. */
+  public String pageJson(int page, int size, Supplier<?> loader) {
+    return json("page:" + page + ":" + size, loader);
+  }
+
+  /** JSON for a response that isn't cached (a search). */
+  public String uncachedJson(Object value) {
+    return serialize(value);
   }
 
   /** One product as JSON. A loader that throws (unknown SKU) is not cached. */
@@ -139,8 +144,11 @@ public class CatalogCache {
         return entry.json();
       }
       String loaded = serialize(loader.get());
-      if (!LIST.equals(key) && entries.size() >= MAX_PRODUCT_ENTRIES) {
-        entries.keySet().removeIf(k -> !LIST.equals(k));
+      if (entries.size() >= MAX_ENTRIES) {
+        entries.clear();
+        // The locks are one per key too. A thread still holding a dropped one only means two
+        // loads of one key may overlap once - each still stamps its result correctly.
+        loadLocks.keySet().removeIf(k -> !k.equals(key));
       }
       // Stamped with the token read before loading: if the catalog changed meanwhile, the token
       // has too, and this entry won't be served.

@@ -11,6 +11,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -55,6 +56,11 @@ public class GlobalExceptionHandler {
             .reduce((a, b) -> a + "; " + b)
             .orElse("Validation failed");
     return errorResponse(HttpStatus.BAD_REQUEST, message);
+  }
+
+  @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+  public ResponseEntity<Object> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
+    return errorResponse(HttpStatus.BAD_REQUEST, "Invalid value for '" + ex.getName() + "'");
   }
 
   private ResponseEntity<Object> errorResponse(HttpStatus status, String message) {

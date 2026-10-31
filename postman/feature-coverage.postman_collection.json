@@ -859,14 +859,45 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
-                  "pm.test(\"Includes the new customer, with createdAt; saves the admin's id\", function () {",
+                  "pm.test(\"A page, oldest first: the bootstrapped admin is on it; saves the admin's id\", function () {",
                   "    var b = pm.response.json();",
-                  "    var me = b.filter(function (u) { return u.username === 'cust_' + pm.collectionVariables.get('runId'); })[0];",
-                  "    pm.expect(me, 'customer listed').to.exist;",
-                  "    pm.expect(me.role).to.eql('CUSTOMER');",
-                  "    pm.expect(me.createdAt).to.be.a('string');",
-                  "    var admin = b.filter(function (u) { return u.username === 'admin'; })[0];",
+                  "    pm.expect(b.page).to.eql(0);",
+                  "    pm.expect(b.size).to.eql(50);",
+                  "    pm.expect(b.total).to.be.at.least(b.items.length);",
+                  "    var admin = b.items.filter(function (u) { return u.username === 'admin'; })[0];",
+                  "    pm.expect(admin, 'admin listed').to.exist;",
                   "    pm.collectionVariables.set('adminUserId', admin.id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Admin Searches Users",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": "{{authBaseUrl}}/auth/admin/users?q=cust_{{runId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Finds the new customer on any page, with createdAt', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.total).to.eql(1);",
+                  "    pm.expect(b.items[0].username).to.eql('cust_' + pm.collectionVariables.get('runId'));",
+                  "    pm.expect(b.items[0].role).to.eql('CUSTOMER');",
+                  "    pm.expect(b.items[0].createdAt).to.be.a('string');",
                   "});"
                 ]
               }
@@ -1773,7 +1804,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.collectionVariables.set('sku', 'COV-' + pm.collectionVariables.get('runId'));"
+                  "pm.collectionVariables.set('sku', 'COV-' + pm.collectionVariables.get('runId'));",
+                  "pm.collectionVariables.set('skuLower', pm.collectionVariables.get('sku').toLowerCase());"
                 ]
               }
             },
@@ -2139,15 +2171,22 @@
               }
             ],
             "url": {
-              "raw": "{{inventoryBaseUrl}}/inventory/products",
+              "raw": "{{inventoryBaseUrl}}/inventory/products?q={{sku}}",
               "host": [
                 "{{inventoryBaseUrl}}"
               ],
               "path": [
                 "inventory",
                 "products"
+              ],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "{{sku}}"
+                }
               ]
-            }
+            },
+            "description": "The catalog is paged; q finds one product wherever it sorts."
           },
           "event": [
             {
@@ -2157,7 +2196,7 @@
                 "exec": [
                   "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
                   "pm.test(\"Catalog contains the new SKU\", function () {",
-                  "    var b = pm.response.json();",
+                  "    var b = pm.response.json().items;",
                   "    pm.expect(b.map(function (p) { return p.sku; })).to.include(pm.collectionVariables.get('sku'));",
                   "});"
                 ]
@@ -2364,7 +2403,7 @@
           ]
         },
         {
-          "name": "List Products Again (served from the catalog cache)",
+          "name": "Get The Product Again (served from the catalog cache)",
           "request": {
             "method": "GET",
             "header": [
@@ -2374,15 +2413,17 @@
               }
             ],
             "url": {
-              "raw": "{{inventoryBaseUrl}}/inventory/products",
+              "raw": "{{inventoryBaseUrl}}/inventory/products/{{sku}}",
               "host": [
                 "{{inventoryBaseUrl}}"
               ],
               "path": [
                 "inventory",
-                "products"
+                "products",
+                "{{sku}}"
               ]
-            }
+            },
+            "description": "One product, served from the catalog cache (pages of the catalog share the same version token)."
           },
           "event": [
             {
@@ -2392,7 +2433,7 @@
                 "exec": [
                   "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
                   "pm.test(\"Catalog shows 10 on hand before the restock\", function () {",
-                  "    var p = pm.response.json().filter(function (x) { return x.sku === pm.collectionVariables.get('sku'); })[0];",
+                  "    var p = pm.response.json();",
                   "    pm.expect(p.quantityOnHand).to.eql(10);",
                   "});"
                 ]
@@ -2459,15 +2500,17 @@
               }
             ],
             "url": {
-              "raw": "{{inventoryBaseUrl}}/inventory/products",
+              "raw": "{{inventoryBaseUrl}}/inventory/products/{{sku}}",
               "host": [
                 "{{inventoryBaseUrl}}"
               ],
               "path": [
                 "inventory",
-                "products"
+                "products",
+                "{{sku}}"
               ]
-            }
+            },
+            "description": "One product, served from the catalog cache (pages of the catalog share the same version token)."
           },
           "event": [
             {
@@ -2477,7 +2520,7 @@
                 "exec": [
                   "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
                   "pm.test(\"Cached catalog was invalidated: 15 on hand\", function () {",
-                  "    var p = pm.response.json().filter(function (x) { return x.sku === pm.collectionVariables.get('sku'); })[0];",
+                  "    var p = pm.response.json();",
                   "    pm.expect(p.quantityOnHand).to.eql(15);",
                   "    pm.expect(p.availableQuantity).to.eql(15);",
                   "});"
@@ -3141,7 +3184,11 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
-                  "pm.test('A list of findings', function () { pm.expect(pm.response.json()).to.be.an('array'); });"
+                  "pm.test('A page of findings', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.items).to.be.an('array');",
+                  "    pm.expect(b.total).to.be.a('number');",
+                  "});"
                 ]
               }
             }
@@ -3181,7 +3228,8 @@
                   "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
                   "pm.test(\"New customer has no orders\", function () {",
                   "    var b = pm.response.json();",
-                  "    pm.expect(b).to.eql([]);",
+                  "    pm.expect(b.items).to.eql([]);",
+                  "    pm.expect(b.total).to.eql(0);",
                   "});"
                 ]
               }
@@ -3476,12 +3524,18 @@
               }
             ],
             "url": {
-              "raw": "{{ordersBaseUrl}}/orders",
+              "raw": "{{ordersBaseUrl}}/orders?size=200",
               "host": [
                 "{{ordersBaseUrl}}"
               ],
               "path": [
                 "orders"
+              ],
+              "query": [
+                {
+                  "key": "size",
+                  "value": "200"
+                }
               ]
             }
           },
@@ -3493,7 +3547,7 @@
                 "exec": [
                   "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
                   "pm.test(\"Order listed\", function () {",
-                  "    var b = pm.response.json();",
+                  "    var b = pm.response.json().items;",
                   "    pm.expect(b.map(function (o) { return o.id; })).to.include(Number(pm.collectionVariables.get('stockOrderId')));",
                   "});"
                 ]
@@ -3530,7 +3584,8 @@
                   "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
                   "pm.test(\"Empty list\", function () {",
                   "    var b = pm.response.json();",
-                  "    pm.expect(b).to.eql([]);",
+                  "    pm.expect(b.items).to.eql([]);",
+                  "    pm.expect(b.total).to.eql(0);",
                   "});"
                 ]
               }
@@ -3698,7 +3753,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "var body = pm.response.code === 200 ? pm.response.json() : null;",
+                  "var body = pm.response.code === 200 ? pm.response.json().items : null;",
                   "var pollKey = 'poll_' + pm.info.requestId;",
                   "var polls = Number(pm.collectionVariables.get(pollKey) || 0);",
                   "var done = !!body && (body.filter(function (n) { return n.templateKey === 'STOCK_LOW' && n.message.indexOf(pm.collectionVariables.get('sku') + '-LOW') >= 0; }).length === 1);",
@@ -3806,7 +3861,7 @@
                 "exec": [
                   "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
                   "pm.test(\"Exactly one STOCK_LOW alert\", function () {",
-                  "    var b = pm.response.json();",
+                  "    var b = pm.response.json().items;",
                   "    var body = b;",
                   "    pm.expect(body.filter(function (n) { return n.templateKey === 'STOCK_LOW' && n.message.indexOf(pm.collectionVariables.get('sku') + '-LOW') >= 0; }).length).to.eql(1);",
                   "});"
@@ -5856,7 +5911,7 @@
                 "exec": [
                   "var attempt = Number(pm.collectionVariables.get('alertAttempt') || 0);",
                   "var name = 'PostmanAlert-' + pm.collectionVariables.get('runId');",
-                  "var mine = pm.response.code === 200 ? pm.response.json().filter(function (n) { return n.message.indexOf(name) !== -1; }) : [];",
+                  "var mine = pm.response.code === 200 ? pm.response.json().items.filter(function (n) { return n.message.indexOf(name) !== -1; }) : [];",
                   "if (mine.length === 0 && attempt < 20) {",
                   "    pm.collectionVariables.set('alertAttempt', attempt + 1);",
                   "    postman.setNextRequest(pm.info.requestName);",
@@ -5871,7 +5926,7 @@
                   "    pm.expect(mine[0].message).to.eql('[warning] ' + name + ': Test alert from the feature-coverage collection. Posted straight to Alertmanager; nothing is wrong.');",
                   "});",
                   "pm.test('The forged alerts were not delivered', function () {",
-                  "    var forged = pm.response.json().filter(function (n) { return n.message.indexOf('Forged-' + pm.collectionVariables.get('runId')) !== -1; });",
+                  "    var forged = pm.response.json().items.filter(function (n) { return n.message.indexOf('Forged-' + pm.collectionVariables.get('runId')) !== -1; });",
                   "    pm.expect(forged).to.eql([]);",
                   "});"
                 ]
@@ -6362,6 +6417,322 @@
                 "audit",
                 "entries",
                 "{{auditSeq}}"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "13. Paging (orders, catalog, notifications)",
+      "description": "The three lists that grow without bound - a customer's orders, the catalog, a user's notifications - are read a page at a time: {items, page, size, total}, size 1-200.",
+      "item": [
+        {
+          "name": "My Orders, One Per Page",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var b = pm.response.json();",
+                  "pm.test('A page: items, page, size, total', function () {",
+                  "    pm.expect(b).to.have.all.keys('items', 'page', 'size', 'total');",
+                  "    pm.expect(b.page).to.eql(0);",
+                  "    pm.expect(b.size).to.eql(1);",
+                  "    pm.expect(b.items.length).to.be.at.most(1);",
+                  "    pm.expect(b.total).to.be.at.least(b.items.length);",
+                  "});",
+                  "pm.test('Newest first: the order placed last heads the list', function () {",
+                  "    pm.expect(b.total, 'orders placed in folder 5').to.be.at.least(1);",
+                  "    pm.expect(b.items[0].id).to.be.at.least(Number(pm.collectionVariables.get('stockOrderId')));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders?size=1",
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ],
+              "query": [
+                {
+                  "key": "size",
+                  "value": "1"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Catalog Pages Are In SKU Order",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var b = pm.response.json();",
+                  "pm.test('A page: items, page, size, total', function () {",
+                  "    pm.expect(b).to.have.all.keys('items', 'page', 'size', 'total');",
+                  "    pm.expect(b.page).to.eql(0);",
+                  "    pm.expect(b.size).to.eql(5);",
+                  "    pm.expect(b.items.length).to.be.at.most(5);",
+                  "    pm.expect(b.total).to.be.at.least(b.items.length);",
+                  "});",
+                  "pm.test('Sorted by SKU', function () {",
+                  "    var skus = b.items.map(function (p) { return p.sku; });",
+                  "    pm.expect(skus).to.eql(skus.slice().sort());",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/products?size=5",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "inventory",
+                "products"
+              ],
+              "query": [
+                {
+                  "key": "size",
+                  "value": "5"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Catalog Search Ignores Case",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('The product is found by its SKU in lower case', function () {",
+                  "    var b = pm.response.json();",
+                  "    pm.expect(b.items.map(function (p) { return p.sku; })).to.include(pm.collectionVariables.get('sku'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/products?q={{skuLower}}",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "inventory",
+                "products"
+              ],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "{{skuLower}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Notifications, Two Per Page",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var b = pm.response.json();",
+                  "pm.test('A page: items, page, size, total', function () {",
+                  "    pm.expect(b).to.have.all.keys('items', 'page', 'size', 'total');",
+                  "    pm.expect(b.page).to.eql(0);",
+                  "    pm.expect(b.size).to.eql(2);",
+                  "    pm.expect(b.items.length).to.be.at.most(2);",
+                  "    pm.expect(b.total).to.be.at.least(b.items.length);",
+                  "});",
+                  "pm.test('Newest first', function () {",
+                  "    var ids = b.items.map(function (n) { return n.id; });",
+                  "    pm.expect(ids).to.eql(ids.slice().sort(function (x, y) { return y - x; }));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{vendToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{notificationBaseUrl}}/notifications?size=2",
+              "host": [
+                "{{notificationBaseUrl}}"
+              ],
+              "path": [
+                "notifications"
+              ],
+              "query": [
+                {
+                  "key": "size",
+                  "value": "2"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Order List Rejects size=0 [expect 400]",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders?size=0",
+              "host": [
+                "{{ordersBaseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ],
+              "query": [
+                {
+                  "key": "size",
+                  "value": "0"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Catalog Rejects size=201 [expect 400]",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{custToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/products?size=201",
+              "host": [
+                "{{inventoryBaseUrl}}"
+              ],
+              "path": [
+                "inventory",
+                "products"
+              ],
+              "query": [
+                {
+                  "key": "size",
+                  "value": "201"
+                }
+              ]
+            },
+            "description": "At most 200 per page."
+          }
+        },
+        {
+          "name": "Notifications Reject page=-1 [expect 400]",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{vendToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{notificationBaseUrl}}/notifications?page=-1",
+              "host": [
+                "{{notificationBaseUrl}}"
+              ],
+              "path": [
+                "notifications"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "-1"
+                }
               ]
             }
           }

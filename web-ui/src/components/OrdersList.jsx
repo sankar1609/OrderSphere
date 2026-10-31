@@ -3,10 +3,13 @@ import { Link, useLocation, useNavigate } from "react-router";
 import { getOrder, listMyOrders } from "../api";
 import { cellStyle } from "../styles";
 import { usePageTitle } from "../usePageTitle";
+import { usePageParams } from "../usePageParams";
+import Pager from "./Pager";
 import { formatMoney } from "../format";
 
 const POLL_INTERVAL_MS = 2000;
 const POLL_ATTEMPTS = 15;
+const PAGE_SIZE = 20;
 
 /**
  * After the payment provider sends the customer back, the order settles asynchronously (webhook →
@@ -84,7 +87,8 @@ export default function OrdersList({ token, onUnauthorized }) {
       navigate(location.pathname, { replace: true, state: null });
     }
   }, []);
-  const [orders, setOrders] = useState(null);
+  const { page, setPage } = usePageParams();
+  const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const paymentMessage = usePaymentReturn(
@@ -95,16 +99,26 @@ export default function OrdersList({ token, onUnauthorized }) {
   );
 
   useEffect(() => {
-    listMyOrders(token)
-      .then(setOrders)
+    // A newer page or search replaces this request: its answer, if it comes later, is dropped.
+    let current = true;
+    listMyOrders(token, page, PAGE_SIZE)
+      .then((data) => current && setResult(data))
       .catch((err) => {
+        if (!current) {
+          return;
+        }
         if (err.status === 401) {
           onUnauthorized();
         } else {
           setError(err.message);
         }
       });
-  }, [token, refreshKey]);
+    return () => {
+      current = false;
+    };
+  }, [token, refreshKey, page]);
+
+  const orders = result?.items ?? null;
 
   return (
     <div>
@@ -117,7 +131,7 @@ export default function OrdersList({ token, onUnauthorized }) {
       )}
       {error && <p style={{ color: "crimson" }}>{error}</p>}
       {!error && orders === null && <p>Loading...</p>}
-      {orders && orders.length === 0 && <p>No orders yet.</p>}
+      {result && result.total === 0 && <p>No orders yet.</p>}
 
       {orders && orders.length > 0 && (
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -162,6 +176,9 @@ export default function OrdersList({ token, onUnauthorized }) {
             ))}
           </tbody>
         </table>
+      )}
+      {result && result.total > 0 && (
+        <Pager result={result} onPage={setPage} noun={["order", "orders"]} />
       )}
     </div>
   );

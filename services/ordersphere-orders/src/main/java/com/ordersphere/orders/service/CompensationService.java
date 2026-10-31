@@ -5,6 +5,7 @@ import com.ordersphere.orders.client.PaymentClient;
 import com.ordersphere.orders.client.ServiceTokenProvider;
 import com.ordersphere.orders.domain.Compensation;
 import com.ordersphere.orders.dto.CompensationResponse;
+import com.ordersphere.orders.dto.PageResponse;
 import com.ordersphere.orders.exception.CompensationCallException;
 import com.ordersphere.orders.exception.CompensationNotFoundException;
 import com.ordersphere.orders.exception.CompensationNotRetryableException;
@@ -13,11 +14,12 @@ import com.ordersphere.orders.repository.CompensationRepository;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -105,10 +107,13 @@ public class CompensationService {
 
   /** Admin view: compensations in the given state, most recently changed first. */
   @Transactional(readOnly = true)
-  public List<CompensationResponse> list(Compensation.Status status) {
-    return repository.findByStatusOrderByUpdatedAtDesc(status).stream()
-        .map(CompensationResponse::from)
-        .toList();
+  public PageResponse<CompensationResponse> list(Compensation.Status status, int page, int size) {
+    // By id as well: rows updated at the same instant must keep their order from page to page.
+    Sort latestFirst = Sort.by(Sort.Direction.DESC, "updatedAt", "id");
+    return PageResponse.of(
+        repository
+            .findByStatus(status, PageRequest.of(page, size, latestFirst))
+            .map(CompensationResponse::from));
   }
 
   @Transactional(readOnly = true)

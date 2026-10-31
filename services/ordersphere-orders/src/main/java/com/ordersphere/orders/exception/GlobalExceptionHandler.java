@@ -1,6 +1,7 @@
 package com.ordersphere.orders.exception;
 
 import com.ordersphere.orders.client.ServiceTokenProvider;
+import jakarta.validation.ConstraintViolationException;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -9,6 +10,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -60,6 +62,17 @@ public class GlobalExceptionHandler {
             .reduce((a, b) -> a + "; " + b)
             .orElse("Validation failed");
     return errorResponse(HttpStatus.BAD_REQUEST, message);
+  }
+
+  /** Out-of-range query parameters, e.g. {@code size=0} on a list. */
+  @ExceptionHandler(ConstraintViolationException.class)
+  public ResponseEntity<Object> handleConstraintViolation(ConstraintViolationException ex) {
+    return errorResponse(HttpStatus.BAD_REQUEST, ex.getMessage());
+  }
+
+  @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+  public ResponseEntity<Object> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
+    return errorResponse(HttpStatus.BAD_REQUEST, "Invalid value for '" + ex.getName() + "'");
   }
 
   private ResponseEntity<Object> errorResponse(HttpStatus status, String message) {

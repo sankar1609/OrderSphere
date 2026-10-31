@@ -68,6 +68,8 @@ A chain inside one database has one weakness: whoever controls the database coul
 
 The catalog reads (`GET /inventory/products`, `/{sku}`) are the most-called endpoints and used to read every product from Postgres each time. `CatalogCache` now keeps the response - the ready-made JSON - in each inventory-service instance's memory. Redis holds a single small value, the catalog's version token. A read fetches the token and serves its copy if the copy carries the same one; a JPA entity listener on `Product` writes a new token after any transaction that changed a product commits, which makes every instance's copy stale at once. So create, restock, reserve, release and reservation expiry all invalidate without each remembering to, and a rolled-back change invalidates nothing.
 
+The catalog list is paged (SKU order, `{items, page, size, total}`), so the cache holds one copy per page and size; searches (`q`) aren't cached - any text would be a key - and go to the database.
+
 Three details matter. A copy is stamped with the token read *before* the database was read, so a copy loaded while a change was committing is never served as current. Only one thread reloads after a change; the rest wait for its result. And the cache fails open: with Redis unreachable, reads go to the database, a token that couldn't be written is written when Redis answers again, and copies expire after 30 seconds regardless. The cache only speeds reads up - a reservation still checks stock in the database under a row lock, so a stale number can't oversell.
 
 The JSON itself is deliberately not stored in Redis: that would move 42 KB over one Redis connection on every read, where the token is a few bytes. Under the load test, inventory-service with the cache on serves about 2.4 times the catalog reads (about 1.5 times measured through the gateway, which then becomes the limit). Numbers and method: `loadtest/README.md`.
@@ -306,7 +308,7 @@ Every module carries its own test suite; `common-events` is the most heavily cov
 
 Integration coverage runs against real dependencies via Testcontainers (Postgres and RabbitMQ), rather than mocking the database or broker — the suites in `ordersphere-orders` and `common-events` in particular exercise actual message publish/consume round-trips. Every `@SpringBootTest`-based integration test class carries `@DirtiesContext(classMode = AFTER_CLASS)`: without it, Testcontainers tears down the Postgres/RabbitMQ containers right after the test class finishes, but the cached Spring context (and its live `@Scheduled` jobs and AMQP listeners) can outlive them until the JVM exits — the mismatch shows up as retry-spam against dead containers and, eventually, Surefire force-killing the fork after a 30s hang.
 
-A k6 load test (`loadtest/run.sh`, local only) reads the catalog with the cache off and on while stock keeps changing, and fails if any read after a restock is stale; see `loadtest/README.md`.
+A k6 load test (`loadtest/run.sh`, local only) reads the catalog with the cache off and on while stock keeps changing, and fails if any read after a restock is stale; a second one (`loadtest/orders.sh`) reads My Orders for customers with 500 orders each; see `loadtest/README.md`.
 
 End to end, three Postman collections run against a live stack with newman - `full-order-flow` (happy path, decline, cancellation with refund, negative checks), `feature-coverage` (auth/RBAC, inventory, payments and reconciliation, returns, notifications, Eureka, RabbitMQ, circuit breakers, an order's lines found in Loki by trace and order id) and `api-reference` (one example per endpoint). The first two pass against both the Compose stack and the Kubernetes deployment. The Web UI has its own end-to-end suite: Playwright (`web-ui/e2e`, 18 tests) drives the real app in Chromium against the same running stack - routing and guards, order → hosted checkout → confirmed → delivered → return, declined and cancelled payments, vendor and admin screens - with each test creating its own users and products. CI (GitHub Actions) runs `mvn verify`, the Web UI build and a Kubernetes manifest check on every push and PR to `master`/`develop`; the Postman and Playwright suites need the full stack and are run locally.
 
@@ -337,4 +339,4 @@ What's shipped versus what's still ahead, per the project's own tracked roadmap.
 - [x] Alert delivery (Alertmanager → notification-service → in-app notifications for the admins)
 - [ ] Alert delivery outside the system (Slack / email / pager)
 - [x] Catalog caching (in-memory copies invalidated through a Redis version token) and a k6 load test
-- [ ] Performance: other hot paths (order list, catalog pagination)
+- [x] Pagination of the lists that grow: orders, the catalog (with search) and notifications

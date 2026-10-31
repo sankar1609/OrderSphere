@@ -3,31 +3,50 @@ import { listProducts } from "../api";
 import { cellStyle } from "../styles";
 import { formatMoney } from "../format";
 import { usePageTitle } from "../usePageTitle";
+import { usePageParams } from "../usePageParams";
+import Pager from "./Pager";
+import SearchBox from "./SearchBox";
+
+const PAGE_SIZE = 50;
 
 export default function ProductsList({ token, onUnauthorized }) {
   usePageTitle("Products");
-  const [products, setProducts] = useState(null);
+  const { page, query, setPage, setQuery } = usePageParams();
+  const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    listProducts(token)
-      .then(setProducts)
+    // A newer page or search replaces this request: its answer, if it comes later, is dropped.
+    let current = true;
+    listProducts(token, { page, size: PAGE_SIZE, query })
+      .then((data) => current && setResult(data))
       .catch((err) => {
+        if (!current) {
+          return;
+        }
         if (err.status === 401) {
           onUnauthorized();
         } else {
           setError(err.message);
         }
       });
-  }, [token]);
+    return () => {
+      current = false;
+    };
+  }, [token, page, query]);
+
+  const products = result?.items ?? null;
 
   return (
     <div>
       <h2>Products</h2>
+      <SearchBox query={query} onSearch={setQuery} label="Search catalog" placeholder="SKU or name" />
 
       {error && <p style={{ color: "crimson" }}>{error}</p>}
       {!error && products === null && <p>Loading...</p>}
-      {products && products.length === 0 && <p>No products yet.</p>}
+      {result && result.total === 0 && (
+        <p>{query ? `No products match "${query}".` : "No products yet."}</p>
+      )}
 
       {products && products.length > 0 && (
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -54,6 +73,9 @@ export default function ProductsList({ token, onUnauthorized }) {
             ))}
           </tbody>
         </table>
+      )}
+      {result && result.total > 0 && (
+        <Pager result={result} onPage={setPage} noun={["product", "products"]} />
       )}
     </div>
   );

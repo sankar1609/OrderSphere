@@ -3,13 +3,18 @@ import { createProduct, listProducts, restockProduct } from "../api";
 import { cellStyle } from "../styles";
 import { formatMoney } from "../format";
 import { usePageTitle } from "../usePageTitle";
+import { usePageParams } from "../usePageParams";
+import Pager from "./Pager";
+import SearchBox from "./SearchBox";
 
+const PAGE_SIZE = 50;
 const emptyForm = { sku: "", name: "", unitPrice: "", quantityOnHand: "0", reorderThreshold: "0" };
 
 /** ADMIN/VENDOR screen: add products to the catalog and restock existing ones. */
 export default function ManageProducts({ token, currentUsername, isAdmin, onUnauthorized }) {
   usePageTitle("Manage Products");
-  const [products, setProducts] = useState(null);
+  const { page, query, setPage, setQuery } = usePageParams();
+  const [result, setResult] = useState(null);
   const [loadError, setLoadError] = useState(null);
   const [form, setForm] = useState(emptyForm);
   const [formMessage, setFormMessage] = useState(null);
@@ -27,10 +32,17 @@ export default function ManageProducts({ token, currentUsername, isAdmin, onUnau
   }
 
   useEffect(() => {
-    listProducts(token)
-      .then(setProducts)
-      .catch((err) => handleError(err, setLoadError));
-  }, [token, refreshKey]);
+    // A newer page or search replaces this request: its answer, if it comes later, is dropped.
+    let current = true;
+    listProducts(token, { page, size: PAGE_SIZE, query })
+      .then((data) => current && setResult(data))
+      .catch((err) => current && handleError(err, setLoadError));
+    return () => {
+      current = false;
+    };
+  }, [token, refreshKey, page, query]);
+
+  const products = result?.items ?? null;
 
   function updateField(field) {
     return (event) => setForm({ ...form, [field]: event.target.value });
@@ -67,7 +79,10 @@ export default function ManageProducts({ token, currentUsername, isAdmin, onUnau
     }
     try {
       const updated = await restockProduct(token, sku, quantity);
-      setProducts((current) => current.map((p) => (p.sku === updated.sku ? updated : p)));
+      setResult((current) => ({
+        ...current,
+        items: current.items.map((p) => (p.sku === updated.sku ? updated : p)),
+      }));
       setRestockQuantities({ ...restockQuantities, [sku]: "" });
       setRestockMessage({
         tone: "success",
@@ -164,6 +179,7 @@ export default function ManageProducts({ token, currentUsername, isAdmin, onUnau
       </form>
 
       <h3>Catalog</h3>
+      <SearchBox query={query} onSearch={setQuery} label="Search catalog" placeholder="SKU or name" />
       {restockMessage && (
         <p role="status" style={{ color: toneColors[restockMessage.tone] }}>
           {restockMessage.text}
@@ -171,7 +187,9 @@ export default function ManageProducts({ token, currentUsername, isAdmin, onUnau
       )}
       {loadError && <p style={{ color: "crimson" }}>{loadError}</p>}
       {!loadError && products === null && <p>Loading...</p>}
-      {products && products.length === 0 && <p>No products yet.</p>}
+      {result && result.total === 0 && (
+        <p>{query ? `No products match "${query}".` : "No products yet."}</p>
+      )}
 
       {products && products.length > 0 && (
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -232,6 +250,9 @@ export default function ManageProducts({ token, currentUsername, isAdmin, onUnau
             })}
           </tbody>
         </table>
+      )}
+      {result && result.total > 0 && (
+        <Pager result={result} onPage={setPage} noun={["product", "products"]} />
       )}
     </div>
   );

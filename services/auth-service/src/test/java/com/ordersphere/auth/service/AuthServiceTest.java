@@ -12,6 +12,7 @@ import com.ordersphere.auth.domain.Role;
 import com.ordersphere.auth.domain.User;
 import com.ordersphere.auth.dto.AuthResponse;
 import com.ordersphere.auth.dto.LoginRequest;
+import com.ordersphere.auth.dto.PageResponse;
 import com.ordersphere.auth.dto.RegisterRequest;
 import com.ordersphere.auth.dto.UserResponse;
 import com.ordersphere.auth.exception.DuplicateUsernameException;
@@ -32,6 +33,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -174,14 +177,19 @@ class AuthServiceTest {
   }
 
   @Test
-  void listUsersReturnsEveryUserInIdOrder() {
+  void listUsersReturnsAPageInIdOrder() {
     User alice = new User("alice", "hashed", Role.CUSTOMER);
     alice.setId(1L);
     User bob = new User("bob", "hashed", Role.VENDOR);
     bob.setId(2L);
-    when(userRepository.findAll(Sort.by("id"))).thenReturn(List.of(alice, bob));
+    PageRequest firstPage = PageRequest.of(0, 2, Sort.by("id"));
+    when(userRepository.findAll(firstPage))
+        .thenReturn(new PageImpl<>(List.of(alice, bob), firstPage, 3));
 
-    assertThat(authService.listUsers())
+    PageResponse<UserResponse> result = authService.listUsers(0, 2, null);
+
+    assertThat(result.total()).isEqualTo(3);
+    assertThat(result.items())
         .extracting(UserResponse::username, UserResponse::role)
         .containsExactly(tuple("alice", Role.CUSTOMER), tuple("bob", Role.VENDOR));
   }

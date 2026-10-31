@@ -4,6 +4,7 @@ import com.ordersphere.orders.client.ServiceTokenProvider;
 import com.ordersphere.orders.client.ShippingClient;
 import com.ordersphere.orders.domain.Order;
 import com.ordersphere.orders.domain.OrderStatus;
+import com.ordersphere.orders.dto.PageResponse;
 import com.ordersphere.orders.dto.UnshippedOrderResponse;
 import com.ordersphere.orders.exception.OrderNotFoundException;
 import com.ordersphere.orders.exception.ShipmentCreationException;
@@ -13,11 +14,12 @@ import com.ordersphere.orders.repository.OrderRepository;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -146,12 +148,12 @@ public class OrderShipmentService {
 
   /** Admin view: paid orders still without a shipment, oldest first. */
   @Transactional(readOnly = true)
-  public List<UnshippedOrderResponse> listUnshipped() {
-    return orderRepository
-        .findByStatusAndShipmentIdIsNullOrderByUpdatedAtAsc(OrderStatus.CONFIRMED)
-        .stream()
-        .map(UnshippedOrderResponse::from)
-        .toList();
+  public PageResponse<UnshippedOrderResponse> listUnshipped(int page, int size) {
+    // By id as well: rows updated at the same instant must keep their order from page to page.
+    return PageResponse.of(
+        orderRepository
+            .findUnshipped(PageRequest.of(page, size, Sort.by("updatedAt", "id")))
+            .map(UnshippedOrderResponse::from));
   }
 
   /**

@@ -39,7 +39,7 @@
   - User registration and login (`POST /auth/register`, `POST /auth/login`, `GET /auth/me`)
   - The only JWT signer: RS256 with an RSA key generated on first start and stored in `signing_keys` (or supplied via `JWT_PRIVATE_KEY`/`JWT_PUBLIC_KEY`); public keys published at `GET /auth/.well-known/jwks.json`
   - Service identities via OAuth2 client credentials (`POST /auth/token`, HTTP Basic client id/secret) → 5-minute `SERVICE`-role token; clients configured as `auth.clients.<id>.secret` (`orders-service`, secret `ORDERS_CLIENT_SECRET`)
-  - Role-based access control (RBAC); ADMIN can list users (`GET /auth/admin/users`) and change anyone's role but their own (`PATCH /auth/admin/users/{id}/role`; 409 for your own, so the last admin can't lock everyone out)
+  - Role-based access control (RBAC); ADMIN can list users (`GET /auth/admin/users`, paged oldest first, default 50, with a server-side username search `q`) and change anyone's role but their own (`PATCH /auth/admin/users/{id}/role`; 409 for your own, so the last admin can't lock everyone out)
   - Password hashing with bcrypt; passwords 8-72 characters (bcrypt ignores bytes past 72)
   - Usernames 3-50 of `[A-Za-z0-9._-]` (no look-alikes with spaces) and unique regardless of case
 - **Database:** PostgreSQL (auth_db)
@@ -62,7 +62,7 @@
   - Order status tracking (PENDING, AWAITING_PAYMENT, CONFIRMED, CANCELLED) - delivery progress lives on the shipment, not the order
   - Saga orchestration for distributed order processing
   - Pricing: the order total is always derived from Inventory's catalog unit prices, never from the client
-  - Customer order queries and customer-initiated cancellation (idempotent; 409 once delivered)
+  - Customer order queries and customer-initiated cancellation (idempotent; 409 once delivered). `GET /orders` is paged, newest first (`?page=&size=`, default 20); a page loads its orders' items in one query (`hibernate.default_batch_fetch_size`)
   - Requests are validated before anything is reserved or charged: currency must be an ISO 4217 code (`@IsoCurrency`), at most 50 lines of up to 10,000 units, destination up to 255 characters
 - **Database:** PostgreSQL (orders_db)
 - **Key Features:**
@@ -71,8 +71,8 @@
   - Compensation: releases inventory on payment failure/cancellation; refunds if already CONFIRMED
   - Compensations are durable (`order_compensations` outbox, `CompensationService`): recorded in the same transaction as the order change, attempted right after commit, retried by the saga sweep with exponential back-off (5s doubling to 10 min, 20 attempts). Outages, timeouts, 401/403/408/429 are retried; outright rejections (e.g. 409) and exhausted retries are marked FAILED and logged as needing attention
   - Shipment creation is retried the same way: a paid order whose shipment can't be created is still CONFIRMED, and the saga sweep retries (`OrderShipmentService`, `shipment_*` columns on `orders`) with the same back-off until shipping accepts, rejects (4xx) or 20 attempts run out. Shipping returns the existing shipment for a repeated request, so a retry can't ship twice
-  - Admin endpoints for paid orders without a shipment (ADMIN only): `GET /orders/admin/unshipped` (`retrying: false` = given up), `POST /orders/admin/unshipped/{orderId}/retry` - tries again now with a fresh retry budget (409 if the order isn't CONFIRMED or already has a shipment)
-  - Admin endpoints for the outbox (ADMIN only): `GET /orders/admin/compensations?status=FAILED` (default FAILED; also PENDING/DONE), `GET /orders/admin/compensations/{id}`, `POST /orders/admin/compensations/{id}/retry` - re-queues a FAILED compensation with a fresh retry budget and attempts it immediately (409 if it isn't FAILED)
+  - Admin endpoints for paid orders without a shipment (ADMIN only): `GET /orders/admin/unshipped` (oldest first; `retrying: false` = given up), `POST /orders/admin/unshipped/{orderId}/retry` - tries again now with a fresh retry budget (409 if the order isn't CONFIRMED or already has a shipment)
+  - Admin endpoints for the outbox (ADMIN only): `GET /orders/admin/compensations?status=FAILED` (default FAILED; also PENDING/DONE; latest change first), `GET /orders/admin/compensations/{id}`, `POST /orders/admin/compensations/{id}/retry` - re-queues a FAILED compensation with a fresh retry budget and attempts it immediately (409 if it isn't FAILED)
   - Resilience4j circuit breakers on all outbound clients; a downstream 4xx is ignored (see `DownstreamClientErrorPredicate`), only 5xx/408/429/connection failures count
 - **Events Produced:** OrderCreatedEvent, OrderConfirmedEvent, OrderCancelledEvent
 - **Events Consumed:** PaymentCompletedEvent, PaymentFailedEvent
@@ -95,7 +95,8 @@
   - Real-time stock availability checks
   - Saga compensation via reservation release
   - Reservation holds expire after 15 minutes (`ReservationExpiryJob`, 60s sweep)
-  - **Catalog cache** (`CatalogCache`): `GET /inventory/products` and `/{sku}` are served as ready-made JSON from the instance's memory. Redis holds only a version token (`inventory:catalog:version`); every committed change to a `Product` (JPA listener `ProductCacheInvalidator`, after commit - so create, restock, reserve, release and expiry are all covered, and a rollback changes nothing) writes a new token, which makes every instance's copy stale at once. Copies also expire after `CATALOG_CACHE_TTL` (30s). Redis down → reads go to the database (one warning per outage). `CATALOG_CACHE_ENABLED=false` switches it off. Reads only: a reservation still checks stock in the database under its row lock, so the cache can't cause an oversell
+  - **Catalog list** `GET /inventory/products` is paged in SKU order (`?page=&size=`, default 50) with an optional search `q` (SKU or name contains it, case-insensitive; `%`/`_` are literal)
+  - **Catalog cache** (`CatalogCache`): catalog pages without `q` (each `page:size` its own entry, at most 10,000 entries) and `/{sku}` are served as ready-made JSON from the instance's memory. Redis holds only a version token (`inventory:catalog:version`); every committed change to a `Product` (JPA listener `ProductCacheInvalidator`, after commit - so create, restock, reserve, release and expiry are all covered, and a rollback changes nothing) writes a new token, which makes every instance's copy stale at once. Copies also expire after `CATALOG_CACHE_TTL` (30s). Redis down → reads go to the database (one warning per outage). `CATALOG_CACHE_ENABLED=false` switches it off. Reads only: a reservation still checks stock in the database under its row lock, so the cache can't cause an oversell
 - **Events Produced:** InventoryReservedEvent, InventoryReleasedEvent, StockLowEvent
 - **Events Consumed:** None (driven by REST calls from Orders)
 
@@ -166,7 +167,7 @@
   - Template-based message composition (`NotificationTemplateRenderer`)
   - Low-stock alerts (IN_APP) to the product's owner; products with no recorded owner alert `LOW_STOCK_FALLBACK_RECIPIENT` (default `admin`)
   - Async delivery via `NotificationDeliveryJob` (~5s sweep, PENDING → SENT), retried up to 3 times
-  - Customers only see their own notifications
+  - Customers only see their own notifications; `GET /notifications` is paged, newest first (`?page=&size=`, default 20)
 - **Events Produced:** NotificationSentEvent, NotificationFailedEvent
 - **Events Consumed:** OrderConfirmedEvent, OrderCancelledEvent, PaymentCompletedEvent, PaymentFailedEvent, ShipmentCreatedEvent, ShipmentPickedEvent, ShipmentInTransitEvent, DeliveryConfirmedEvent, StockLowEvent
 
@@ -295,6 +296,7 @@ Order Placement Flow:
 ### OpenAPI / Swagger
 - **Swagger UI:** `http://localhost:8080/swagger-ui.html` (served by the gateway) - pick a service in the top-right dropdown. Click **Authorize** and paste an access token from `POST /auth-service/auth/login` (or a SERVICE token from `POST /auth-service/auth/token`); "Try it out" calls go through the gateway.
 - **Specs:** every service serves its own OpenAPI 3 spec at `/v3/api-docs` (through the gateway: `/{service-id}/v3/api-docs`), no token needed. Generated from the code by springdoc: validation limits come from the request annotations, and each operation's description states the role its `@PreAuthorize` requires.
+- **Lists that grow without bound are paged** and answer `{items, page, size, total}` (the shape of `GET /audit/entries`): `GET /orders`, `/inventory/products`, `/notifications`, and the admin lists (users, compensations, unshipped orders, reconciliation findings; default size 50). `size` is 1-200 and `page` 0-10,000,000 (beyond it the row offset overflows); out of range or not a number → 400. Sort orders end in the id, so rows with the same timestamp stay on one page. Not paged: reconciliation runs (already the latest 20).
 - **Shared conventions** live in `common-security`'s `OpenApiAutoConfiguration`: server URL `/{spring.application.name}` (the gateway path), Bearer JWT on every operation except `ordersphere.openapi.public-paths`, a shared `ErrorResponse` schema and 401/403 responses.
 - The Postman collections in `postman/` remain the runnable end-to-end examples.
 
@@ -343,7 +345,7 @@ Order Placement Flow:
   - `postman/api-reference.postman_collection.json` - one example request per endpoint (no assertions)
 - **UI End-to-End Tests:** Playwright in `web-ui/e2e` against the same running stack (`cd web-ui && npm run e2e`); not part of CI
 - **CI:** GitHub Actions (`.github/workflows/ci.yml`) runs `mvn verify`, the Web UI build and a Kubernetes manifest check (kustomize render + `kubeconform -strict`) on pushes and PRs to `master`/`develop`
-- **Load test:** `loadtest/run.sh` (k6 from its Docker image) reads the catalog with the cache off, then on, while a vendor restocks every 2s, and prints the comparison; `THINK=0 VUS=100` for saturation, `DIRECT=1` to bypass the gateway. Local only; the machine must stay awake and otherwise idle. Measured results and what they mean: `loadtest/README.md` (cache on: ~2.4x the catalog reads from the service itself, ~1.5x through the gateway)
+- **Load test:** `loadtest/run.sh` (k6 from its Docker image) reads the catalog with the cache off, then on, while a vendor restocks every 2s, and prints the comparison; `THINK=0 VUS=100` for saturation, `DIRECT=1` to bypass the gateway. Local only; the machine must stay awake and otherwise idle. `loadtest/orders.sh` gives customers a long order history (500 orders each) and reads My Orders. Measured results and what they mean: `loadtest/README.md` (cache on: ~2.4x the catalog reads from the service itself, ~1.5x through the gateway; paging My Orders for 500-order customers: median 890 ms → 2 ms, 42 → 418 reads/s)
 - Every JVM in `docker-compose.yml` has a `mem_limit` and `-XX:MaxRAMPercentage=60`; without them the Docker VM runs out of memory under load and containers are OOM-killed
 - **Not yet:** contract tests, load tests of the order flow
 
@@ -439,4 +441,5 @@ mvn verify -pl services/shipping-service -am
 - [x] Alert delivery: Alertmanager → notification-service → in-app notifications for the admins
 - [ ] Alert delivery outside the system (Slack / email / pager receiver in Alertmanager)
 - [x] Catalog caching (Redis version token + in-memory copies) and a k6 load test (`loadtest/`)
-- [ ] Performance: other hot paths (order list, pagination of the catalog)
+- [x] Pagination of the lists that grow (orders, catalog with search, notifications), measured with a k6 order-list test
+- [x] Pagination of the admin lists (users with server-side search, compensations, unshipped orders, reconciliation findings)

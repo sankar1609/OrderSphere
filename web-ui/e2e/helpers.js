@@ -113,9 +113,16 @@ export async function logInThroughUi(page, user) {
   await page.getByRole("button", { name: "Log in" }).click();
 }
 
+/** On a catalog page: search for one product (the catalog is paged, so it may not be on page 1). */
+export async function searchProduct(page, sku) {
+  await page.getByLabel("Search catalog").fill(sku);
+  await page.getByRole("button", { name: "Search" }).click();
+}
+
 /** On Place Order: one unit of the product, then off to the provider's checkout page. */
 export async function placeOrderThroughUi(page, sku) {
   await page.goto("/place-order");
+  await searchProduct(page, sku);
   await page.getByLabel("Product").selectOption(sku);
   await page.getByRole("button", { name: "Add item" }).click();
   await page.getByLabel("Shipping destination").fill("1 E2E Street");

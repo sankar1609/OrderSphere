@@ -57,7 +57,7 @@ public class AuditController {
           Instant from,
       @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
           Instant to,
-      @RequestParam(defaultValue = "0") @Min(0) int page,
+      @RequestParam(defaultValue = "0") @Min(0) @Max(10_000_000) int page,
       @RequestParam(defaultValue = "50") @Min(1) @Max(200) int size) {
     return queries.search(orderId, eventType, actor, username, from, to, page, size);
   }

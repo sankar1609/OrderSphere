@@ -2,6 +2,7 @@ package com.ordersphere.payment.reconciliation;
 
 import com.ordersphere.payment.domain.Payment;
 import com.ordersphere.payment.domain.PaymentStatus;
+import com.ordersphere.payment.dto.PageResponse;
 import com.ordersphere.payment.gateway.PaymentGatewayClient;
 import com.ordersphere.payment.gateway.PaymentGatewayClient.CheckoutSession;
 import com.ordersphere.payment.gateway.PaymentGatewayClient.ProviderTransaction;
@@ -24,6 +25,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -301,8 +304,10 @@ public class ReconciliationService {
   }
 
   @Transactional(readOnly = true)
-  public List<ReconciliationFinding> findings(Status status) {
-    return findings.findByStatusOrderByLastSeenAtDesc(status);
+  public PageResponse<ReconciliationFinding> findings(Status status, int page, int size) {
+    // By id as well: a run stamps every finding it sees with the same time.
+    Sort latestFirst = Sort.by(Sort.Direction.DESC, "lastSeenAt", "id");
+    return PageResponse.of(findings.findByStatus(status, PageRequest.of(page, size, latestFirst)));
   }
 
   /** Applies the provider's state to our records (see {@link Type#isResyncable()}). */

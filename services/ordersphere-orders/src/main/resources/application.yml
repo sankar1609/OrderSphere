@@ -12,6 +12,10 @@ spring:
     hibernate:
       ddl-auto: validate
     open-in-view: false
+    properties:
+      # Lazy collections (an order's items) load for up to 50 owners in one query, so a page of
+      # orders loads all its items in one query rather than one query per order.
+      hibernate.default_batch_fetch_size: 50
   flyway:
     enabled: true
   rabbitmq:

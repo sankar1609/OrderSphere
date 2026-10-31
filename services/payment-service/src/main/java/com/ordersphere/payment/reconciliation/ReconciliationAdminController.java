@@ -1,5 +1,6 @@
 package com.ordersphere.payment.reconciliation;
 
+import com.ordersphere.payment.dto.PageResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -50,10 +51,13 @@ public class ReconciliationAdminController {
     return reconciliation.recentRuns();
   }
 
+  @Operation(summary = "Findings in a status, last seen first, a page at a time")
   @GetMapping("/findings")
-  public List<ReconciliationFinding> findings(
-      @RequestParam(defaultValue = "OPEN") ReconciliationFinding.Status status) {
-    return reconciliation.findings(status);
+  public PageResponse<ReconciliationFinding> findings(
+      @RequestParam(defaultValue = "OPEN") ReconciliationFinding.Status status,
+      @RequestParam(defaultValue = "0") @Min(0) @Max(10_000_000) int page,
+      @RequestParam(defaultValue = "50") @Min(1) @Max(200) int size) {
+    return reconciliation.findings(status, page, size);
   }
 
   @Operation(

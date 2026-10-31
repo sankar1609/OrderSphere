@@ -84,7 +84,7 @@ class CatalogCacheTest {
     return List.of(WIDGET);
   }
 
-  private String listJson() throws Exception {
+  private String pageJson() throws Exception {
     return objectMapper.writeValueAsString(List.of(WIDGET));
   }
 
@@ -97,15 +97,15 @@ class CatalogCacheTest {
     when(values.get(CatalogCache.KEY_VERSION)).thenReturn("v1");
     CatalogCache cache = cache(true);
 
-    assertThat(cache.listJson(this::load)).isEqualTo(listJson());
-    assertThat(cache.listJson(this::load)).isEqualTo(listJson());
-    assertThat(cache.listJson(this::load)).isEqualTo(listJson());
+    assertThat(cache.pageJson(0, 50, this::load)).isEqualTo(pageJson());
+    assertThat(cache.pageJson(0, 50, this::load)).isEqualTo(pageJson());
+    assertThat(cache.pageJson(0, 50, this::load)).isEqualTo(pageJson());
 
     assertThat(loads).hasValue(1);
     assertThat(lookups("miss")).isEqualTo(1);
     assertThat(lookups("hit")).isEqualTo(2);
     // Only the small version token ever crosses the wire - never the catalog itself.
-    verify(values, never()).set(anyString(), eq(listJson()));
+    verify(values, never()).set(anyString(), eq(pageJson()));
   }
 
   @Test
@@ -113,12 +113,12 @@ class CatalogCacheTest {
     when(values.get(CatalogCache.KEY_VERSION)).thenReturn("v1", "v1", "v2", "v2");
     CatalogCache cache = cache(true);
 
-    cache.listJson(this::load);
-    cache.listJson(this::load);
+    cache.pageJson(0, 50, this::load);
+    cache.pageJson(0, 50, this::load);
     assertThat(loads).hasValue(1);
 
-    cache.listJson(this::load);
-    cache.listJson(this::load);
+    cache.pageJson(0, 50, this::load);
+    cache.pageJson(0, 50, this::load);
     assertThat(loads).hasValue(2);
   }
 
@@ -128,8 +128,8 @@ class CatalogCacheTest {
     when(values.get(CatalogCache.KEY_VERSION)).thenReturn("v1", "v2");
     CatalogCache cache = cache(true);
 
-    cache.listJson(this::load);
-    cache.listJson(this::load);
+    cache.pageJson(0, 50, this::load);
+    cache.pageJson(0, 50, this::load);
 
     assertThat(loads).hasValue(2);
   }
@@ -139,8 +139,8 @@ class CatalogCacheTest {
     when(values.get(CatalogCache.KEY_VERSION)).thenReturn(null);
     CatalogCache cache = cache(true);
 
-    cache.listJson(this::load);
-    cache.listJson(this::load);
+    cache.pageJson(0, 50, this::load);
+    cache.pageJson(0, 50, this::load);
 
     assertThat(loads).hasValue(1);
   }
@@ -150,9 +150,9 @@ class CatalogCacheTest {
     when(values.get(CatalogCache.KEY_VERSION)).thenReturn("v1");
     CatalogCache cache = cache(true);
 
-    cache.listJson(this::load);
+    cache.pageJson(0, 50, this::load);
     now.set(now.get().plus(TTL).plusSeconds(1));
-    cache.listJson(this::load);
+    cache.pageJson(0, 50, this::load);
 
     assertThat(loads).hasValue(2);
   }
@@ -173,7 +173,7 @@ class CatalogCacheTest {
                   }))
           .isEqualTo(objectMapper.writeValueAsString(WIDGET));
     }
-    cache.listJson(this::load);
+    cache.pageJson(0, 50, this::load);
 
     assertThat(productLoads).hasValue(1);
     assertThat(loads).hasValue(1);
@@ -204,10 +204,10 @@ class CatalogCacheTest {
   void evictingPublishesANewTokenAndDropsThisInstancesCopy() {
     when(values.get(CatalogCache.KEY_VERSION)).thenReturn("v1");
     CatalogCache cache = cache(true);
-    cache.listJson(this::load);
+    cache.pageJson(0, 50, this::load);
 
     cache.evictAfterCommit("WIDGET-1");
-    cache.listJson(this::load);
+    cache.pageJson(0, 50, this::load);
 
     verify(values).set(eq(CatalogCache.KEY_VERSION), anyString());
     // Reloaded although the mocked token still reads v1: the local copy went on eviction.
@@ -219,8 +219,8 @@ class CatalogCacheTest {
     when(values.get(anyString())).thenThrow(new RedisConnectionFailureException("down"));
     CatalogCache cache = cache(true);
 
-    assertThat(cache.listJson(this::load)).isEqualTo(listJson());
-    assertThat(cache.listJson(this::load)).isEqualTo(listJson());
+    assertThat(cache.pageJson(0, 50, this::load)).isEqualTo(pageJson());
+    assertThat(cache.pageJson(0, 50, this::load)).isEqualTo(pageJson());
 
     assertThat(loads).hasValue(2);
     assertThat(lookups("error")).isEqualTo(2);
@@ -230,7 +230,7 @@ class CatalogCacheTest {
   void aChangeThatCouldNotBePublishedIsPublishedOnceRedisIsBack() {
     when(values.get(CatalogCache.KEY_VERSION)).thenReturn("v1");
     CatalogCache cache = cache(true);
-    cache.listJson(this::load);
+    cache.pageJson(0, 50, this::load);
 
     doThrow(new RedisConnectionFailureException("down"))
         .doNothing()
@@ -239,10 +239,25 @@ class CatalogCacheTest {
     cache.evictAfterCommit("WIDGET-1");
     // Redis answers again: the read first publishes the token that was missed, so every other
     // instance learns of the change too.
-    cache.listJson(this::load);
+    cache.pageJson(0, 50, this::load);
 
     verify(values, times(2)).set(eq(CatalogCache.KEY_VERSION), anyString());
     assertThat(loads).hasValue(2);
+  }
+
+  @Test
+  void eachPageIsCachedOnItsOwn() throws Exception {
+    when(values.get(CatalogCache.KEY_VERSION)).thenReturn("v1");
+    CatalogCache cache = cache(true);
+
+    cache.pageJson(0, 50, this::load);
+    cache.pageJson(1, 50, this::load);
+    cache.pageJson(0, 20, this::load);
+    assertThat(loads).hasValue(3);
+
+    cache.pageJson(0, 50, this::load);
+    cache.pageJson(1, 50, this::load);
+    assertThat(loads).hasValue(3);
   }
 
   @Test
@@ -256,7 +271,9 @@ class CatalogCacheTest {
       for (int i = 0; i < 8; i++) {
         pool.submit(
             () ->
-                cache.listJson(
+                cache.pageJson(
+                    0,
+                    50,
                     () -> {
                       loads.incrementAndGet();
                       loading.countDown();
@@ -284,8 +301,8 @@ class CatalogCacheTest {
   void switchedOffItNeverTouchesRedis() throws Exception {
     CatalogCache cache = cache(false);
 
-    assertThat(cache.listJson(this::load)).isEqualTo(listJson());
-    assertThat(cache.listJson(this::load)).isEqualTo(listJson());
+    assertThat(cache.pageJson(0, 50, this::load)).isEqualTo(pageJson());
+    assertThat(cache.pageJson(0, 50, this::load)).isEqualTo(pageJson());
     cache.evictAfterCommit("WIDGET-1");
 
     assertThat(loads).hasValue(2);

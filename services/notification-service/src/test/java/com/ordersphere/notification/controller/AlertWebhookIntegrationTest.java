@@ -96,7 +96,7 @@ class AlertWebhookIntegrationTest {
     mockMvc
         .perform(inboxOf("ops-admin"))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$[?(@.message =~ /.*RejectedAlert.*/)]", hasSize(0)));
+        .andExpect(jsonPath("$.items[?(@.message =~ /.*RejectedAlert.*/)]", hasSize(0)));
   }
 
   @Test
@@ -111,10 +111,11 @@ class AlertWebhookIntegrationTest {
       mockMvc
           .perform(inboxOf(recipient))
           .andExpect(status().isOk())
-          .andExpect(jsonPath("$[?(@.templateKey == 'SYSTEM_ALERT')]", hasSize(1)))
-          .andExpect(jsonPath("$[?(@.templateKey == 'SYSTEM_ALERT')].channel").value("IN_APP"))
+          .andExpect(jsonPath("$.items[?(@.templateKey == 'SYSTEM_ALERT')]", hasSize(1)))
           .andExpect(
-              jsonPath("$[?(@.templateKey == 'SYSTEM_ALERT')].message")
+              jsonPath("$.items[?(@.templateKey == 'SYSTEM_ALERT')].channel").value("IN_APP"))
+          .andExpect(
+              jsonPath("$.items[?(@.templateKey == 'SYSTEM_ALERT')].message")
                   .value(
                       "[critical] ServiceDown: shipping-service is not answering Prometheus."
                           + " No successful scrape for 2 minutes."));
@@ -133,7 +134,7 @@ class AlertWebhookIntegrationTest {
         .perform(inboxOf("ops-admin"))
         .andExpect(status().isOk())
         .andExpect(
-            jsonPath("$[?(@.templateKey == 'SYSTEM_ALERT_RESOLVED')].message")
+            jsonPath("$.items[?(@.templateKey == 'SYSTEM_ALERT_RESOLVED')].message")
                 .value(
                     "Resolved: AuditChainBroken - shipping-service is not answering Prometheus"));
   }
@@ -147,6 +148,6 @@ class AlertWebhookIntegrationTest {
     mockMvc
         .perform(inboxOf("nobody-else"))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$", hasSize(0)));
+        .andExpect(jsonPath("$.items", hasSize(0)));
   }
 }

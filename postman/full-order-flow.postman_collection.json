@@ -939,12 +939,18 @@
               }
             ],
             "url": {
-              "raw": "{{notificationBaseUrl}}/notifications",
+              "raw": "{{notificationBaseUrl}}/notifications?size=50",
               "host": [
                 "{{notificationBaseUrl}}"
               ],
               "path": [
                 "notifications"
+              ],
+              "query": [
+                {
+                  "key": "size",
+                  "value": "50"
+                }
               ]
             },
             "description": "Filters alice's notifications to this order (by '#<orderId>' in the message). A full happy-path run queues: PAYMENT_COMPLETED, SHIPMENT_CREATED, ORDER_CONFIRMED, SHIPMENT_PICKED, SHIPMENT_IN_TRANSIT, DELIVERY_CONFIRMED."
@@ -959,7 +965,7 @@
                   "    var re = new RegExp('#' + pm.collectionVariables.get('orderId') + '\\\\b');",
                   "    return (list || []).filter(function (n) { return re.test(n.message); });",
                   "}",
-                  "var body = pm.response.code === 200 ? pm.response.json() : null;",
+                  "var body = pm.response.code === 200 ? pm.response.json().items : null;",
                   "var pollKey = 'poll_' + pm.info.requestId;",
                   "var polls = Number(pm.collectionVariables.get(pollKey) || 0);",
                   "var done = !!body && ((function () { var mine = forOrder(body); return [\"PAYMENT_COMPLETED\", \"SHIPMENT_CREATED\", \"ORDER_CONFIRMED\", \"SHIPMENT_PICKED\", \"SHIPMENT_IN_TRANSIT\", \"DELIVERY_CONFIRMED\"].every(function (k) { return mine.some(function (n) { return n.templateKey === k && n.status === 'SENT'; }); }); })());",
@@ -1283,12 +1289,18 @@
               }
             ],
             "url": {
-              "raw": "{{notificationBaseUrl}}/notifications",
+              "raw": "{{notificationBaseUrl}}/notifications?size=50",
               "host": [
                 "{{notificationBaseUrl}}"
               ],
               "path": [
                 "notifications"
+              ],
+              "query": [
+                {
+                  "key": "size",
+                  "value": "50"
+                }
               ]
             },
             "description": "PAYMENT_FAILED and ORDER_CANCELLED notifications should be sent for the abandoned order."
@@ -1303,7 +1315,7 @@
                   "    var re = new RegExp('#' + pm.collectionVariables.get('abandonOrderId') + '\\\\b');",
                   "    return (list || []).filter(function (n) { return re.test(n.message); });",
                   "}",
-                  "var body = pm.response.code === 200 ? pm.response.json() : null;",
+                  "var body = pm.response.code === 200 ? pm.response.json().items : null;",
                   "var pollKey = 'poll_' + pm.info.requestId;",
                   "var polls = Number(pm.collectionVariables.get(pollKey) || 0);",
                   "var done = !!body && ((function () { var mine = forOrder(body); return [\"PAYMENT_FAILED\", \"ORDER_CANCELLED\"].every(function (k) { return mine.some(function (n) { return n.templateKey === k && n.status === 'SENT'; }); }); })());",

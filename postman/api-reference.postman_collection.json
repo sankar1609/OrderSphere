@@ -157,7 +157,13 @@
           "request": {
             "method": "GET",
             "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
-            "url": { "raw": "{{inventoryBaseUrl}}/inventory/products", "host": ["{{inventoryBaseUrl}}"], "path": ["inventory", "products"] }
+            "url": {
+              "raw": "{{inventoryBaseUrl}}/inventory/products?page=0&size=50",
+              "host": ["{{inventoryBaseUrl}}"],
+              "path": ["inventory", "products"],
+              "query": [{ "key": "page", "value": "0" }, { "key": "size", "value": "50" }]
+            },
+            "description": "A page of the catalog in SKU order: {items, page, size, total}. size 1-200 (default 50); add q to match SKU or name, ignoring case."
           }
         },
         {
@@ -338,7 +344,13 @@
           "request": {
             "method": "GET",
             "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
-            "url": { "raw": "{{ordersBaseUrl}}/orders", "host": ["{{ordersBaseUrl}}"], "path": ["orders"] }
+            "url": {
+              "raw": "{{ordersBaseUrl}}/orders?page=0&size=20",
+              "host": ["{{ordersBaseUrl}}"],
+              "path": ["orders"],
+              "query": [{ "key": "page", "value": "0" }, { "key": "size", "value": "20" }]
+            },
+            "description": "The caller's orders, newest first: {items, page, size, total}. size 1-200 (default 20)."
           }
         },
         {
@@ -472,7 +484,13 @@
           "request": {
             "method": "GET",
             "header": [{ "key": "Authorization", "value": "Bearer {{customerToken}}" }],
-            "url": { "raw": "{{notificationBaseUrl}}/notifications", "host": ["{{notificationBaseUrl}}"], "path": ["notifications"] }
+            "url": {
+              "raw": "{{notificationBaseUrl}}/notifications?page=0&size=20",
+              "host": ["{{notificationBaseUrl}}"],
+              "path": ["notifications"],
+              "query": [{ "key": "page", "value": "0" }, { "key": "size", "value": "20" }]
+            },
+            "description": "The caller's notifications, newest first: {items, page, size, total}. size 1-200 (default 20)."
           }
         },
         {

@@ -2,14 +2,18 @@ import { useEffect, useState } from "react";
 import { listNotifications, listPreferences, setPreference } from "../api";
 import { cellStyle } from "../styles";
 import { usePageTitle } from "../usePageTitle";
+import { usePageParams } from "../usePageParams";
+import Pager from "./Pager";
 
 const CHANNELS = ["EMAIL", "SMS", "IN_APP", "PUSH"];
+const PAGE_SIZE = 20;
 const statusColors = { SENT: "green", PENDING: "#0645ad", SKIPPED: "#777", FAILED: "crimson" };
 
 /** The customer's notifications, plus which channels they want them on. */
 export default function Notifications({ token, onUnauthorized }) {
   usePageTitle("Notifications");
-  const [notifications, setNotifications] = useState(null);
+  const { page, setPage } = usePageParams();
+  const [result, setResult] = useState(null);
   const [enabled, setEnabled] = useState(null); // channel -> boolean
   const [error, setError] = useState(null);
   const [prefMessage, setPrefMessage] = useState(null);
@@ -23,11 +27,17 @@ export default function Notifications({ token, onUnauthorized }) {
   }
 
   useEffect(() => {
-    listNotifications(token)
-      .then((list) =>
-        setNotifications([...list].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)))
-      )
-      .catch((err) => handleError(err, setError));
+    // Newest first, as the API returns them.
+    let current = true;
+    listNotifications(token, page, PAGE_SIZE)
+      .then((data) => current && setResult(data))
+      .catch((err) => current && handleError(err, setError));
+    return () => {
+      current = false;
+    };
+  }, [token, page]);
+
+  useEffect(() => {
     listPreferences(token)
       .then((preferences) => {
         // A channel without a saved preference is on.
@@ -39,6 +49,8 @@ export default function Notifications({ token, onUnauthorized }) {
       })
       .catch((err) => handleError(err, setError));
   }, [token]);
+
+  const notifications = result?.items ?? null;
 
   async function toggle(channel) {
     const previous = enabled[channel];
@@ -85,7 +97,7 @@ export default function Notifications({ token, onUnauthorized }) {
 
       <h3>Inbox</h3>
       {notifications === null && !error && <p>Loading...</p>}
-      {notifications && notifications.length === 0 && <p>No notifications yet.</p>}
+      {result && result.total === 0 && <p>No notifications yet.</p>}
       {notifications && notifications.length > 0 && (
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
@@ -107,6 +119,9 @@ export default function Notifications({ token, onUnauthorized }) {
             ))}
           </tbody>
         </table>
+      )}
+      {result && result.total > 0 && (
+        <Pager result={result} onPage={setPage} noun={["notification", "notifications"]} />
       )}
     </div>
   );

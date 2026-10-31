@@ -199,15 +199,18 @@ class AuthControllerIntegrationTest {
 
     String users =
         mockMvc
-            .perform(get("/auth/admin/users").header("Authorization", "Bearer " + adminToken))
+            .perform(
+                get("/auth/admin/users")
+                    .param("size", "200")
+                    .header("Authorization", "Bearer " + adminToken))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$[?(@.username == 'kate')].role").value("CUSTOMER"))
-            .andExpect(jsonPath("$[?(@.username == 'kate')].createdAt").isNotEmpty())
+            .andExpect(jsonPath("$.items[?(@.username == 'kate')].role").value("CUSTOMER"))
+            .andExpect(jsonPath("$.items[?(@.username == 'kate')].createdAt").isNotEmpty())
             .andReturn()
             .getResponse()
             .getContentAsString();
     long adminId = 0;
-    for (JsonNode user : objectMapper.readTree(users)) {
+    for (JsonNode user : objectMapper.readTree(users).get("items")) {
       if (user.get("username").asText().equals("admin")) {
         adminId = user.get("id").asLong();
       }

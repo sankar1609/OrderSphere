@@ -329,7 +329,7 @@ class PaymentControllerIntegrationTest {
             .getResponse()
             .getContentAsString();
     long findingId = -1;
-    for (var finding : objectMapper.readTree(findings)) {
+    for (var finding : objectMapper.readTree(findings).get("items")) {
       if (finding.get("checkoutSessionId").asText().equals("cs_rec_1")) {
         assertThat(finding.get("type").asText()).isEqualTo("CHARGED_NOT_RECORDED");
         assertThat(finding.get("ourStatus").asText()).isEqualTo("FAILED");

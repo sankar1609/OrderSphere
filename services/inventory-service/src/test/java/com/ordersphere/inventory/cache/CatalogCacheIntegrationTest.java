@@ -112,7 +112,7 @@ class CatalogCacheIntegrationTest {
 
   private String listJson() throws Exception {
     return mockMvc
-        .perform(get("/inventory/products").header("Authorization", CUSTOMER))
+        .perform(get("/inventory/products").param("size", "200").header("Authorization", CUSTOMER))
         .andExpect(status().isOk())
         .andReturn()
         .getResponse()
@@ -120,7 +120,7 @@ class CatalogCacheIntegrationTest {
   }
 
   private int availableInList() throws Exception {
-    for (JsonNode product : objectMapper.readTree(listJson())) {
+    for (JsonNode product : objectMapper.readTree(listJson()).get("items")) {
       if (sku.equals(product.get("sku").asText())) {
         return product.get("availableQuantity").asInt();
       }

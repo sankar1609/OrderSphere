@@ -4,6 +4,8 @@ import com.ordersphere.orders.domain.Compensation;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -28,7 +30,7 @@ public interface CompensationRepository extends JpaRepository<Compensation, Long
 
   List<Compensation> findByOrderIdOrderById(Long orderId);
 
-  List<Compensation> findByStatusOrderByUpdatedAtDesc(Compensation.Status status);
+  Page<Compensation> findByStatus(Compensation.Status status, Pageable pageable);
 
   long countByStatus(Compensation.Status status);
 }

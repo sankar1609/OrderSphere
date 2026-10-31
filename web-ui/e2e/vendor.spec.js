@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { newUser, signIn, unique } from "./helpers.js";
+import { newUser, searchProduct, signIn, unique } from "./helpers.js";
 
 test("a vendor adds a product, restocks it, and can't reuse its SKU", async ({ page, request }) => {
   await signIn(page, await newUser(request, "VENDOR"));
@@ -23,6 +23,8 @@ test("a vendor adds a product, restocks it, and can't reuse its SKU", async ({ p
 
   await createProduct();
   await expect(page.getByRole("status").filter({ hasText: `Created ${sku}` })).toBeVisible();
+  await searchProduct(page, sku);
+  await expect(page).toHaveURL(new RegExp(`/manage-products\\?q=${sku}$`));
   const row = page.getByRole("row", { name: new RegExp(sku) });
   await expect(row).toBeVisible();
 

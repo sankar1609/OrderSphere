@@ -1,31 +1,33 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { changeUserRole, listUsers } from "../../api";
 import { cellStyle, linkButtonStyle } from "../../styles";
+import { usePageParams } from "../../usePageParams";
+import Pager from "../Pager";
+import SearchBox from "../SearchBox";
+import { ADMIN_PAGE_SIZE, useAdminList } from "./useAdminList";
 
 const ROLES = ["CUSTOMER", "VENDOR", "ADMIN", "AUDITOR"];
 
 export default function Users({ token, currentUsername, onUnauthorized }) {
-  const [users, setUsers] = useState(null);
-  const [error, setError] = useState(null);
-  const [filter, setFilter] = useState("");
+  const pageParams = usePageParams();
+  const { query, setQuery, setPage } = pageParams;
+  const { result, setResult, error, reload } = useAdminList(
+    (page) => listUsers(token, { page, size: ADMIN_PAGE_SIZE, query }),
+    [token, query],
+    pageParams,
+    onUnauthorized
+  );
   const [pendingRoles, setPendingRoles] = useState({}); // userId -> chosen role
   const [message, setMessage] = useState(null);
-  const [reloadKey, setReloadKey] = useState(0);
-
-  useEffect(() => {
-    listUsers(token)
-      .then((list) => {
-        setUsers(list);
-        setError(null);
-      })
-      .catch((err) => (err.status === 401 ? onUnauthorized() : setError(err.message)));
-  }, [token, reloadKey]);
 
   async function save(user) {
     setMessage(null);
     try {
       const updated = await changeUserRole(token, user.id, pendingRoles[user.id]);
-      setUsers((current) => current.map((u) => (u.id === updated.id ? updated : u)));
+      setResult((current) => ({
+        ...current,
+        items: current.items.map((u) => (u.id === updated.id ? updated : u)),
+      }));
       setPendingRoles(({ [user.id]: _, ...rest }) => rest);
       setMessage({
         tone: "green",
@@ -40,18 +42,17 @@ export default function Users({ token, currentUsername, onUnauthorized }) {
     }
   }
 
-  const visible = users?.filter((u) =>
-    u.username.toLowerCase().includes(filter.trim().toLowerCase())
-  );
-
   return (
     <div>
+      <SearchBox
+        query={query}
+        onSearch={setQuery}
+        label="Filter by username"
+        placeholder="Part of a username"
+        maxLength={50}
+      />
       <div style={{ marginBottom: 12 }}>
-        <label>
-          Filter by username{" "}
-          <input type="text" value={filter} onChange={(e) => setFilter(e.target.value)} />
-        </label>{" "}
-        <button type="button" onClick={() => setReloadKey((k) => k + 1)} style={linkButtonStyle}>
+        <button type="button" onClick={reload} style={linkButtonStyle}>
           Refresh
         </button>
       </div>
@@ -61,9 +62,9 @@ export default function Users({ token, currentUsername, onUnauthorized }) {
         </p>
       )}
       {error && <p style={{ color: "crimson" }}>{error}</p>}
-      {!error && users === null && <p>Loading...</p>}
-      {visible && visible.length === 0 && <p>No matching users.</p>}
-      {visible && visible.length > 0 && (
+      {!error && result === null && <p>Loading...</p>}
+      {result && result.total === 0 && <p>No matching users.</p>}
+      {result && result.items.length > 0 && (
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
@@ -74,7 +75,7 @@ export default function Users({ token, currentUsername, onUnauthorized }) {
             </tr>
           </thead>
           <tbody>
-            {visible.map((user) => {
+            {result.items.map((user) => {
               const isSelf = user.username === currentUsername;
               const chosen = pendingRoles[user.id] ?? user.role;
               return (
@@ -114,6 +115,9 @@ export default function Users({ token, currentUsername, onUnauthorized }) {
             })}
           </tbody>
         </table>
+      )}
+      {result && result.total > 0 && (
+        <Pager result={result} onPage={setPage} noun={["user", "users"]} />
       )}
     </div>
   );

@@ -285,6 +285,9 @@ class AuditServiceIntegrationTest {
     mockMvc
         .perform(get("/audit/entries").param("size", "500").header("Authorization", AUDITOR))
         .andExpect(status().isBadRequest());
+    mockMvc
+        .perform(get("/audit/entries").param("page", "2147483647").header("Authorization", AUDITOR))
+        .andExpect(status().isBadRequest());
   }
 
   @Test

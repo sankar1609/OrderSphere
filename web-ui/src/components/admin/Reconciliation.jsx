@@ -8,6 +8,11 @@ import {
 } from "../../api";
 import { cellStyle, linkButtonStyle } from "../../styles";
 import { formatMoney } from "../../format";
+import { usePageParams } from "../../usePageParams";
+import Pager from "../Pager";
+import { ADMIN_PAGE_SIZE, useAdminList } from "./useAdminList";
+
+const STATUSES = ["OPEN", "RESOLVED"];
 
 // Types the backend can fix by applying the provider's state; the others need a person.
 const RESYNCABLE = ["CHARGED_NOT_RECORDED", "REFUND_NOT_RECORDED", "REFUND_NOT_EXECUTED"];
@@ -31,16 +36,22 @@ function formatTime(value) {
  * the rest are closed with a note once someone has looked into them.
  */
 export default function Reconciliation({ token, onUnauthorized }) {
-  const [status, setStatus] = useState("OPEN");
-  const [findings, setFindings] = useState(null);
+  const pageParams = usePageParams();
+  const { filter, setFilter, setPage } = pageParams;
+  const status = STATUSES.includes(filter("status")) ? filter("status") : STATUSES[0];
+  const { result, error, reload, reloadKey } = useAdminList(
+    (page) => listReconciliationFindings(token, status, page, ADMIN_PAGE_SIZE),
+    [token, status],
+    pageParams,
+    onUnauthorized
+  );
+  const findings = result?.items ?? null;
   const [lastRun, setLastRun] = useState(null);
   const [hours, setHours] = useState(24);
   const [running, setRunning] = useState(false);
   const [busyId, setBusyId] = useState(null);
   const [notes, setNotes] = useState({});
   const [message, setMessage] = useState(null);
-  const [error, setError] = useState(null);
-  const [reloadKey, setReloadKey] = useState(0);
 
   function handleError(err, show) {
     if (err.status === 401) {
@@ -51,17 +62,10 @@ export default function Reconciliation({ token, onUnauthorized }) {
   }
 
   useEffect(() => {
-    setFindings(null);
-    listReconciliationFindings(token, status)
-      .then((list) => {
-        setFindings(list);
-        setError(null);
-      })
-      .catch((err) => handleError(err, setError));
     listReconciliationRuns(token)
       .then((runs) => setLastRun(runs[0] ?? null))
       .catch(() => {});
-  }, [token, status, reloadKey]);
+  }, [token, reloadKey]);
 
   async function run() {
     setMessage(null);
@@ -76,7 +80,7 @@ export default function Reconciliation({ token, onUnauthorized }) {
             }
           : { tone: "crimson", text: `Run failed: ${result.error}` }
       );
-      setReloadKey((k) => k + 1);
+      reload();
     } catch (err) {
       handleError(err, (text) => setMessage({ tone: "crimson", text }));
     } finally {
@@ -95,7 +99,7 @@ export default function Reconciliation({ token, onUnauthorized }) {
         await resolveFinding(token, finding.id, (notes[finding.id] ?? "").trim());
         setMessage({ tone: "green", text: `Finding #${finding.id} resolved.` });
       }
-      setReloadKey((k) => k + 1);
+      reload();
     } catch (err) {
       handleError(err, (text) => setMessage({ tone: "crimson", text }));
     } finally {
@@ -133,12 +137,17 @@ export default function Reconciliation({ token, onUnauthorized }) {
       <div style={{ marginBottom: 12 }}>
         <label>
           Findings{" "}
-          <select value={status} onChange={(e) => setStatus(e.target.value)}>
+          <select
+            value={status}
+            onChange={(e) =>
+              setFilter("status", e.target.value === STATUSES[0] ? null : e.target.value)
+            }
+          >
             <option value="OPEN">Open</option>
             <option value="RESOLVED">Resolved</option>
           </select>
         </label>{" "}
-        <button type="button" onClick={() => setReloadKey((k) => k + 1)} style={linkButtonStyle}>
+        <button type="button" onClick={reload} style={linkButtonStyle}>
           Refresh
         </button>
       </div>
@@ -150,7 +159,7 @@ export default function Reconciliation({ token, onUnauthorized }) {
       )}
       {error && <p style={{ color: "crimson" }}>{error}</p>}
       {!error && findings === null && <p>Loading...</p>}
-      {findings && findings.length === 0 && (
+      {result && result.total === 0 && (
         <p>{status === "OPEN" ? "No open findings - our records match the provider's." : "None."}</p>
       )}
       {findings && findings.length > 0 && (
@@ -231,6 +240,9 @@ export default function Reconciliation({ token, onUnauthorized }) {
             ))}
           </tbody>
         </table>
+      )}
+      {result && result.total > 0 && (
+        <Pager result={result} onPage={setPage} noun={["finding", "findings"]} />
       )}
     </div>
   );

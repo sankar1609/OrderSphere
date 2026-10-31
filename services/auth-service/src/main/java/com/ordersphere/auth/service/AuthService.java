@@ -4,6 +4,7 @@ import com.ordersphere.auth.domain.Role;
 import com.ordersphere.auth.domain.User;
 import com.ordersphere.auth.dto.AuthResponse;
 import com.ordersphere.auth.dto.LoginRequest;
+import com.ordersphere.auth.dto.PageResponse;
 import com.ordersphere.auth.dto.RegisterRequest;
 import com.ordersphere.auth.dto.UserResponse;
 import com.ordersphere.auth.exception.DuplicateUsernameException;
@@ -16,10 +17,11 @@ import com.ordersphere.auth.security.TokenIssuer;
 import com.ordersphere.events.UserAuthenticatedEvent;
 import com.ordersphere.events.UserRegisteredEvent;
 import java.util.EnumSet;
-import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -124,9 +126,25 @@ public class AuthService {
         .orElseThrow(() -> new UserNotFoundException("No user found for username: " + username));
   }
 
-  /** Admin view: every user, oldest first. */
-  public List<UserResponse> listUsers() {
-    return userRepository.findAll(Sort.by("id")).stream().map(UserResponse::from).toList();
+  /** Admin view: users oldest first, optionally only those whose username contains the query. */
+  public PageResponse<UserResponse> listUsers(int page, int size, String query) {
+    PageRequest pageable = PageRequest.of(page, size, Sort.by("id"));
+    return PageResponse.of(
+        (query == null
+                ? userRepository.findAll(pageable)
+                : userRepository.search(likePattern(query), pageable))
+            .map(UserResponse::from));
+  }
+
+  /** "a_b" matches the text a_b, not "a" + any character + "b". */
+  private static String likePattern(String query) {
+    String escaped =
+        query
+            .toLowerCase(Locale.ROOT)
+            .replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_");
+    return "%" + escaped + "%";
   }
 
   /**

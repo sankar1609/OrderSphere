@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router";
 import { getAuditEntry, getAuditStatus, searchAudit, verifyAuditChain } from "../api";
 import { cellStyle, linkButtonStyle } from "../styles";
 import { usePageTitle } from "../usePageTitle";
+import Pager from "./Pager";
 
 const JAEGER_URL = import.meta.env.VITE_JAEGER_URL ?? "http://localhost:16686";
 const PAGE_SIZE = 50;
@@ -108,7 +109,6 @@ export default function Audit({ token, onUnauthorized }) {
   }
 
   const lastCheck = verification ?? status?.lastVerification;
-  const pages = result ? Math.max(1, Math.ceil(result.total / PAGE_SIZE)) : 1;
 
   return (
     <div>
@@ -214,15 +214,13 @@ export default function Audit({ token, onUnauthorized }) {
               ))}
             </tbody>
           </table>
-          <p>
-            {result.total} {result.total === 1 ? "entry" : "entries"} · page {page + 1} of {pages}{" "}
-            <button type="button" onClick={() => setPage(page - 1)} disabled={page === 0}>
-              Newer
-            </button>{" "}
-            <button type="button" onClick={() => setPage(page + 1)} disabled={page + 1 >= pages}>
-              Older
-            </button>
-          </p>
+          <Pager
+            result={result}
+            onPage={setPage}
+            noun={["entry", "entries"]}
+            previousLabel="Newer"
+            nextLabel="Older"
+          />
         </>
       )}
 

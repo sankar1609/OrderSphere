@@ -107,16 +107,25 @@ export function register(username, password, role = "CUSTOMER") {
   });
 }
 
-export function listMyOrders(token) {
-  return request("/ordersphere-orders/orders", { token });
+/** The caller's orders, newest first: {items, page, size, total}. */
+export function listMyOrders(token, page = 0, size = 20) {
+  return request(`/ordersphere-orders/orders?page=${page}&size=${size}`, { token });
 }
 
 export function getOrder(token, id) {
   return request(`/ordersphere-orders/orders/${id}`, { token });
 }
 
-export function listProducts(token) {
-  return request("/inventory-service/inventory/products", { token });
+/**
+ * A page of the catalog in SKU order: {items, page, size, total}. query (optional) keeps the
+ * products whose SKU or name contains it.
+ */
+export function listProducts(token, { page = 0, size = 50, query = "" } = {}) {
+  const params = new URLSearchParams({ page: String(page), size: String(size) });
+  if (query.trim() !== "") {
+    params.set("q", query.trim());
+  }
+  return request(`/inventory-service/inventory/products?${params}`, { token });
 }
 
 /** ADMIN/VENDOR only. body: {sku, name, unitPrice, quantityOnHand, reorderThreshold}. */
@@ -159,8 +168,9 @@ export function requestReturn(token, shipmentId, reason) {
   });
 }
 
-export function listNotifications(token) {
-  return request("/notification-service/notifications", { token });
+/** The caller's notifications, newest first: {items, page, size, total}. */
+export function listNotifications(token, page = 0, size = 20) {
+  return request(`/notification-service/notifications?page=${page}&size=${size}`, { token });
 }
 
 export function listPreferences(token) {
@@ -178,8 +188,16 @@ export function setPreference(token, channel, enabled) {
 
 // --- Admin (ADMIN role only; the backend enforces it) ---
 
-export function listUsers(token) {
-  return request("/auth-service/auth/admin/users", { token });
+/**
+ * Users, oldest first: {items, page, size, total}. query (optional) keeps those whose username
+ * contains it.
+ */
+export function listUsers(token, { page = 0, size = 50, query = "" } = {}) {
+  const params = new URLSearchParams({ page: String(page), size: String(size) });
+  if (query.trim() !== "") {
+    params.set("q", query.trim());
+  }
+  return request(`/auth-service/auth/admin/users?${params}`, { token });
 }
 
 /** Ends that user's sessions; the new role applies from their next login. 409 for your own role. */
@@ -191,12 +209,13 @@ export function changeUserRole(token, id, role) {
   });
 }
 
-/** Refunds / stock releases the saga owes; status FAILED (default), PENDING or DONE. */
-export function listCompensations(token, status = "FAILED") {
-  return request(
-    `/ordersphere-orders/orders/admin/compensations?status=${encodeURIComponent(status)}`,
-    { token }
-  );
+/**
+ * Refunds / stock releases the saga owes, latest change first: {items, page, size, total}.
+ * status: FAILED (default), PENDING or DONE.
+ */
+export function listCompensations(token, status = "FAILED", page = 0, size = 50) {
+  const params = new URLSearchParams({ status, page: String(page), size: String(size) });
+  return request(`/ordersphere-orders/orders/admin/compensations?${params}`, { token });
 }
 
 /** Re-queues a FAILED compensation and tries it right away; returns its new state. */
@@ -207,9 +226,9 @@ export function retryCompensation(token, id) {
   });
 }
 
-/** Paid orders that have no shipment yet. */
-export function listUnshipped(token) {
-  return request("/ordersphere-orders/orders/admin/unshipped", { token });
+/** Paid orders that have no shipment yet, oldest first: {items, page, size, total}. */
+export function listUnshipped(token, page = 0, size = 50) {
+  return request(`/ordersphere-orders/orders/admin/unshipped?page=${page}&size=${size}`, { token });
 }
 
 /** Tries to create the order's shipment now; returns the order's shipment state. */
@@ -232,12 +251,10 @@ export function listReconciliationRuns(token) {
   return request("/payment-service/payments/admin/reconciliation/runs", { token });
 }
 
-/** status: OPEN (default) or RESOLVED. */
-export function listReconciliationFindings(token, status = "OPEN") {
-  return request(
-    `/payment-service/payments/admin/reconciliation/findings?status=${encodeURIComponent(status)}`,
-    { token }
-  );
+/** Last seen first: {items, page, size, total}. status: OPEN (default) or RESOLVED. */
+export function listReconciliationFindings(token, status = "OPEN", page = 0, size = 50) {
+  const params = new URLSearchParams({ status, page: String(page), size: String(size) });
+  return request(`/payment-service/payments/admin/reconciliation/findings?${params}`, { token });
 }
 
 /** Applies the provider's state (charge or refund) for a re-syncable finding. */

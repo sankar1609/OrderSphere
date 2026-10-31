@@ -6,6 +6,8 @@ import jakarta.persistence.LockModeType;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
@@ -13,7 +15,7 @@ import org.springframework.data.repository.query.Param;
 
 public interface OrderRepository extends JpaRepository<Order, Long> {
 
-  List<Order> findByCustomerUsername(String customerUsername);
+  Page<Order> findByCustomerUsername(String customerUsername, Pageable pageable);
 
   Optional<Order> findByIdAndCustomerUsername(Long id, String customerUsername);
 
@@ -34,7 +36,11 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
           + " order by o.shipmentNextAttemptAt")
   List<Long> findShipmentDueIds(@Param("now") Instant now);
 
-  List<Order> findByStatusAndShipmentIdIsNullOrderByUpdatedAtAsc(OrderStatus status);
+  /** Paid orders without a shipment. The status is a literal so the partial index applies. */
+  @Query(
+      "select o from Order o where o.status = com.ordersphere.orders.domain.OrderStatus.CONFIRMED"
+          + " and o.shipmentId is null")
+  Page<Order> findUnshipped(Pageable pageable);
 
   /**
    * Row-locking read used to serialize the two independent paths that can progress an

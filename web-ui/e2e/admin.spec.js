@@ -40,6 +40,8 @@ test.describe("admin", () => {
 
     await page.goto("/admin/users");
     await page.getByLabel("Filter by username").fill(user.username);
+    await page.getByRole("button", { name: "Search" }).click();
+    await expect(page).toHaveURL(/\/admin\/users\?q=/);
     await page.getByLabel(`Role for ${user.username}`).selectOption("VENDOR");
     await page.getByRole("button", { name: "Save" }).click();
 

@@ -1,6 +1,9 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { listCompensations, retryCompensation } from "../../api";
 import { cellStyle, linkButtonStyle } from "../../styles";
+import { usePageParams } from "../../usePageParams";
+import Pager from "../Pager";
+import { ADMIN_PAGE_SIZE, useAdminList } from "./useAdminList";
 
 const STATUSES = ["FAILED", "PENDING", "DONE"];
 const TYPE_LABELS = { REFUND_PAYMENT: "Refund", RELEASE_INVENTORY: "Stock release" };
@@ -14,22 +17,18 @@ function formatTime(value) {
  * out of retries: fix the cause (e.g. bring payment-service back), then Retry.
  */
 export default function Compensations({ token, onUnauthorized }) {
-  const [status, setStatus] = useState("FAILED");
-  const [rows, setRows] = useState(null);
-  const [error, setError] = useState(null);
+  const pageParams = usePageParams();
+  const { filter, setFilter, setPage } = pageParams;
+  const status = STATUSES.includes(filter("status")) ? filter("status") : STATUSES[0];
+  const { result, error, reload } = useAdminList(
+    (page) => listCompensations(token, status, page, ADMIN_PAGE_SIZE),
+    [token, status],
+    pageParams,
+    onUnauthorized
+  );
+  const rows = result?.items ?? null;
   const [message, setMessage] = useState(null);
   const [retrying, setRetrying] = useState(null);
-  const [reloadKey, setReloadKey] = useState(0);
-
-  useEffect(() => {
-    setRows(null);
-    listCompensations(token, status)
-      .then((list) => {
-        setRows(list);
-        setError(null);
-      })
-      .catch((err) => (err.status === 401 ? onUnauthorized() : setError(err.message)));
-  }, [token, status, reloadKey]);
 
   async function retry(row) {
     setMessage(null);
@@ -44,7 +43,7 @@ export default function Compensations({ token, onUnauthorized }) {
               text: `#${row.id} retried - still ${result.status}: ${result.lastError ?? "no detail"}`,
             }
       );
-      setReloadKey((k) => k + 1);
+      reload();
     } catch (err) {
       if (err.status === 401) {
         onUnauthorized();
@@ -61,7 +60,12 @@ export default function Compensations({ token, onUnauthorized }) {
       <div style={{ marginBottom: 12 }}>
         <label>
           Status{" "}
-          <select value={status} onChange={(e) => setStatus(e.target.value)}>
+          <select
+            value={status}
+            onChange={(e) =>
+              setFilter("status", e.target.value === STATUSES[0] ? null : e.target.value)
+            }
+          >
             {STATUSES.map((s) => (
               <option key={s} value={s}>
                 {s}
@@ -69,7 +73,7 @@ export default function Compensations({ token, onUnauthorized }) {
             ))}
           </select>
         </label>{" "}
-        <button type="button" onClick={() => setReloadKey((k) => k + 1)} style={linkButtonStyle}>
+        <button type="button" onClick={reload} style={linkButtonStyle}>
           Refresh
         </button>
       </div>
@@ -80,7 +84,7 @@ export default function Compensations({ token, onUnauthorized }) {
       )}
       {error && <p style={{ color: "crimson" }}>{error}</p>}
       {!error && rows === null && <p>Loading...</p>}
-      {rows && rows.length === 0 && <p>Nothing {status.toLowerCase()}.</p>}
+      {result && result.total === 0 && <p>Nothing {status.toLowerCase()}.</p>}
       {rows && rows.length > 0 && (
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
           <thead>
@@ -119,6 +123,9 @@ export default function Compensations({ token, onUnauthorized }) {
             ))}
           </tbody>
         </table>
+      )}
+      {result && result.total > 0 && (
+        <Pager result={result} onPage={setPage} noun={["compensation", "compensations"]} />
       )}
     </div>
   );

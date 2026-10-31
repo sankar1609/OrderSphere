@@ -74,11 +74,11 @@ class NotificationControllerIntegrationTest {
             get("/notifications")
                 .header("Authorization", "Bearer " + tokenFor("vendor-low", "VENDOR")))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$[0].templateKey", is("STOCK_LOW")))
-        .andExpect(jsonPath("$[0].channel", is("IN_APP")))
+        .andExpect(jsonPath("$.items[0].templateKey", is("STOCK_LOW")))
+        .andExpect(jsonPath("$.items[0].channel", is("IN_APP")))
         .andExpect(
             jsonPath(
-                "$[0].message",
+                "$.items[0].message",
                 is("Low stock: LOW-1 (Widget) has 2 left - reorder threshold is 5.")));
   }
 

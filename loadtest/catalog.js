@@ -22,8 +22,8 @@ const THINK = Number(__ENV.THINK === undefined ? 0.2 : __ENV.THINK);
 
 export const options = {
   scenarios: {
-    // Customers browsing: mostly the whole catalog (what the Products and Place Order pages
-    // load), sometimes one product.
+    // Customers browsing: mostly the first page of the catalog (what the Products page opens on;
+    // 50 products), sometimes one product.
     browse: {
       executor: "ramping-vus",
       exec: "browse",

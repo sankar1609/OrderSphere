@@ -377,15 +377,16 @@ class OrderControllerIntegrationTest {
     mockMvc
         .perform(get("/orders/admin/compensations").header("Authorization", admin))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$[?(@.id == " + id + ")].orderId").value(9001))
-        .andExpect(jsonPath("$[?(@.id == " + id + ")].lastError").value(stuck.getLastError()));
+        .andExpect(jsonPath("$.items[?(@.id == " + id + ")].orderId").value(9001))
+        .andExpect(
+            jsonPath("$.items[?(@.id == " + id + ")].lastError").value(stuck.getLastError()));
     mockMvc
         .perform(
             get("/orders/admin/compensations")
                 .param("status", "PENDING")
                 .header("Authorization", admin))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$[?(@.id == " + id + ")]").isEmpty());
+        .andExpect(jsonPath("$.items[?(@.id == " + id + ")]").isEmpty());
 
     // Payment-service is healthy again: the retry goes straight through.
     mockMvc
@@ -450,8 +451,8 @@ class OrderControllerIntegrationTest {
     mockMvc
         .perform(get("/orders/admin/unshipped").header("Authorization", admin))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$[?(@.orderId == " + orderId + ")].retrying").value(true))
-        .andExpect(jsonPath("$[?(@.orderId == " + orderId + ")].shipmentAttempts").value(1));
+        .andExpect(jsonPath("$.items[?(@.orderId == " + orderId + ")].retrying").value(true))
+        .andExpect(jsonPath("$.items[?(@.orderId == " + orderId + ")].shipmentAttempts").value(1));
 
     // Next due sweep: the shipment is created.
     Order order = orderRepository.findById(orderId).orElseThrow();
@@ -465,7 +466,7 @@ class OrderControllerIntegrationTest {
         .andExpect(jsonPath("$.shipmentId", is(600)));
     mockMvc
         .perform(get("/orders/admin/unshipped").header("Authorization", admin))
-        .andExpect(jsonPath("$[?(@.orderId == " + orderId + ")]").isEmpty());
+        .andExpect(jsonPath("$.items[?(@.orderId == " + orderId + ")]").isEmpty());
     verify(shippingClient, org.mockito.Mockito.times(2))
         .createShipment(eq(orderId), eq("fred"), eq("1 Test Way"), anyString());
   }
@@ -485,8 +486,9 @@ class OrderControllerIntegrationTest {
     // Rejected, so the sweep has given up on it: it needs an admin.
     mockMvc
         .perform(get("/orders/admin/unshipped").header("Authorization", admin))
-        .andExpect(jsonPath("$[?(@.orderId == " + orderId + ")].retrying").value(false))
-        .andExpect(jsonPath("$[?(@.orderId == " + orderId + ")].lastError").value("HTTP 400"));
+        .andExpect(jsonPath("$.items[?(@.orderId == " + orderId + ")].retrying").value(false))
+        .andExpect(
+            jsonPath("$.items[?(@.orderId == " + orderId + ")].lastError").value("HTTP 400"));
     orderSagaProgressJob.sweep();
     verify(shippingClient, org.mockito.Mockito.times(1))
         .createShipment(eq(orderId), any(), any(), anyString());

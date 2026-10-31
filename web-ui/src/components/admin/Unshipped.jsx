@@ -1,6 +1,9 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { listUnshipped, retryUnshipped } from "../../api";
 import { cellStyle, linkButtonStyle } from "../../styles";
+import { usePageParams } from "../../usePageParams";
+import Pager from "../Pager";
+import { ADMIN_PAGE_SIZE, useAdminList } from "./useAdminList";
 
 function formatTime(value) {
   return value ? new Date(value).toLocaleString() : "—";
@@ -11,20 +14,16 @@ function formatTime(value) {
  * up" ones were rejected by shipping or ran out of attempts and need an admin.
  */
 export default function Unshipped({ token, onUnauthorized }) {
-  const [rows, setRows] = useState(null);
-  const [error, setError] = useState(null);
+  const pageParams = usePageParams();
+  const { result, error, reload } = useAdminList(
+    (page) => listUnshipped(token, page, ADMIN_PAGE_SIZE),
+    [token],
+    pageParams,
+    onUnauthorized
+  );
+  const rows = result?.items ?? null;
   const [message, setMessage] = useState(null);
   const [retrying, setRetrying] = useState(null);
-  const [reloadKey, setReloadKey] = useState(0);
-
-  useEffect(() => {
-    listUnshipped(token)
-      .then((list) => {
-        setRows(list);
-        setError(null);
-      })
-      .catch((err) => (err.status === 401 ? onUnauthorized() : setError(err.message)));
-  }, [token, reloadKey]);
 
   async function retry(row) {
     setMessage(null);
@@ -39,7 +38,7 @@ export default function Unshipped({ token, onUnauthorized }) {
               text: `Order ${row.orderId}: still no shipment - ${result.lastError ?? "no detail"}`,
             }
       );
-      setReloadKey((k) => k + 1);
+      reload();
     } catch (err) {
       if (err.status === 401) {
         onUnauthorized();
@@ -54,7 +53,7 @@ export default function Unshipped({ token, onUnauthorized }) {
   return (
     <div>
       <div style={{ marginBottom: 12 }}>
-        <button type="button" onClick={() => setReloadKey((k) => k + 1)} style={linkButtonStyle}>
+        <button type="button" onClick={reload} style={linkButtonStyle}>
           Refresh
         </button>
       </div>
@@ -65,7 +64,7 @@ export default function Unshipped({ token, onUnauthorized }) {
       )}
       {error && <p style={{ color: "crimson" }}>{error}</p>}
       {!error && rows === null && <p>Loading...</p>}
-      {rows && rows.length === 0 && <p>Every paid order has a shipment.</p>}
+      {result && result.total === 0 && <p>Every paid order has a shipment.</p>}
       {rows && rows.length > 0 && (
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
           <thead>
@@ -112,6 +111,9 @@ export default function Unshipped({ token, onUnauthorized }) {
             ))}
           </tbody>
         </table>
+      )}
+      {result && result.total > 0 && (
+        <Pager result={result} onPage={pageParams.setPage} noun={["order", "orders"]} />
       )}
     </div>
   );

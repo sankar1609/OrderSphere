@@ -13,6 +13,7 @@ import com.ordersphere.orders.domain.OrderItem;
 import com.ordersphere.orders.domain.OrderStatus;
 import com.ordersphere.orders.dto.CreateOrderRequest;
 import com.ordersphere.orders.dto.OrderResponse;
+import com.ordersphere.orders.dto.PageResponse;
 import com.ordersphere.orders.exception.InventoryReservationException;
 import com.ordersphere.orders.exception.OrderCancellationNotAllowedException;
 import com.ordersphere.orders.exception.OrderNotFoundException;
@@ -27,6 +28,8 @@ import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -142,10 +145,13 @@ public class OrderService {
   }
 
   @Transactional(readOnly = true)
-  public List<OrderResponse> listOrders(String username) {
-    return orderRepository.findByCustomerUsername(username).stream()
-        .map(OrderResponse::from)
-        .toList();
+  /** Newest first. */
+  public PageResponse<OrderResponse> listOrders(String username, int page, int size) {
+    return PageResponse.of(
+        orderRepository
+            .findByCustomerUsername(
+                username, PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "id")))
+            .map(OrderResponse::from));
   }
 
   @Transactional(readOnly = true)

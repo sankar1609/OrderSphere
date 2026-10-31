@@ -43,11 +43,15 @@ public class ProductService {
   }
 
   /**
-   * The catalog as JSON, served from the catalog cache; the database is only read on a miss (see
-   * CatalogCache).
+   * A page of the catalog as JSON. Pages without a search are served from the catalog cache, which
+   * only reads the database on a miss (see CatalogCache).
    */
-  public String listProductsJson() {
-    return catalogCache.listJson(catalogReader::loadAll);
+  public String listProductsJson(int page, int size, String query) {
+    if (query != null) {
+      // Searches go to the database: their keys (any text) can't be cached without bound.
+      return catalogCache.uncachedJson(catalogReader.loadPage(page, size, query));
+    }
+    return catalogCache.pageJson(page, size, () -> catalogReader.loadPage(page, size, null));
   }
 
   /** One product as JSON, served from the catalog cache; 404 for an unknown SKU. */

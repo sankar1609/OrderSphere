@@ -2,6 +2,8 @@ package com.ordersphere.payment.reconciliation;
 
 import java.util.List;
 import java.util.Optional;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface ReconciliationFindingRepository
@@ -12,10 +14,9 @@ public interface ReconciliationFindingRepository
       String checkoutSessionId,
       ReconciliationFinding.Status status);
 
-  List<ReconciliationFinding> findByStatusOrderByLastSeenAtDesc(
-      ReconciliationFinding.Status status);
-
   List<ReconciliationFinding> findByStatus(ReconciliationFinding.Status status);
+
+  Page<ReconciliationFinding> findByStatus(ReconciliationFinding.Status status, Pageable pageable);
 
   long countByStatus(ReconciliationFinding.Status status);
 

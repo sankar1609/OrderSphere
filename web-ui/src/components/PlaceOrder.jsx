@@ -3,10 +3,18 @@ import { listProducts, createOrder } from "../api";
 import { cellStyle, linkButtonStyle } from "../styles";
 import { formatMoney } from "../format";
 import { usePageTitle } from "../usePageTitle";
+import SearchBox from "./SearchBox";
+
+// The catalog is searched rather than listed whole: the picker shows this many matches.
+const PAGE_SIZE = 50;
 
 export default function PlaceOrder({ token, onUnauthorized }) {
   usePageTitle("Place Order");
-  const [products, setProducts] = useState(null);
+  const [query, setQuery] = useState("");
+  const [result, setResult] = useState(null);
+  // Every product seen while searching, by SKU: the cart's prices and stock limits stay known for
+  // items picked from an earlier search.
+  const [known, setKnown] = useState({});
   const [productsError, setProductsError] = useState(null);
   const [selectedSku, setSelectedSku] = useState("");
   const [quantity, setQuantity] = useState(1);
@@ -18,28 +26,45 @@ export default function PlaceOrder({ token, onUnauthorized }) {
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    listProducts(token)
-      .then((data) => {
-        setProducts(data);
-        // Only a default: the list reloads when the access token is refreshed, and that mustn't
-        // switch a product the customer has already picked.
-        const firstInStock = data.find((product) => product.availableQuantity > 0);
-        if (firstInStock) {
-          setSelectedSku((current) => current || firstInStock.sku);
+    // A newer page or search replaces this request: its answer, if it comes later, is dropped.
+    let current = true;
+    listProducts(token, { size: PAGE_SIZE, query })
+      .then((page) => {
+        if (!current) {
+          return;
         }
+        setResult(page);
+        setKnown((current) => ({
+          ...current,
+          ...Object.fromEntries(page.items.map((product) => [product.sku, product])),
+        }));
+        // Pick the first match in stock, unless the current pick is among the matches: the list
+        // also reloads when the access token is refreshed, and that mustn't switch the product.
+        const firstInStock = page.items.find((product) => product.availableQuantity > 0);
+        setSelectedSku((current) =>
+          page.items.some((product) => product.sku === current) ? current : firstInStock?.sku ?? ""
+        );
       })
       .catch((err) => {
+        if (!current) {
+          return;
+        }
         if (err.status === 401) {
           onUnauthorized();
         } else {
           setProductsError(err.message);
         }
       });
-  }, [token]);
+    return () => {
+      current = false;
+    };
+  }, [token, query]);
+
+  const products = result?.items ?? null;
 
   // Display-only estimate from the catalog; the backend recalculates the charged total itself.
   function unitPriceFor(sku) {
-    return products?.find((product) => product.sku === sku)?.unitPrice ?? 0;
+    return known[sku]?.unitPrice ?? 0;
   }
 
   const estimatedTotal = items.reduce(
@@ -50,7 +75,7 @@ export default function PlaceOrder({ token, onUnauthorized }) {
   // How many more of a product fit in this order: what's available minus what's already in the
   // cart. Inventory has the final say (it rejects the whole order if stock ran out meanwhile).
   function remainingFor(sku) {
-    const available = products?.find((product) => product.sku === sku)?.availableQuantity ?? 0;
+    const available = known[sku]?.availableQuantity ?? 0;
     const inCart = items
       .filter((item) => item.sku === sku)
       .reduce((sum, item) => sum + item.quantity, 0);
@@ -118,7 +143,21 @@ export default function PlaceOrder({ token, onUnauthorized }) {
       <h2>Place Order</h2>
 
       {productsError && <p style={{ color: "crimson" }}>{productsError}</p>}
+      <SearchBox
+        query={query}
+        onSearch={(text) => setQuery(text.trim())}
+        label="Search catalog"
+        placeholder="SKU or name"
+      />
       {!productsError && products === null && <p>Loading products...</p>}
+      {result && result.total === 0 && (
+        <p>{query ? `No products match "${query}".` : "No products yet."}</p>
+      )}
+      {result && result.total > result.items.length && (
+        <p style={{ fontSize: 12, color: "#555" }}>
+          Showing the first {result.items.length} of {result.total} products - search to find others.
+        </p>
+      )}
 
       {products && products.length > 0 && (
         <div style={{ marginBottom: 16 }}>
