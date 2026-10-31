@@ -185,6 +185,7 @@ services:
       # Per-client-IP limits (defaults 50/s burst 100). The load test raises them for its run.
       GATEWAY_RATE_LIMIT_PER_SECOND: ${GATEWAY_RATE_LIMIT_PER_SECOND:-50}
       GATEWAY_RATE_LIMIT_BURST: ${GATEWAY_RATE_LIMIT_BURST:-100}
+      GATEWAY_MAX_REQUEST_BODY: ${GATEWAY_MAX_REQUEST_BODY:-1MB}
     depends_on:
       - service-registry
       - redis

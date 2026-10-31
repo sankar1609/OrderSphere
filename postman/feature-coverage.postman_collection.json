@@ -4789,6 +4789,48 @@
           ]
         },
         {
+          "name": "Oversized Body Stops At The Gateway [expect 413]",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// One byte over the 1 MB limit: no token needed to send it, so it must never reach a service.",
+                  "pm.collectionVariables.set('oversizedBody', 'x'.repeat(1024 * 1024 + 1));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 413', function () { pm.response.to.have.status(413); });",
+                  "pm.test('Answered by the gateway, in the usual error shape', function () {",
+                  "    pm.expect(pm.response.json().status).to.eql(413);",
+                  "    pm.collectionVariables.unset('oversizedBody');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{{oversizedBody}}"
+            },
+            "url": "{{authBaseUrl}}/auth/login"
+          }
+        },
+        {
           "name": "Login Burst Is Rate Limited [expect 429]",
           "request": {
             "method": "POST",

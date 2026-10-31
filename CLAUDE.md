@@ -26,7 +26,7 @@
   - Client-side load balancing across registered instances
   - CORS for the Web UI dev server (`http://localhost:5173`; GET/POST/PUT/PATCH/DELETE/OPTIONS)
   - Rate limiting (`RequestRateLimiter`, token buckets in Redis, per client IP): 50 req/s burst 100 on every route; login/register/refresh/token 5 req/s burst 30 (`GATEWAY_*RATE_LIMIT*` env vars). Over the limit → 429 with `X-RateLimit-*` headers; if Redis is down requests are let through (the Redis client has 500ms timeouts and rejects commands while disconnected - without them every request waited on the outage). The client IP is the TCP peer; `X-Forwarded-For` is only used behind trusted proxies (`GATEWAY_TRUSTED_PROXY_HOPS`, default 0 - otherwise a client could send a fake address each request and dodge the limit), and then only the entry the outermost trusted proxy appended
-- **Not implemented yet:** request validation
+  - Request size (`RequestBodyLimitFilter`, first in the chain): a body over `GATEWAY_MAX_REQUEST_BODY` (default 1MB) → 413. A declared size is refused before anything is forwarded; a chunked body is counted as it passes and the forwarded request abandoned at the limit, so a service never gets a complete oversized body (chunked can't just be refused: reactive HTTP clients send it on a POST with no body). Services read JSON into memory, so without this one anonymous 200 MB POST to `/auth/login` OOM-kills auth-service. Requests that bypass the gateway (webhooks, Alertmanager) aren't covered. Field validation, content types and malformed JSON stay in the services (415/400)
 - **Technology:** Spring Cloud Gateway
 - **Interacts With:** All downstream services
 
@@ -427,7 +427,8 @@ mvn verify -pl services/shipping-service -am
 - [x] Fix: retry shipment creation for CONFIRMED orders left without a shipment
 - [x] Security hardening: internal endpoints limited to SERVICE/ADMIN, RS256 tokens signed only by auth-service (JWKS), service identity via client credentials, refresh tokens with rotation/revocation
 - [x] Gateway rate limiting (Redis), unauthenticated health probes, PATCH in gateway CORS
-- [ ] Security hardening (later): OAuth2/OIDC, request validation at the gateway
+- [x] Request validation at the gateway: body size limit (413), chunked bodies included; field validation stays in the services
+- [ ] Security hardening (later): OAuth2/OIDC
 - [x] Consume `StockLowEvent` - low-stock alerts to the product's vendor
 - [x] Payment reconciliation (settlement report vs. our records, findings with admin re-sync/resolve)
 - [x] API documentation: OpenAPI specs per service, one Swagger UI at the gateway
